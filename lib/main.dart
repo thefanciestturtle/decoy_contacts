@@ -199,59 +199,103 @@ class _MyHomePageState extends State<MyHomePage> {
     return sEmailAddressTemplate.replaceAll("FIRST", sFirstName).replaceAll("LAST", sLastName);
   }
 
+  bool _isBusy = false;
+
+  void _showResultSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _createAllContacts() async {
+    if (_isBusy) return;
+    setState(() { _isBusy = true; });
 
     log("_createAllContacts: about to call Permission.contacts.request");
     PermissionStatus permission = await Permission.contacts.request();
 
+    int nCreated = 0;
+    String sError;
     if (!permission.isGranted) {
       log("_createAllContacts: no permission");
     } else {
       // Either the permission was already granted before or the user just granted it.
-
-      for (var i=0 ; i<lastNames.length ; i++) {
-        for (var j=0; j<firstNames.length; j++) {
-          Contact newContact = Contact(
-              displayName: (firstNames[j] + " " + lastNames[i]),
-              givenName: firstNames[j],
-              familyName: lastNames[i]);
-          newContact.phones = [Item(label: "mobile", value: generatePhoneNumber(lastNames[i]))];
-          newContact.emails = [Item(label: "email", value: generateEmailAddress(lastNames[i], firstNames[j]))];
-          log("_createAllContacts: about to call ContactsService.addContact(" + newContact.displayName + ")");
-          // if Contact exists already, no error, another of same name is added
-          await ContactsService.addContact(newContact);
+      try {
+        for (var i = 0; i < lastNames.length; i++) {
+          for (var j = 0; j < firstNames.length; j++) {
+            Contact newContact = Contact(
+                displayName: (firstNames[j] + " " + lastNames[i]),
+                givenName: firstNames[j],
+                familyName: lastNames[i]);
+            newContact.phones = [Item(label: "mobile", value: generatePhoneNumber(lastNames[i]))];
+            newContact.emails = [Item(label: "email", value: generateEmailAddress(lastNames[i], firstNames[j]))];
+            log("_createAllContacts: about to call ContactsService.addContact(" + newContact.displayName + ")");
+            // if Contact exists already, no error, another of same name is added
+            await ContactsService.addContact(newContact);
+            nCreated++;
+          }
         }
+      } catch (e) {
+        log("_createAllContacts: error " + e.toString());
+        sError = e.toString();
       }
-
     }
-    log("_createAllContacts: about to return");
+    log("_createAllContacts: about to return, nCreated " + nCreated.toString());
+
+    if (!mounted) return;
+    setState(() { _isBusy = false; });
+    _showResultSnackBar(!permission.isGranted
+        ? "Permission to access contacts was denied."
+        : sError != null
+            ? "Error while creating contacts: " + sError
+            : "Created " + nCreated.toString() + " fake contact(s).");
   }
 
   Future<void> _deleteAllContacts() async {
+    if (_isBusy) return;
+    setState(() { _isBusy = true; });
+
     log("_deleteAllContacts: about to call Permission.contacts.request");
     PermissionStatus permission = await Permission.contacts.request();
+
+    int nDeleted = 0;
+    String sError;
     if (!permission.isGranted) {
       log("_deleteAllContacts: no permission");
     } else {
       // Either the permission was already granted before or the user just granted it.
-      for (var i=0 ; i<lastNames.length ; i++) {
-        for (var j=0; j<firstNames.length; j++) {
-          Contact newContact = Contact(
-              displayName: (firstNames[j] + " " + lastNames[i]),
-              givenName: firstNames[j],
-              familyName: lastNames[i]);
-          log("_deleteAllContacts: about to call ContactsService.getContacts(" + newContact.displayName + ")");
-          Iterable<Contact> iContacts = await ContactsService.getContacts(query: newContact.displayName);
-          for (var c in iContacts) {
-            log(
-                "_deleteAllContacts: about to call ContactsService.deleteContact(" +
-                    newContact.displayName + ")");
-            await ContactsService.deleteContact(c);
+      try {
+        for (var i = 0; i < lastNames.length; i++) {
+          for (var j = 0; j < firstNames.length; j++) {
+            Contact newContact = Contact(
+                displayName: (firstNames[j] + " " + lastNames[i]),
+                givenName: firstNames[j],
+                familyName: lastNames[i]);
+            log("_deleteAllContacts: about to call ContactsService.getContacts(" + newContact.displayName + ")");
+            Iterable<Contact> iContacts = await ContactsService.getContacts(query: newContact.displayName);
+            for (var c in iContacts) {
+              log(
+                  "_deleteAllContacts: about to call ContactsService.deleteContact(" +
+                      newContact.displayName + ")");
+              await ContactsService.deleteContact(c);
+              nDeleted++;
+            }
           }
         }
+      } catch (e) {
+        log("_deleteAllContacts: error " + e.toString());
+        sError = e.toString();
       }
     }
-    log("_deleteAllContacts: about to return");
+    log("_deleteAllContacts: about to return, nDeleted " + nDeleted.toString());
+
+    if (!mounted) return;
+    setState(() { _isBusy = false; });
+    _showResultSnackBar(!permission.isGranted
+        ? "Permission to access contacts was denied."
+        : sError != null
+            ? "Error while deleting contacts: " + sError
+            : "Deleted " + nDeleted.toString() + " fake contact(s).");
   }
 
 
@@ -396,7 +440,7 @@ class _MyHomePageState extends State<MyHomePage> {
               height:40,
             ),
             ElevatedButton(
-              onPressed: () => _createAllContacts(),
+              onPressed: _isBusy ? null : () => _createAllContacts(),
               child: Text("Create Fake Contacts"),
             ),
             SizedBox(
@@ -404,10 +448,16 @@ class _MyHomePageState extends State<MyHomePage> {
               height:30,
             ),
             ElevatedButton(
-              onPressed: () => _deleteAllContacts(),
+              onPressed: _isBusy ? null : () => _deleteAllContacts(),
               child: Text("Delete Fake Contacts"),
               style: ButtonStyle(backgroundColor: MaterialStateProperty.all<Color>(Colors.pink) ),
             ),
+            SizedBox(
+              width: 10,
+              height:20,
+            ),
+            if (_isBusy)
+              CircularProgressIndicator(),
           ],
         ),
       ),

@@ -38,7 +38,7 @@ You could uninstall this app after creating the fake contacts, without causing a
 
 ### Quirks
 
-* The app is designed to be very simple and fail silently.  If you deny permission to access contacts, the app will not complain, it just will not work.  If you click the "Create" button multiple times, you just get one set of fake contacts.  If you click the "Delete" button and the specified contacts don't exist, nothing is done, and no error message is shown.
+* The app is designed to be very simple.  A message at the bottom of the screen reports how many contacts were created/deleted (or that permission was denied), so you can tell the operation finished.  Since the operation loops over all firstname/lastname combinations, it may take a little while to finish; the button is disabled and a spinner is shown while it's working.  If you click the "Create" button multiple times, you just get one set of fake contacts.  If you click the "Delete" button and the specified contacts don't exist, nothing is deleted, and the message will say "Deleted 0 fake contact(s)".
 
 * Don't create any fake contact with the same full name as one of your real contacts.  If you delete fake contacts, the real one with same name will be deleted too.
 
@@ -67,7 +67,6 @@ Added Spanish description to Fastlane per https://github.com/BillDietrich/fake_c
 * What Android versions are supported ?  I tested on 9; someone else says it works on 9 and crashes on 5.
 * Add buttons to add/delete fake secondary info (e.g. birthday ?) on ALL contacts. Or make a separate app for that.
 * Want to explicitly set Notification permission off, but there's no way to do it.
-* No UI feedback after create and delete operations.
 * Add photos from thispersondoesnotexist.com ?
 * Page doesn't scroll if screen is too short.
 * Inefficiency in the "save settings after every char changed in field" events.
