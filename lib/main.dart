@@ -2,13 +2,11 @@
 import 'dart:developer';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 //import 'dart:math' hide log;
 import 'package:shared_preferences/shared_preferences.dart';
 
 //import 'dart:io';
-import 'package:contacts_service/contacts_service.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_contacts/flutter_contacts.dart';
 
 void main() {
   runApp(MyApp());
@@ -30,7 +28,7 @@ class MyApp extends StatelessWidget {
 }
 
 class MyHomePage extends StatefulWidget {
-  MyHomePage({Key key, this.title}) : super(key: key);
+  MyHomePage({Key? key, required this.title}) : super(key: key);
 
   final String title;
 
@@ -60,58 +58,14 @@ class _MyHomePageState extends State<MyHomePage> {
   TextEditingController emailAddressTemplateController = TextEditingController();
 
 
-  Future<String> getLastNames() async {
-    log("getLastNames: called");
-    SharedPreferences prefs;
-
-    prefs = await SharedPreferences.getInstance();
-    final String sValue = prefs.getString('sListOfLastNames');
-    sListOfLastNames = sValue;
-    // to create the array of names
-    _changedLastNames(sListOfLastNames);
-    return sValue;
-  }
-
-  Future<String> getFirstNames() async {
-    log("getFirstNames: called");
-    SharedPreferences prefs;
-
-    prefs = await SharedPreferences.getInstance();
-    final String sValue = prefs.getString('sListOfFirstNames');
-    sListOfFirstNames = sValue;
-    // to create the array of names
-    _changedFirstNames(sListOfFirstNames);
-    return sValue;
-  }
-
-  Future<String> getPhoneNumberTemplate() async {
-    log("getPhoneNumberTemplate: called");
-    SharedPreferences prefs;
-
-    prefs = await SharedPreferences.getInstance();
-    final String sValue = prefs.getString('sPhoneNumberTemplate');
-    sPhoneNumberTemplate = sValue;
-    return sValue;
-  }
-
-  Future<String> getEmailAddressTemplate() async {
-    log("getEmailAddressTemplate: called");
-    SharedPreferences prefs;
-
-    prefs = await SharedPreferences.getInstance();
-    final String sValue = prefs.getString('sEmailAddressTemplate');
-    sEmailAddressTemplate = sValue;
-    return sValue;
-  }
-
   Future<void> getStoredSettings() async {
     log("getStoredSettings: called");
     SharedPreferences prefs;
 
     prefs = await SharedPreferences.getInstance();
-    sListOfLastNames = prefs.getString('sListOfLastNames');
-    //log("getStoredSettings: retrieved last names " + (sListOfLastNames ?? "null"));
-    if (sListOfLastNames == null) {
+    final String? sStoredLastNames = prefs.getString('sListOfLastNames');
+    //log("getStoredSettings: retrieved last names " + (sStoredLastNames ?? "null"));
+    if (sStoredLastNames == null) {
       sListOfLastNames = "Zen,Zaragoza,Zabinski,Zimmermann,Zapata,Zona,Zidane,Zeiss,Zimmer,Zaal,Zaman,Zambrano,Zanetti,Zangari,Zappa,Zavala,Zawisza,Zeegers,Zelenka,Zellweger,Zeni,Zhang,Zhao,Zheng,Zhou,Ziegler,Zima";
       sListOfFirstNames = "Zoe,Zach,Zbigniew,Zaire,Zero,Zakai,Zamir,Zan,Zanna,Zareen,Zeb,Zeki,Zelda,Zella,Zeno,Zephyr,Zhen,Zhi,Zhong,Zhu,Ziba,Ziggy,Zion,Zola,Zolyan,Zora,Zsazsa,Zuzana";
       sPhoneNumberTemplate = "+2134567nnnn";
@@ -121,9 +75,10 @@ class _MyHomePageState extends State<MyHomePage> {
       savePhoneNumberTemplate();
       saveEmailAddressTemplate();
     } else {
-      sListOfFirstNames = prefs.getString('sListOfFirstNames');
-      sPhoneNumberTemplate = prefs.getString('sPhoneNumberTemplate');
-      sEmailAddressTemplate = prefs.getString('sEmailAddressTemplate');
+      sListOfLastNames = sStoredLastNames;
+      sListOfFirstNames = prefs.getString('sListOfFirstNames') ?? "";
+      sPhoneNumberTemplate = prefs.getString('sPhoneNumberTemplate') ?? "";
+      sEmailAddressTemplate = prefs.getString('sEmailAddressTemplate') ?? "";
     }
 
     // create the arrays of names
@@ -211,30 +166,28 @@ class _MyHomePageState extends State<MyHomePage> {
     if (_isBusy) return;
     setState(() { _isBusy = true; });
 
-    log("_createAllContacts: about to call Permission.contacts.request");
-    PermissionStatus permission = await Permission.contacts.request();
+    log("_createAllContacts: about to call FlutterContacts.permissions.request");
+    PermissionStatus permission = await FlutterContacts.permissions.request(PermissionType.readWrite);
 
     int nCreated = 0;
-    String sError;
-    if (!permission.isGranted) {
-      log("_createAllContacts: no permission");
+    String? sError;
+    if (permission != PermissionStatus.granted) {
+      log("_createAllContacts: no permission, status " + permission.toString());
     } else {
-      // Either the permission was already granted before or the user just granted it.
       try {
+        List<Contact> newContacts = [];
         for (var i = 0; i < lastNames.length; i++) {
           for (var j = 0; j < firstNames.length; j++) {
-            Contact newContact = Contact(
-                displayName: (firstNames[j] + " " + lastNames[i]),
-                givenName: firstNames[j],
-                familyName: lastNames[i]);
-            newContact.phones = [Item(label: "mobile", value: generatePhoneNumber(lastNames[i]))];
-            newContact.emails = [Item(label: "email", value: generateEmailAddress(lastNames[i], firstNames[j]))];
-            log("_createAllContacts: about to call ContactsService.addContact(" + newContact.displayName + ")");
-            // if Contact exists already, no error, another of same name is added
-            await ContactsService.addContact(newContact);
-            nCreated++;
+            newContacts.add(Contact(
+                name: Name(first: firstNames[j], last: lastNames[i]),
+                phones: [Phone(number: generatePhoneNumber(lastNames[i]))],
+                emails: [Email(address: generateEmailAddress(lastNames[i], firstNames[j]))]));
           }
         }
+        log("_createAllContacts: about to call FlutterContacts.createAll for " + newContacts.length.toString() + " contact(s)");
+        // if a Contact exists already, no error, another of same name is added
+        List<String> ids = await FlutterContacts.createAll(newContacts);
+        nCreated = ids.length;
       } catch (e) {
         log("_createAllContacts: error " + e.toString());
         sError = e.toString();
@@ -244,7 +197,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
     if (!mounted) return;
     setState(() { _isBusy = false; });
-    _showResultSnackBar(!permission.isGranted
+    _showResultSnackBar(permission != PermissionStatus.granted
         ? "Permission to access contacts was denied."
         : sError != null
             ? "Error while creating contacts: " + sError
@@ -255,33 +208,32 @@ class _MyHomePageState extends State<MyHomePage> {
     if (_isBusy) return;
     setState(() { _isBusy = true; });
 
-    log("_deleteAllContacts: about to call Permission.contacts.request");
-    PermissionStatus permission = await Permission.contacts.request();
+    log("_deleteAllContacts: about to call FlutterContacts.permissions.request");
+    PermissionStatus permission = await FlutterContacts.permissions.request(PermissionType.readWrite);
 
     int nDeleted = 0;
-    String sError;
-    if (!permission.isGranted) {
-      log("_deleteAllContacts: no permission");
+    String? sError;
+    if (permission != PermissionStatus.granted) {
+      log("_deleteAllContacts: no permission, status " + permission.toString());
     } else {
-      // Either the permission was already granted before or the user just granted it.
       try {
+        List<String> idsToDelete = [];
         for (var i = 0; i < lastNames.length; i++) {
           for (var j = 0; j < firstNames.length; j++) {
-            Contact newContact = Contact(
-                displayName: (firstNames[j] + " " + lastNames[i]),
-                givenName: firstNames[j],
-                familyName: lastNames[i]);
-            log("_deleteAllContacts: about to call ContactsService.getContacts(" + newContact.displayName + ")");
-            Iterable<Contact> iContacts = await ContactsService.getContacts(query: newContact.displayName);
-            for (var c in iContacts) {
-              log(
-                  "_deleteAllContacts: about to call ContactsService.deleteContact(" +
-                      newContact.displayName + ")");
-              await ContactsService.deleteContact(c);
-              nDeleted++;
+            String sDisplayName = firstNames[j] + " " + lastNames[i];
+            log("_deleteAllContacts: about to call FlutterContacts.getAll(filter: name=" + sDisplayName + ")");
+            List<Contact> matches = await FlutterContacts.getAll(filter: ContactFilter.name(sDisplayName));
+            for (var c in matches) {
+              // ContactFilter.name() does a partial match on Android, so only delete exact matches
+              if (c.displayName == sDisplayName && c.id != null) {
+                idsToDelete.add(c.id!);
+              }
             }
           }
         }
+        log("_deleteAllContacts: about to call FlutterContacts.deleteAll for " + idsToDelete.length.toString() + " contact(s)");
+        await FlutterContacts.deleteAll(idsToDelete);
+        nDeleted = idsToDelete.length;
       } catch (e) {
         log("_deleteAllContacts: error " + e.toString());
         sError = e.toString();
@@ -291,7 +243,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
     if (!mounted) return;
     setState(() { _isBusy = false; });
-    _showResultSnackBar(!permission.isGranted
+    _showResultSnackBar(permission != PermissionStatus.granted
         ? "Permission to access contacts was denied."
         : sError != null
             ? "Error while deleting contacts: " + sError
@@ -364,7 +316,6 @@ class _MyHomePageState extends State<MyHomePage> {
               onChanged: _changedLastNames,
               controller: lastNamesController,
               maxLines: 1,
-              initialValue: sListOfLastNames, // want getLastNames() here but can't
               decoration: new InputDecoration(
                 labelText: 'Last names',
                 focusedBorder: OutlineInputBorder(
@@ -384,7 +335,6 @@ class _MyHomePageState extends State<MyHomePage> {
               onChanged: _changedFirstNames,
               controller: firstNamesController,
               maxLines: 1,
-              initialValue: sListOfFirstNames,
               decoration: new InputDecoration(
                 labelText: 'First names',
                 focusedBorder: OutlineInputBorder(
@@ -404,7 +354,6 @@ class _MyHomePageState extends State<MyHomePage> {
               onChanged: _changedPhoneNumberTemplate,
               controller: phoneNumberTemplateController,
               maxLines: 1,
-              initialValue: sPhoneNumberTemplate,
               decoration: new InputDecoration(
                 labelText: 'Phone number template',
                 focusedBorder: OutlineInputBorder(
@@ -423,7 +372,6 @@ class _MyHomePageState extends State<MyHomePage> {
               key: keyEmailAddressTemplate,
               onChanged: _changedEmailAddressTemplate,
               maxLines: 1,
-              initialValue: sEmailAddressTemplate,
               controller: emailAddressTemplateController,
               decoration: new InputDecoration(
                 labelText: 'Email address template',
@@ -450,7 +398,7 @@ class _MyHomePageState extends State<MyHomePage> {
             ElevatedButton(
               onPressed: _isBusy ? null : () => _deleteAllContacts(),
               child: Text("Delete Fake Contacts"),
-              style: ButtonStyle(backgroundColor: MaterialStateProperty.all<Color>(Colors.pink) ),
+              style: ButtonStyle(backgroundColor: WidgetStateProperty.all<Color>(Colors.pink) ),
             ),
             SizedBox(
               width: 10,
