@@ -1,12 +1,9 @@
-//import 'dart:convert';
+import 'dart:async';
 import 'dart:developer';
 
 import 'package:flutter/material.dart';
-//import 'dart:math' hide log;
-import 'package:shared_preferences/shared_preferences.dart';
-
-//import 'dart:io';
 import 'package:flutter_contacts/flutter_contacts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'fake_contacts_core.dart';
 
@@ -22,7 +19,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Fake Contacts',
       theme: ThemeData(
-        primarySwatch: Colors.blue,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
       ),
       home: MyHomePage(title: 'Fake Contacts'),
     );
@@ -39,96 +36,106 @@ class MyHomePage extends StatefulWidget {
 }
 
 
+const String kDefaultLastNames = "Zen,Zaragoza,Zabinski,Zimmermann,Zapata,Zona,Zidane,Zeiss,Zimmer,Zaal,Zaman,Zambrano,Zanetti,Zangari,Zappa,Zavala,Zawisza,Zeegers,Zelenka,Zellweger,Zeni,Zhang,Zhao,Zheng,Zhou,Ziegler,Zima";
+const String kDefaultFirstNames = "Zoe,Zach,Zbigniew,Zaire,Zero,Zakai,Zamir,Zan,Zanna,Zareen,Zeb,Zeki,Zelda,Zella,Zeno,Zephyr,Zhen,Zhi,Zhong,Zhu,Ziba,Ziggy,Zion,Zola,Zolyan,Zora,Zsazsa,Zuzana";
 
-class _MyHomePageState extends State<MyHomePage> {
+/// How long to wait after the last keystroke before saving the settings.
+const Duration kSaveDelay = Duration(milliseconds: 500);
 
-  String sListOfLastNames = "";
-  String sListOfFirstNames = "";
-  List<String> lastNames = [];
-  List<String> firstNames = [];
-  String sPhoneNumberTemplate = "";
-  String sEmailAddressTemplate = "";
+
+class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
 
   Key keyLastNames = Key("LastNames");
   Key keyFirstNames = Key("FirstNames");
   Key keyPhoneNumberTemplate = Key("PhoneNumberTemplate");
   Key keyEmailAddressTemplate = Key("EmailAddressTemplate");
 
-  TextEditingController lastNamesController = TextEditingController();
-  TextEditingController firstNamesController = TextEditingController();
-  TextEditingController phoneNumberTemplateController = TextEditingController();
-  TextEditingController emailAddressTemplateController = TextEditingController();
+  final TextEditingController lastNamesController = TextEditingController();
+  final TextEditingController firstNamesController = TextEditingController();
+  final TextEditingController phoneNumberTemplateController = TextEditingController();
+  final TextEditingController emailAddressTemplateController = TextEditingController();
 
+  // The text fields are the single source of truth for the settings.
+  List<String> get lastNames => parseNames(lastNamesController.text);
+  List<String> get firstNames => parseNames(firstNamesController.text);
+  String get sPhoneNumberTemplate => phoneNumberTemplateController.text.trim();
+  String get sEmailAddressTemplate => emailAddressTemplateController.text.trim();
 
-  Future<void> getStoredSettings() async {
-    log("getStoredSettings: called");
-    SharedPreferences prefs;
+  bool _settingsLoaded = false;
+  Timer? _saveTimer;
 
-    prefs = await SharedPreferences.getInstance();
-    final String? sStoredLastNames = prefs.getString('sListOfLastNames');
-    //log("getStoredSettings: retrieved last names " + (sStoredLastNames ?? "null"));
-    if (sStoredLastNames == null) {
-      sListOfLastNames = "Zen,Zaragoza,Zabinski,Zimmermann,Zapata,Zona,Zidane,Zeiss,Zimmer,Zaal,Zaman,Zambrano,Zanetti,Zangari,Zappa,Zavala,Zawisza,Zeegers,Zelenka,Zellweger,Zeni,Zhang,Zhao,Zheng,Zhou,Ziegler,Zima";
-      sListOfFirstNames = "Zoe,Zach,Zbigniew,Zaire,Zero,Zakai,Zamir,Zan,Zanna,Zareen,Zeb,Zeki,Zelda,Zella,Zeno,Zephyr,Zhen,Zhi,Zhong,Zhu,Ziba,Ziggy,Zion,Zola,Zolyan,Zora,Zsazsa,Zuzana";
-      sPhoneNumberTemplate = kDefaultPhoneTemplate;
-      sEmailAddressTemplate = kDefaultEmailTemplate;
-      saveLastNames();
-      saveFirstNames();
-      savePhoneNumberTemplate();
-      saveEmailAddressTemplate();
-    } else {
-      sListOfLastNames = sStoredLastNames;
-      sListOfFirstNames = prefs.getString('sListOfFirstNames') ?? "";
-      sPhoneNumberTemplate = prefs.getString('sPhoneNumberTemplate') ?? "";
-      sEmailAddressTemplate = prefs.getString('sEmailAddressTemplate') ?? "";
-      if (sPhoneNumberTemplate == kLegacyDefaultPhoneTemplate) {
-        // old default was in Algeria's real country code (+213)
-        sPhoneNumberTemplate = kDefaultPhoneTemplate;
-        savePhoneNumberTemplate();
-      }
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _loadSettings();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _saveSettingsNow();
+    lastNamesController.dispose();
+    firstNamesController.dispose();
+    phoneNumberTemplateController.dispose();
+    emailAddressTemplateController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Don't lose an edit made just before the app is backgrounded or killed.
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      _saveSettingsNow();
     }
-
-    // create the arrays of names
-    lastNames = parseNames(sListOfLastNames);
-    firstNames = parseNames(sListOfFirstNames);
-
-    lastNamesController.text = sListOfLastNames;
-    // this gets called for every keypress in the field, but no info about what's happening
-    //lastNamesController.addListener(() {
-    //  log("lastNamesController.Listener: called");
-    //});
-    firstNamesController.text = sListOfFirstNames;
-    phoneNumberTemplateController.text = sPhoneNumberTemplate;
-    emailAddressTemplateController.text = sEmailAddressTemplate;
   }
 
-  void saveLastNames() async {
-    log("saveLastNames: called");
-
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    log("saveLastNames: sListOfLastNames " + sListOfLastNames);
-    await prefs.setString("sListOfLastNames", sListOfLastNames);
+  /// Reads the settings once at startup, filling in defaults on first run.
+  Future<void> _loadSettings() async {
+    log("_loadSettings: called");
+    final prefs = await SharedPreferences.getInstance();
+    final String? sStoredLastNames = prefs.getString('sListOfLastNames');
+    bool bNeedsSave = false;
+    String sPhone;
+    if (sStoredLastNames == null) {
+      lastNamesController.text = kDefaultLastNames;
+      firstNamesController.text = kDefaultFirstNames;
+      sPhone = kDefaultPhoneTemplate;
+      emailAddressTemplateController.text = kDefaultEmailTemplate;
+      bNeedsSave = true;
+    } else {
+      lastNamesController.text = sStoredLastNames;
+      firstNamesController.text = prefs.getString('sListOfFirstNames') ?? "";
+      sPhone = prefs.getString('sPhoneNumberTemplate') ?? "";
+      emailAddressTemplateController.text = prefs.getString('sEmailAddressTemplate') ?? "";
+    }
+    if (sPhone == kLegacyDefaultPhoneTemplate) {
+      // old default was in Algeria's real country code (+213)
+      sPhone = kDefaultPhoneTemplate;
+      bNeedsSave = true;
+    }
+    phoneNumberTemplateController.text = sPhone;
+    if (bNeedsSave) await _saveSettingsNow();
+    if (!mounted) return;
+    setState(() { _settingsLoaded = true; });
   }
 
-  void saveFirstNames() async {
-    log("saveFirstNames: called");
-
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString("sListOfFirstNames", sListOfFirstNames);
+  /// Called on every keystroke; saves once typing pauses.
+  void _settingsChanged(String _) {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(kSaveDelay, _saveSettingsNow);
   }
 
-  void savePhoneNumberTemplate() async {
-    log("savePhoneNumberTemplate: called");
-
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString("sPhoneNumberTemplate", sPhoneNumberTemplate);
-  }
-
-  void saveEmailAddressTemplate() async {
-    log("saveEmailAddressTemplate: called");
-
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString("sEmailAddressTemplate", sEmailAddressTemplate);
+  Future<void> _saveSettingsNow() async {
+    _saveTimer?.cancel();
+    _saveTimer = null;
+    if (!_settingsLoaded && lastNamesController.text.isEmpty) return; // nothing loaded yet
+    log("_saveSettingsNow: called");
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString("sListOfLastNames", lastNamesController.text);
+    await prefs.setString("sListOfFirstNames", firstNamesController.text);
+    await prefs.setString("sPhoneNumberTemplate", phoneNumberTemplateController.text);
+    await prefs.setString("sEmailAddressTemplate", emailAddressTemplateController.text);
   }
 
   Future<Ledger> _loadLedger() async {
@@ -172,6 +179,7 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> _createAllContacts() async {
     if (_isBusy) return;
     setState(() { _isBusy = true; });
+    unawaited(_saveSettingsNow());
 
     log("_createAllContacts: about to call FlutterContacts.permissions.request");
     PermissionStatus permission = await FlutterContacts.permissions.request(PermissionType.readWrite);
@@ -260,6 +268,7 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> _deleteAllContacts() async {
     if (_isBusy) return;
     setState(() { _isBusy = true; });
+    unawaited(_saveSettingsNow());
 
     log("_deleteAllContacts: about to call FlutterContacts.permissions.request");
     PermissionStatus permission = await FlutterContacts.permissions.request(PermissionType.readWrite);
@@ -305,163 +314,104 @@ class _MyHomePageState extends State<MyHomePage> {
     _showResultSnackBar(sMessage);
   }
 
-
-  // this gets called every time a char gets changed in the field
-  // wasteful to recalculate every time, but doesn't matter
-  void _changedLastNames(String sNewValue){
-    log("_changedLastNames: called, " + sNewValue);
-    sListOfLastNames = sNewValue;
-    lastNames = parseNames(sListOfLastNames);
-    //log("_changedLastNames: lastNames[0] == " + lastNames[0]);
-    //log("_changedLastNames: lastNames.toString == " + lastNames.toString());
-
-    saveLastNames();
-  }
-
-
-  // this gets called every time a char gets changed in the field
-  // wasteful to recalculate and save every time
-  void _changedFirstNames(String sNewValue){
-    log("_changedFirstNames: called, " + sNewValue);
-    sListOfFirstNames = sNewValue;
-    firstNames = parseNames(sListOfFirstNames);
-    //log("_changedFirstNames: firstNames[0] == " + firstNames[0]);
-    //log("_changedFirstNames: firstNames.toString == " + firstNames.toString());
-
-    saveFirstNames();
-  }
-
-  // this gets called every time a char gets changed in the field
-  void _changedPhoneNumberTemplate(String sNewValue){
-    log("_changedPhoneNumberTemplate: called, " + sNewValue);
-    sPhoneNumberTemplate = sNewValue;
-
-    savePhoneNumberTemplate();
-  }
-
-  // this gets called every time a char gets changed in the field
-  void _changedEmailAddressTemplate(String sNewValue){
-    log("_changedEmailAddressTemplate: called, " + sNewValue);
-    sEmailAddressTemplate = sNewValue;
-
-    saveEmailAddressTemplate();
+  InputDecoration _fieldDecoration(String sLabel) {
+    return InputDecoration(
+      labelText: sLabel,
+      focusedBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: Colors.red, width: 5.0),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: Colors.greenAccent, width: 5.0),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-
-    getStoredSettings();  // need to wait for it, but can't !!!
-    //Future.wait(getStoredSettings());   // illegal ?
-    //final int number = waitFor<int>(getStoredSettings());
+    final bool bCanAct = _settingsLoaded && !_isBusy;
 
     return Scaffold(
       appBar: AppBar(
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
         title: Text(widget.title),
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            TextFormField(
-              key: keyLastNames,    // want to set value using this key, but can't
-              onChanged: _changedLastNames,
-              controller: lastNamesController,
-              maxLines: 1,
-              decoration: new InputDecoration(
-                labelText: 'Last names',
-                focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: Colors.red, width: 5.0),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: Colors.greenAccent, width: 5.0),
-                ),
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 600),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  TextField(
+                    key: keyLastNames,
+                    controller: lastNamesController,
+                    onChanged: _settingsChanged,
+                    enabled: _settingsLoaded,
+                    minLines: 1,
+                    maxLines: 4,
+                    decoration: _fieldDecoration('Last names'),
+                  ),
+                  const SizedBox(height: 20),
+                  TextField(
+                    key: keyFirstNames,
+                    controller: firstNamesController,
+                    onChanged: _settingsChanged,
+                    enabled: _settingsLoaded,
+                    minLines: 1,
+                    maxLines: 4,
+                    decoration: _fieldDecoration('First names'),
+                  ),
+                  const SizedBox(height: 30),
+                  TextField(
+                    key: keyPhoneNumberTemplate,
+                    controller: phoneNumberTemplateController,
+                    onChanged: _settingsChanged,
+                    enabled: _settingsLoaded,
+                    keyboardType: TextInputType.phone,
+                    decoration: _fieldDecoration('Phone number template'),
+                  ),
+                  const SizedBox(height: 20),
+                  TextField(
+                    key: keyEmailAddressTemplate,
+                    controller: emailAddressTemplateController,
+                    onChanged: _settingsChanged,
+                    enabled: _settingsLoaded,
+                    keyboardType: TextInputType.emailAddress,
+                    autocorrect: false,
+                    decoration: _fieldDecoration('Email address template'),
+                  ),
+                  const SizedBox(height: 40),
+                  Center(
+                    child: ElevatedButton(
+                      onPressed: bCanAct ? () => _createAllContacts() : null,
+                      child: Text("Create Fake Contacts"),
+                    ),
+                  ),
+                  const SizedBox(height: 30),
+                  Center(
+                    child: FilledButton(
+                      onPressed: bCanAct ? () => _deleteAllContacts() : null,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.pink,
+                        foregroundColor: Colors.white,
+                      ),
+                      child: Text("Delete Fake Contacts"),
+                    ),
+                  ),
+                  // Always reserve the spinner's space so the layout doesn't jump.
+                  SizedBox(
+                    height: 72,
+                    child: Center(
+                      child: (_isBusy || !_settingsLoaded)
+                          ? const CircularProgressIndicator()
+                          : null,
+                    ),
+                  ),
+                ],
               ),
             ),
-            SizedBox(
-              width: 10,
-              height:20,
-            ),
-            TextFormField(
-              key: keyFirstNames,
-              onChanged: _changedFirstNames,
-              controller: firstNamesController,
-              maxLines: 1,
-              decoration: new InputDecoration(
-                labelText: 'First names',
-                focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: Colors.red, width: 5.0),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: Colors.greenAccent, width: 5.0),
-                ),
-              ),
-            ),
-            SizedBox(
-              width: 10,
-              height:30,
-            ),
-            TextFormField(
-              key: keyPhoneNumberTemplate,
-              onChanged: _changedPhoneNumberTemplate,
-              controller: phoneNumberTemplateController,
-              maxLines: 1,
-              decoration: new InputDecoration(
-                labelText: 'Phone number template',
-                focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: Colors.red, width: 5.0),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: Colors.greenAccent, width: 5.0),
-                ),
-              ),
-            ),
-            SizedBox(
-              width: 10,
-              height:20,
-            ),
-            TextFormField(
-              key: keyEmailAddressTemplate,
-              onChanged: _changedEmailAddressTemplate,
-              maxLines: 1,
-              controller: emailAddressTemplateController,
-              decoration: new InputDecoration(
-                labelText: 'Email address template',
-                focusedBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: Colors.red, width: 5.0),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderSide: BorderSide(color: Colors.greenAccent, width: 5.0),
-                ),
-              ),
-            ),
-            SizedBox(
-              width: 10,
-              height:40,
-            ),
-            ElevatedButton(
-              onPressed: _isBusy ? null : () => _createAllContacts(),
-              child: Text("Create Fake Contacts"),
-            ),
-            SizedBox(
-              width: 10,
-              height:30,
-            ),
-            ElevatedButton(
-              onPressed: _isBusy ? null : () => _deleteAllContacts(),
-              child: Text("Delete Fake Contacts"),
-              style: ButtonStyle(backgroundColor: WidgetStateProperty.all<Color>(Colors.pink) ),
-            ),
-            SizedBox(
-              width: 10,
-              height:20,
-            ),
-            if (_isBusy)
-              CircularProgressIndicator(),
-          ],
+          ),
         ),
       ),
     );

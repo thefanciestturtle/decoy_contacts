@@ -64,6 +64,7 @@ Added Spanish description to Fastlane per https://github.com/BillDietrich/fake_c
 * "Delete" now removes only contacts this app created, never real contacts with the same name.
 * "Create" no longer makes duplicates.
 * Default phone template moved from Algeria's +213 to the reserved UK drama range +44 7700 900xxx.
+* Settings load once and save shortly after you stop typing (and when the app is backgrounded); the page scrolls on small screens; name lists wrap; Delete button is readable.
 
 
 
@@ -75,8 +76,6 @@ Added Spanish description to Fastlane per https://github.com/BillDietrich/fake_c
 * Add buttons to add/delete fake secondary info (e.g. birthday ?) on ALL contacts. Or make a separate app for that.
 * Want to explicitly set Notification permission off, but there's no way to do it.
 * Add photos from thispersondoesnotexist.com ?
-* Page doesn't scroll if screen is too short.
-* Inefficiency in the "save settings after every char changed in field" events.
 * Test on iOS.
 
 ### Development Environment

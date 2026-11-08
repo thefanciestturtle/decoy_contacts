@@ -21,7 +21,7 @@ void main() {
     expect(find.text('Email address template'), findsOneWidget);
     expect(find.widgetWithText(ElevatedButton, 'Create Fake Contacts'),
         findsOneWidget);
-    expect(find.widgetWithText(ElevatedButton, 'Delete Fake Contacts'),
+    expect(find.widgetWithText(FilledButton, 'Delete Fake Contacts'),
         findsOneWidget);
   });
 
@@ -66,5 +66,64 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('+15555550nnn'), findsOneWidget);
+  });
+
+  testWidgets('Edits are saved once typing pauses, not on every keystroke',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(MyApp());
+    await tester.pumpAndSettle();
+    final prefs = await SharedPreferences.getInstance();
+
+    await tester.enterText(
+        find.byKey(const Key('LastNames')), 'Zen, Zima');
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(prefs.getString('sListOfLastNames'), startsWith('Zen,Zaragoza'));
+
+    await tester.pump(kSaveDelay);
+    await tester.pumpAndSettle();
+    expect(prefs.getString('sListOfLastNames'), 'Zen, Zima');
+  });
+
+  testWidgets('An edit survives a rebuild (settings are not reloaded)',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(MyApp());
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const Key('FirstNames')), 'Zelda');
+    // Rebuild immediately, before the debounced save has run.
+    tester.view.physicalSize = const Size(1080, 2000);
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pump();
+    expect(find.text('Zelda'), findsOneWidget);
+    await tester.pumpAndSettle(kSaveDelay);
+  });
+
+  testWidgets('Short screens scroll instead of overflowing',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(720, 900);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(MyApp());
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await tester.scrollUntilVisible(
+        find.text('Delete Fake Contacts'), 100,
+        scrollable: find.byType(Scrollable).first);
+    expect(find.text('Delete Fake Contacts').hitTestable(), findsOneWidget);
+  });
+
+  testWidgets('Delete button text is readable and it greys out when disabled',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(MyApp());
+    await tester.pumpAndSettle();
+
+    final button = tester.widget<FilledButton>(find.byType(FilledButton));
+    final style = button.style!;
+    expect(style.foregroundColor!.resolve({}), Colors.white);
+    expect(style.backgroundColor!.resolve({}), Colors.pink);
+    expect(style.backgroundColor!.resolve({WidgetState.disabled}),
+        isNot(Colors.pink));
   });
 }
