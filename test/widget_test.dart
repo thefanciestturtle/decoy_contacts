@@ -1,30 +1,38 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility that Flutter provides. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fake_contacts/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
+
+  testWidgets('Home screen shows the settings fields and action buttons',
+      (WidgetTester tester) async {
     await tester.pumpWidget(MyApp());
+    await tester.pumpAndSettle();
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    expect(find.text('Last names'), findsOneWidget);
+    expect(find.text('First names'), findsOneWidget);
+    expect(find.text('Phone number template'), findsOneWidget);
+    expect(find.text('Email address template'), findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'Create Fake Contacts'),
+        findsOneWidget);
+    expect(find.widgetWithText(ElevatedButton, 'Delete Fake Contacts'),
+        findsOneWidget);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  testWidgets('First launch fills in the default settings',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(MyApp());
+    await tester.pumpAndSettle();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.textContaining('FIRST.LAST@example.com'), findsOneWidget);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('sEmailAddressTemplate'), 'FIRST.LAST@example.com');
+    expect(prefs.getString('sListOfLastNames'), startsWith('Zen,'));
   });
 }
