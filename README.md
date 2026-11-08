@@ -27,20 +27,22 @@ You could uninstall this app after creating the fake contacts, without causing a
 
 ### Customizing
 
-* The list of last names is just a comma-separated list.  You can edit it to have any names.  Best not to have any spaces.
+* The list of last names is just a comma-separated list.  You can edit it to have any names.  Spaces around the commas, empty entries and duplicate names are ignored.
 
 * The list of first names is similar.
 
-* The phone-number template is a single value used for all contacts.  Any character "n" in it will be replaced by a digit 0-9, derived from the contact's last name.  The default format is ```+2134567nnnn```, which is intended to use an unassigned country code "21".  You could delete the contents of this field if you wish, and no phone numbers will be generated.
+* The phone-number template is a single value used for all contacts.  Any character "n" in it will be replaced by a digit 0-9, derived from the contact's last name.  The default format is ```+447700900nnn```, which falls in the UK range Ofcom reserves for TV and film (+44 7700 900000 to 900999), so the numbers can never belong to a real person.  (The old default, ```+2134567nnnn```, was in Algeria's country code +213; if you still have it, the app switches you to the new default automatically.)  You could delete the contents of this field if you wish, and no phone numbers will be generated.
 
 * The email-address template is a single value used for all contacts.  Any string "FIRST" in it will be replaced by the contact's first name.  Any string "LAST" in it will be replaced by the contact's last name.  The default format is ```FIRST.LAST@example.com```, which is intended to be an unused email domain.  You could delete the contents of this field if you wish, and no email addresses will be generated.
 
 
 ### Quirks
 
-* The app is designed to be very simple.  A message at the bottom of the screen reports how many contacts were created/deleted (or that permission was denied), so you can tell the operation finished.  Since the operation loops over all firstname/lastname combinations, it may take a little while to finish; the button is disabled and a spinner is shown while it's working.  If you click the "Create" button multiple times, you just get one set of fake contacts.  If you click the "Delete" button and the specified contacts don't exist, nothing is deleted, and the message will say "Deleted 0 fake contact(s)".
+* The app is designed to be very simple.  A message at the bottom of the screen reports how many contacts were created/deleted (or that permission was denied), so you can tell the operation finished.  Since the operation loops over all firstname/lastname combinations, it may take a little while to finish; the button is disabled and a spinner is shown while it's working.  If you click the "Create" button multiple times, you just get one set of fake contacts; if you add names to the lists, only the new combinations are created.
 
-* Don't create any fake contact with the same full name as one of your real contacts.  If you delete fake contacts, the real one with same name will be deleted too.
+* "Delete" only removes contacts this app created.  When it creates contacts, the app privately records their internal IDs in its own storage (nothing is written into the contacts themselves, so other apps can't use it to filter out the fakes).  Delete removes only those recorded contacts, so a real contact that happens to have the same name as a fake one is never touched.  If Android has merged a fake contact with one of your real contacts, the app leaves that contact alone and tells you how many it skipped; you can remove the fake details by hand.
+
+* If you clear the app's data or uninstall it, or restore your contacts from a backup, the record of what it created is lost and "Delete" can no longer remove those fake contacts.  Delete them by hand in your Contacts app.  (Creating again won't make duplicates: contacts with exactly the same name, phone number and email address are recognised and skipped.)  The same applies to fake contacts made by versions 1.8 and earlier.
 
 * Replacements for "n" digits in phone numbers are calculated deterministicly (repeatably) from contact's last name.  So for example if 5 users of this app all just leave everything set at defaults, the same contacts will show up on each of their phones with the same names, phone numbers, and email addresses.  This is good, for data-poisoning purposes.  Further, all fake contacts with same last name will have same phone number (debatable whether this is good or bad).
 
@@ -57,6 +59,11 @@ Got published on F-Droid.
 Changed color of delete button, added space between buttons, added a lot more names, cleaned up the code a little.
 ### 1.8.0
 Added Spanish description to Fastlane per https://github.com/BillDietrich/fake_contacts/pull/5
+### Unreleased
+* Updated to current Flutter, Dart 3 and flutter_contacts; progress spinner and result messages (from https://github.com/BillDietrich/fake_contacts/pull/11).
+* "Delete" now removes only contacts this app created, never real contacts with the same name.
+* "Create" no longer makes duplicates.
+* Default phone template moved from Algeria's +213 to the reserved UK drama range +44 7700 900xxx.
 
 
 

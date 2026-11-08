@@ -8,6 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 //import 'dart:io';
 import 'package:flutter_contacts/flutter_contacts.dart';
 
+import 'fake_contacts_core.dart';
+
 void main() {
   runApp(MyApp());
 }
@@ -42,8 +44,8 @@ class _MyHomePageState extends State<MyHomePage> {
 
   String sListOfLastNames = "";
   String sListOfFirstNames = "";
-  var lastNames = [];
-  var firstNames = [];
+  List<String> lastNames = [];
+  List<String> firstNames = [];
   String sPhoneNumberTemplate = "";
   String sEmailAddressTemplate = "";
 
@@ -68,8 +70,8 @@ class _MyHomePageState extends State<MyHomePage> {
     if (sStoredLastNames == null) {
       sListOfLastNames = "Zen,Zaragoza,Zabinski,Zimmermann,Zapata,Zona,Zidane,Zeiss,Zimmer,Zaal,Zaman,Zambrano,Zanetti,Zangari,Zappa,Zavala,Zawisza,Zeegers,Zelenka,Zellweger,Zeni,Zhang,Zhao,Zheng,Zhou,Ziegler,Zima";
       sListOfFirstNames = "Zoe,Zach,Zbigniew,Zaire,Zero,Zakai,Zamir,Zan,Zanna,Zareen,Zeb,Zeki,Zelda,Zella,Zeno,Zephyr,Zhen,Zhi,Zhong,Zhu,Ziba,Ziggy,Zion,Zola,Zolyan,Zora,Zsazsa,Zuzana";
-      sPhoneNumberTemplate = "+2134567nnnn";
-      sEmailAddressTemplate = "FIRST.LAST@example.com";
+      sPhoneNumberTemplate = kDefaultPhoneTemplate;
+      sEmailAddressTemplate = kDefaultEmailTemplate;
       saveLastNames();
       saveFirstNames();
       savePhoneNumberTemplate();
@@ -79,11 +81,16 @@ class _MyHomePageState extends State<MyHomePage> {
       sListOfFirstNames = prefs.getString('sListOfFirstNames') ?? "";
       sPhoneNumberTemplate = prefs.getString('sPhoneNumberTemplate') ?? "";
       sEmailAddressTemplate = prefs.getString('sEmailAddressTemplate') ?? "";
+      if (sPhoneNumberTemplate == kLegacyDefaultPhoneTemplate) {
+        // old default was in Algeria's real country code (+213)
+        sPhoneNumberTemplate = kDefaultPhoneTemplate;
+        savePhoneNumberTemplate();
+      }
     }
 
     // create the arrays of names
-    lastNames = sListOfLastNames.split(",");
-    firstNames = sListOfFirstNames.split(",");
+    lastNames = parseNames(sListOfLastNames);
+    firstNames = parseNames(sListOfFirstNames);
 
     lastNamesController.text = sListOfLastNames;
     // this gets called for every keypress in the field, but no info about what's happening
@@ -124,34 +131,34 @@ class _MyHomePageState extends State<MyHomePage> {
     await prefs.setString("sEmailAddressTemplate", sEmailAddressTemplate);
   }
 
-  String generatePhoneNumber(String sLastName) {
-    log("generatePhoneNumber: called, sPhoneNumberTemplate " + sPhoneNumberTemplate + ", sLastName " + sLastName);
-    String sNumber = "";
-    int nNext = 0; // next char to use in sLastName
-
-    for (var i = 0; i < sPhoneNumberTemplate.length; i++) {
-      //log("generatePhoneNumber: i " + i.toString() + ", sPhoneNumberTemplate[i] " + sPhoneNumberTemplate[i] + ", nNext " + nNext.toString());
-      if (sPhoneNumberTemplate[i] != 'n') {
-        sNumber += sPhoneNumberTemplate[i];
-      } else {
-        if (nNext >= sLastName.length)
-          sNumber += "0";
-        else {
-          sNumber +=
-          (String.fromCharCode(
-              "0".codeUnitAt(0) + (sLastName.codeUnitAt(nNext) % 10)));
-          nNext++;
-        }
-      }
-    }
-
-    log("generatePhoneNumber: returning, sNumber " + sNumber);
-    return sNumber;
+  Future<Ledger> _loadLedger() async {
+    final prefs = await SharedPreferences.getInstance();
+    return Ledger.decode(prefs.getString(kLedgerPrefsKey));
   }
 
+  Future<void> _saveLedger(Ledger ledger) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(kLedgerPrefsKey, ledger.encode());
+  }
 
-  String generateEmailAddress(String sLastName, String sFirstName) {
-    return sEmailAddressTemplate.replaceAll("FIRST", sFirstName).replaceAll("LAST", sLastName);
+  /// Contact ID -> raw contact IDs for the whole address book (Android only).
+  Future<AddressBook> _snapshotAddressBook({List<String>? onlyContactIds}) async {
+    final contacts = await FlutterContacts.getAll(
+      properties: {ContactProperty.identifiers},
+      filter: onlyContactIds == null ? null : ContactFilter.ids(onlyContactIds),
+    );
+    return _toAddressBook(contacts);
+  }
+
+  AddressBook _toAddressBook(List<Contact> contacts) {
+    return {
+      for (final c in contacts)
+        if (c.id != null)
+          c.id!: [
+            for (final r in c.android?.identifiers?.rawContacts ?? const <RawContact>[])
+              if (r.rawContactId != null) r.rawContactId!,
+          ],
+    };
   }
 
   bool _isBusy = false;
@@ -170,24 +177,61 @@ class _MyHomePageState extends State<MyHomePage> {
     PermissionStatus permission = await FlutterContacts.permissions.request(PermissionType.readWrite);
 
     int nCreated = 0;
+    int nAlreadyExisted = 0;
+    int nUntracked = 0;
     String? sError;
     if (permission != PermissionStatus.granted) {
       log("_createAllContacts: no permission, status " + permission.toString());
     } else {
       try {
-        List<Contact> newContacts = [];
-        for (var i = 0; i < lastNames.length; i++) {
-          for (var j = 0; j < firstNames.length; j++) {
-            newContacts.add(Contact(
-                name: Name(first: firstNames[j], last: lastNames[i]),
-                phones: [Phone(number: generatePhoneNumber(lastNames[i]))],
-                emails: [Email(address: generateEmailAddress(lastNames[i], firstNames[j]))]));
-          }
+        final everyone = await FlutterContacts.getAll(properties: {
+          ContactProperty.identifiers,
+          ContactProperty.name,
+          ContactProperty.phone,
+          ContactProperty.email,
+        });
+        final before = _toAddressBook(everyone);
+        final existingFingerprints = {
+          for (final c in everyone)
+            ...fingerprintsOf(
+                c.displayName ?? "",
+                [for (final p in c.phones) p.number],
+                [for (final e in c.emails) e.address]),
+        };
+        final ledger = (await _loadLedger()).prunedTo(allRawIds(before));
+        final wanted = allCombinations(firstNames, lastNames);
+        final toCreate = namesToCreate(wanted, ledger, before,
+            existingFingerprints: existingFingerprints,
+            fingerprintOf: (n) => contactFingerprint(
+                n.displayName,
+                sPhoneNumberTemplate.isEmpty ? "" : generatePhoneNumber(sPhoneNumberTemplate, n.last),
+                sEmailAddressTemplate.isEmpty ? "" : generateEmailAddress(sEmailAddressTemplate, n.first, n.last)));
+        nAlreadyExisted = wanted.length - toCreate.length;
+
+        if (toCreate.isNotEmpty) {
+          final newContacts = [
+            for (final n in toCreate)
+              Contact(
+                  name: Name(first: n.first, last: n.last),
+                  phones: [
+                    if (sPhoneNumberTemplate.isNotEmpty)
+                      Phone(number: generatePhoneNumber(sPhoneNumberTemplate, n.last))
+                  ],
+                  emails: [
+                    if (sEmailAddressTemplate.isNotEmpty)
+                      Email(address: generateEmailAddress(sEmailAddressTemplate, n.first, n.last))
+                  ]),
+          ];
+          log("_createAllContacts: about to call FlutterContacts.createAll for " + newContacts.length.toString() + " contact(s)");
+          final ids = await FlutterContacts.createAll(newContacts);
+          final after = await _snapshotAddressBook(onlyContactIds: ids);
+          final created = newlyCreatedRawIds(
+              created: toCreate, createdContactIds: ids, before: before, after: after);
+          ledger.rawIdToName.addAll(created);
+          nCreated = ids.length;
+          nUntracked = nCreated - created.length;
         }
-        log("_createAllContacts: about to call FlutterContacts.createAll for " + newContacts.length.toString() + " contact(s)");
-        // if a Contact exists already, no error, another of same name is added
-        List<String> ids = await FlutterContacts.createAll(newContacts);
-        nCreated = ids.length;
+        await _saveLedger(ledger);
       } catch (e) {
         log("_createAllContacts: error " + e.toString());
         sError = e.toString();
@@ -197,11 +241,20 @@ class _MyHomePageState extends State<MyHomePage> {
 
     if (!mounted) return;
     setState(() { _isBusy = false; });
-    _showResultSnackBar(permission != PermissionStatus.granted
-        ? "Permission to access contacts was denied."
-        : sError != null
-            ? "Error while creating contacts: " + sError
-            : "Created " + nCreated.toString() + " fake contact(s).");
+    String sMessage;
+    if (permission != PermissionStatus.granted) {
+      sMessage = "Permission to access contacts was denied.";
+    } else if (sError != null) {
+      sMessage = "Error while creating contacts: " + sError;
+    } else {
+      sMessage = "Created " + nCreated.toString() + " fake contact(s).";
+      if (nAlreadyExisted > 0) sMessage += " " + nAlreadyExisted.toString() + " already existed.";
+      if (nUntracked > 0) {
+        sMessage += " Warning: " + nUntracked.toString() +
+            " could not be recorded and must be deleted by hand.";
+      }
+    }
+    _showResultSnackBar(sMessage);
   }
 
   Future<void> _deleteAllContacts() async {
@@ -212,28 +265,22 @@ class _MyHomePageState extends State<MyHomePage> {
     PermissionStatus permission = await FlutterContacts.permissions.request(PermissionType.readWrite);
 
     int nDeleted = 0;
+    int nSkippedMerged = 0;
     String? sError;
     if (permission != PermissionStatus.granted) {
       log("_deleteAllContacts: no permission, status " + permission.toString());
     } else {
       try {
-        List<String> idsToDelete = [];
-        for (var i = 0; i < lastNames.length; i++) {
-          for (var j = 0; j < firstNames.length; j++) {
-            String sDisplayName = firstNames[j] + " " + lastNames[i];
-            log("_deleteAllContacts: about to call FlutterContacts.getAll(filter: name=" + sDisplayName + ")");
-            List<Contact> matches = await FlutterContacts.getAll(filter: ContactFilter.name(sDisplayName));
-            for (var c in matches) {
-              // ContactFilter.name() does a partial match on Android, so only delete exact matches
-              if (c.displayName == sDisplayName && c.id != null) {
-                idsToDelete.add(c.id!);
-              }
-            }
-          }
-        }
-        log("_deleteAllContacts: about to call FlutterContacts.deleteAll for " + idsToDelete.length.toString() + " contact(s)");
-        await FlutterContacts.deleteAll(idsToDelete);
-        nDeleted = idsToDelete.length;
+        // Only contacts recorded in the ledger at creation time are deleted, never
+        // anything matched by name, so real contacts with the same name are safe.
+        final book = await _snapshotAddressBook();
+        final ledger = (await _loadLedger()).prunedTo(allRawIds(book));
+        final plan = planDelete(ledger, book);
+        log("_deleteAllContacts: about to call FlutterContacts.deleteAll for " + plan.contactIdsToDelete.length.toString() + " contact(s)");
+        await FlutterContacts.deleteAll(plan.contactIdsToDelete);
+        await _saveLedger(plan.remaining);
+        nDeleted = plan.rawContactsDeleted;
+        nSkippedMerged = plan.skippedMerged;
       } catch (e) {
         log("_deleteAllContacts: error " + e.toString());
         sError = e.toString();
@@ -243,11 +290,19 @@ class _MyHomePageState extends State<MyHomePage> {
 
     if (!mounted) return;
     setState(() { _isBusy = false; });
-    _showResultSnackBar(permission != PermissionStatus.granted
-        ? "Permission to access contacts was denied."
-        : sError != null
-            ? "Error while deleting contacts: " + sError
-            : "Deleted " + nDeleted.toString() + " fake contact(s).");
+    String sMessage;
+    if (permission != PermissionStatus.granted) {
+      sMessage = "Permission to access contacts was denied.";
+    } else if (sError != null) {
+      sMessage = "Error while deleting contacts: " + sError;
+    } else {
+      sMessage = "Deleted " + nDeleted.toString() + " fake contact(s).";
+      if (nSkippedMerged > 0) {
+        sMessage += " " + nSkippedMerged.toString() +
+            " were merged with other contacts and were left alone.";
+      }
+    }
+    _showResultSnackBar(sMessage);
   }
 
 
@@ -256,7 +311,7 @@ class _MyHomePageState extends State<MyHomePage> {
   void _changedLastNames(String sNewValue){
     log("_changedLastNames: called, " + sNewValue);
     sListOfLastNames = sNewValue;
-    lastNames = sListOfLastNames.split(",");
+    lastNames = parseNames(sListOfLastNames);
     //log("_changedLastNames: lastNames[0] == " + lastNames[0]);
     //log("_changedLastNames: lastNames.toString == " + lastNames.toString());
 
@@ -269,7 +324,7 @@ class _MyHomePageState extends State<MyHomePage> {
   void _changedFirstNames(String sNewValue){
     log("_changedFirstNames: called, " + sNewValue);
     sListOfFirstNames = sNewValue;
-    firstNames = sListOfFirstNames.split(",");
+    firstNames = parseNames(sListOfFirstNames);
     //log("_changedFirstNames: firstNames[0] == " + firstNames[0]);
     //log("_changedFirstNames: firstNames.toString == " + firstNames.toString());
 
