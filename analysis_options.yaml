@@ -3,6 +3,15 @@
 # plus Flutter-specific rules. https://dart.dev/tools/linter-rules
 include: package:flutter_lints/flutter.yaml
 
+# As in Flutter's app template. flutter_tools adds these back whenever any
+# is missing (on pub get, run, test and build), and wants <platform>/** for
+# every platform folder, so add one here when adding a platform.
+analyzer:
+  exclude:
+    - build/**
+    - android/**
+    - ios/**
+
 linter:
   rules:
     # Not in flutter_lints 6, but const widgets and literals avoid needless
