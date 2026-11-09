@@ -11,6 +11,9 @@ on:
 permissions:
   contents: read
 
+env:
+  FLUTTER_VERSION: 3.47.9
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,10 +26,26 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # The Gradle distribution and the Kotlin compiler are downloaded from
+      # GitHub releases, which sometimes time out (HTTP 504). Restoring them
+      # from the cache avoids that, and speeds up the build. Only a change to
+      # the Gradle files, the Flutter version or pubspec.lock makes a new
+      # cache entry.
+      - name: Cache Gradle
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
+            gradle-${{ runner.os }}-
+
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
-          flutter-version: 3.47.9
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Disable analytics
@@ -59,10 +78,26 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # The Gradle distribution and the Kotlin compiler are downloaded from
+      # GitHub releases, which sometimes time out (HTTP 504). Restoring them
+      # from the cache avoids that, and speeds up the build. Only a change to
+      # the Gradle files, the Flutter version or pubspec.lock makes a new
+      # cache entry.
+      - name: Cache Gradle
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
+            gradle-${{ runner.os }}-
+
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
-          flutter-version: 3.47.9
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Disable analytics
