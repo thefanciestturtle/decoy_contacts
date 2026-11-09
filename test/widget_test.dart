@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show Tristate;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -683,6 +684,24 @@ void main() {
       expect(warning.label, kNoN);
       expect(warning.parent!.label, 'Phone number template');
       expect(warning.parent!.flagsCollection.isTextField, isTrue);
+      semantics.dispose();
+      await tester.pumpAndSettle(kSaveDelay);
+    });
+
+    testWidgets('a disabled Create tells TalkBack why', (WidgetTester tester) async {
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(const MyApp());
+      await tester.pumpAndSettle();
+      SemanticsNode create() =>
+          tester.getSemantics(find.widgetWithText(ElevatedButton, 'Create Fake Contacts'));
+      expect(create().hint, isEmpty);
+
+      await type(tester, 'FirstNames', '');
+      expect(create().hint, 'Enter at least one first name.');
+      expect(create().flagsCollection.isEnabled, Tristate.isFalse);
+      await type(tester, 'FirstNames', 'Zoe');
+      expect(create().hint, isEmpty);
+      expect(create().flagsCollection.isEnabled, Tristate.isTrue);
       semantics.dispose();
       await tester.pumpAndSettle(kSaveDelay);
     });

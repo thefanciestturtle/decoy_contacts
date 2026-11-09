@@ -76,7 +76,7 @@ Confirmation deleteConfirmation(DeletePreview preview) => (
 
 /// What to do when [preview] has no names to combine: which list to fill
 /// in.
-String _enterNamesHint(SettingsPreview preview) {
+String enterNamesHint(SettingsPreview preview) {
   assert(preview.combinations == 0, 'both name lists have names');
   final bNoLast = preview.lastNameCount == 0, bNoFirst = preview.firstNameCount == 0;
   if (bNoLast && bNoFirst) return "Enter at least one last name and one first name.";
@@ -129,7 +129,7 @@ PreviewText settingsPreviewText(SettingsPreview preview) {
     n == 0 ? "no fake contacts" : _fakeContacts(n),
     n == 1 ? ":" : ".",
   ].join();
-  if (n == 0) return (text: "$sSum\n${_enterNamesHint(preview)}", phoneNumber: null);
+  if (n == 0) return (text: "$sSum\n${enterNamesHint(preview)}", phoneNumber: null);
   final sample = preview.sample!;
   final out = StringBuffer("$sSum\n${n == 1 ? "" : "For example: "}");
   (int, int)? phoneNumber;
@@ -171,7 +171,7 @@ String nothingToCreateMessage(CreatePreview preview, SettingsPreview settings) {
   if (existed == 0) {
     // Create makes every combination that doesn't exist yet, so making none
     // with none existing means a name list is empty.
-    return "Nothing to create. ${_enterNamesHint(settings)}";
+    return "Nothing to create. ${enterNamesHint(settings)}";
   }
   return "Nothing to create. ${_fakeContacts(existed)}"
       " ${existed == 1 ? "already exists" : "already exist"}.";

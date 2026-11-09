@@ -56,22 +56,35 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// What the settings as typed allow: Create only with at least one last
   /// and one first name (the preview says why not), and the warnings shown
   /// under the template fields (see input_checks.dart).
-  ({bool canCreate, String? phoneWarning, String? emailWarning}) _checks =
-      (canCreate: false, phoneWarning: null, emailWarning: null);
+  ///
+  /// [createBlocked] is why Create can't be used (the same hint as the
+  /// preview's), also given to TalkBack on the button; null if it can.
+  ({String? createBlocked, String? phoneWarning, String? emailWarning})
+      _checks = (createBlocked: null, phoneWarning: null, emailWarning: null);
 
   /// Called on any change to a text field, the cursor included.
   void _fieldsChanged() {
     if (!_settingsLoaded) return;
     final settings = _settings;
-    if (settings == _previewSettings) return;
+    final before = _previewSettings;
+    if (settings == before) return;
     _previewSettings = settings;
     final preview = previewSettings(settings);
     _preview.value = settingsPreviewText(preview);
+    // The email check goes through every name, so only when the template or
+    // a name list changed.
+    final bool bEmailUnchanged = before != null &&
+        before.emailTemplateText == settings.emailTemplateText &&
+        before.firstNamesText == settings.firstNamesText &&
+        before.lastNamesText == settings.lastNamesText;
     final checks = (
-      canCreate: preview.combinations > 0,
+      createBlocked:
+          preview.combinations > 0 ? null : enterNamesHint(preview),
       phoneWarning: phoneTemplateWarning(settings.phoneTemplate),
-      emailWarning: emailTemplateWarning(settings.emailTemplate,
-          firstNames: settings.firstNames, lastNames: settings.lastNames),
+      emailWarning: bEmailUnchanged
+          ? _checks.emailWarning
+          : emailTemplateWarning(settings.emailTemplate,
+              firstNames: settings.firstNames, lastNames: settings.lastNames),
     );
     if (checks != _checks) setState(() => _checks = checks);
   }
@@ -579,10 +592,15 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                   const SizedBox(height: 16),
                   Center(
                     child: ElevatedButton(
-                      onPressed: bCanAct && _checks.canCreate
+                      onPressed: bCanAct && _checks.createBlocked == null
                           ? () => _createAllContacts()
                           : null,
-                      child: const Text("Create Fake Contacts"),
+                      // While it can't be used, TalkBack also says why.
+                      // (Inside the button, so it joins the button's node.)
+                      child: Semantics(
+                        hint: _checks.createBlocked,
+                        child: const Text("Create Fake Contacts"),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 30),

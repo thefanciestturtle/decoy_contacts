@@ -9,7 +9,18 @@
 final RegExp _phoneTemplateCharacter = RegExp(r'[0-9n+ \-().\/*#,;]');
 
 final RegExp _whitespace = RegExp(r'\s');
-final RegExp _nonAscii = RegExp(r'[^\x00-\x7F]');
+
+/// Non-ASCII letters and their accents ("é", "ß", "ж"), which may be part
+/// of an address; other non-ASCII characters (a curly apostrophe, an
+/// emoji, a zero-width space) may not.
+final RegExp _nonAsciiLetter = RegExp(r'(?![\x00-\x7F])[\p{L}\p{M}]', unicode: true);
+
+/// Characters that can't be seen when quoted: spaces other than " ",
+/// controls and formatting characters such as a zero-width space.
+final RegExp _invisible = RegExp(r'^[\p{C}\p{Z}]$', unicode: true);
+
+/// Bad phone characters named in a warning before "and N more".
+const int _kNamedAtMost = 5;
 
 /// Characters allowed in the part of an address before the @ (RFC 5322
 /// "atext"; dots are checked separately). Non-ASCII letters are allowed too,
@@ -35,6 +46,12 @@ String? phoneTemplateWarning(String template) {
   ]);
 }
 
+/// How a character is named in a warning: in quotes, or as U+XXXX if it
+/// can't be seen (but a plain space is " ").
+String _named(String c) => c != ' ' && _invisible.hasMatch(c)
+    ? 'U+${c.runes.single.toRadixString(16).toUpperCase().padLeft(4, '0')}'
+    : '"$c"';
+
 /// A warning about the email address template (already trimmed), or null.
 /// An empty template is fine: the fakes get no email address.
 ///
@@ -49,6 +66,9 @@ String? emailTemplateWarning(String template,
       template.replaceAll('FIRST', first).replaceAll('LAST', last);
   if (!_looksLikeAnAddress(fill())) {
     return "This doesn't look like an email address (FIRST.LAST@example.com).";
+  }
+  if (!template.contains('FIRST') && !template.contains('LAST')) {
+    return "There is no FIRST or LAST, so every contact gets the same address.";
   }
   final unusable = {
     if (template.contains('FIRST'))
@@ -72,7 +92,7 @@ bool _looksLikeAnAddress(String address) {
   final parts = address.split('@');
   if (parts.length != 2 || address.contains(_whitespace)) return false;
   bool allowed(String part, RegExp ascii) =>
-      ascii.hasMatch(part.replaceAll(_nonAscii, 'a'));
+      ascii.hasMatch(part.replaceAll(_nonAsciiLetter, 'a'));
   final local = parts[0].split('.');
   final domain = parts[1].split('.');
   return local.every((p) => p.isNotEmpty && allowed(p, _localCharacters)) &&
@@ -80,11 +100,14 @@ bool _looksLikeAnAddress(String address) {
       domain.every((p) => allowed(p, _domainLabel));
 }
 
-/// '"a"', '"a" or "b"', '"a", "b" or "c"'.
+/// '"a"', '"a" or "b"', '"a", "b" or "c"', and after [_kNamedAtMost]
+/// characters '"a", "b", "c", "d", "e" or 3 more'.
 String _orList(List<String> items) {
-  final quoted = [for (final i in items) '"$i"'];
-  if (quoted.length == 1) return quoted.single;
-  return '${quoted.sublist(0, quoted.length - 1).join(', ')} or ${quoted.last}';
+  final named = [for (final i in items.take(_kNamedAtMost)) _named(i)];
+  final more = items.length - named.length;
+  if (more > 0) return '${named.join(', ')} or $more more';
+  if (named.length == 1) return named.single;
+  return '${named.sublist(0, named.length - 1).join(', ')} or ${named.last}';
 }
 
 String? _lines(List<String> lines) => lines.isEmpty ? null : lines.join('\n');

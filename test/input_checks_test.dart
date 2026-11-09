@@ -49,6 +49,16 @@ void main() {
           'A phone number can\'t contain "\u{1F4DE}".');
     });
 
+    test('a long list of characters is cut short', () {
+      expect(phoneTemplateWarning('abcdefgh nnn'),
+          'A phone number can\'t contain "a", "b", "c", "d", "e" or 3 more.');
+    });
+
+    test('characters that can\'t be seen are named by their code', () {
+      expect(phoneTemplateWarning('+44\u200B7700\u00A0900nnn'),
+          'A phone number can\'t contain U+200B or U+00A0.');
+    });
+
     test('both, e.g. a capital N', () {
       expect(phoneTemplateWarning('+447700900NNN'),
           'A phone number can\'t contain "N".\n$kNoN');
@@ -64,10 +74,9 @@ void main() {
         'LAST.FIRST@mail.example.net',
         "fake-FIRST_LAST+1@example.com",
         "o'FIRST@example.com",
-        'someone@example.com',
         'FIRST@LAST.example.com',
         'FIRST@my-domain.example',
-        'José@example.com',
+        'José.FIRST@example.com',
         'FIRST@bücher.example',
       ]) {
         expect(email(t), isNull, reason: t);
@@ -117,7 +126,28 @@ void main() {
       expect(email(kDefaultEmailTemplate, first: ['Zoë', 'José']), isNull);
       expect(email('LAST@example.com', first: ['Mary Ann']), isNull);
       expect(email('FIRST@example.com', last: ['Van Dyke']), isNull);
-      expect(email('someone@example.com', first: ['Mary Ann']), isNull);
+    });
+
+    test('no FIRST or LAST: every contact gets the same address', () {
+      const kSame =
+          'There is no FIRST or LAST, so every contact gets the same address.';
+      for (final t in ['someone@example.com', 'first.last@example.com']) {
+        expect(email(t, first: ['Mary Ann']), kSame, reason: t);
+      }
+    });
+
+    test('only accented letters pass, not other non-ASCII characters', () {
+      String one(String name) => '"$name" can\'t be part of an email address,'
+          ' so those addresses won\'t work.';
+      // A curly apostrophe (as autocorrect types it) in a domain.
+      expect(email('FIRST@LAST.com', last: ['O\u2019Brien']),
+          one('O\u2019Brien'));
+      // A zero-width space, which isn't white space.
+      expect(email(kDefaultEmailTemplate, first: ['Zo\u200Be']),
+          one('Zo\u200Be'));
+      expect(email(kDefaultEmailTemplate, first: ['Zoe\u{1F600}']),
+          one('Zoe\u{1F600}'));
+      expect(email('FIRST@LAST.com', last: ['Müller', 'Жуков']), isNull);
     });
 
     test('several such names', () {
