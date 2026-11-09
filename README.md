@@ -81,6 +81,10 @@ Added Spanish description to Fastlane per https://github.com/BillDietrich/fake_c
 * Add photos from thispersondoesnotexist.com ?
 * Test on iOS.
 
+### Tests
+* `flutter test` runs the unit and widget tests.
+* `tool/integration_test.sh --wipe-contacts` runs the on-device tests in `integration_test/`, which create and delete contacts through the app. The script only runs on an Android emulator, and `--wipe-contacts` empties the emulator's address book first. CI runs both.
+
 ### Development Environment
 I'm no expert on this stuff, this is my first phone app, maybe I'm doing some things stupidly.
 
