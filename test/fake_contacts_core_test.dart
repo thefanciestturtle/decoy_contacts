@@ -136,7 +136,7 @@ void main() {
     test('skips an untracked contact identical to the fake (lost ledger)', () {
       // Same name, number and email as the fake would get, but not in the
       // ledger, e.g. after the app's data was cleared.
-      final zoe = const FakeName('Zoe', 'Zen');
+      const zoe = FakeName('Zoe', 'Zen');
       final existing = fingerprintsOf(
         'Zoe Zen',
         [generatePhoneNumber(kDefaultPhoneTemplate, 'Zen')],
