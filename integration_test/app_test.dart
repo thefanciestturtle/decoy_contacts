@@ -53,11 +53,8 @@ const List<RealContact> kRealContacts = [
 const Account kOtherAccount =
     Account(id: '', name: 'Other account', type: 'com.example.contacts');
 
-const String kMergedSuffix =
-    ' were merged with other contacts and were left alone.';
-const String kChangedSuffix =
-    " no longer match what this app created (edited, or the app's records"
-    " came from another phone) and were left alone.";
+const String kCreate = 'Create Fake Contacts';
+const String kDelete = 'Delete Fake Contacts';
 
 const Duration kActionTimeout = Duration(seconds: 60);
 
@@ -81,7 +78,13 @@ void main() {
     final real = await seed(kRealContacts);
     await launchApp(tester);
 
-    expect(await tapAndWaitForResult(tester, 'Create Fake Contacts'),
+    await tapAndCancel(tester, kCreate, 'Create 4 fake contacts?');
+    expect(describeAll(await readAddressBook()), describeAll(real));
+    expect(await storedLedger(), isEmpty);
+
+    expect(
+        await tapAndWaitForResult(tester, kCreate,
+            confirm: 'Create 4 fake contacts?'),
         'Created 4 fake contact(s).');
 
     final book = await readAddressBook();
@@ -106,8 +109,8 @@ void main() {
     });
     final ledgerAfterFirst = await storedLedger();
 
-    expect(await tapAndWaitForResult(tester, 'Create Fake Contacts'),
-        'Created 0 fake contact(s). 4 already existed.');
+    expect(await tapAndWaitForResult(tester, kCreate),
+        'Nothing to create. 4 fake contacts already exist.');
     expect(describeAll(await readAddressBook()), describeAll(book));
     expect(await storedLedger(), ledgerAfterFirst);
   });
@@ -117,19 +120,29 @@ void main() {
     await startWithEmptyAddressBook(tester);
     final real = await seed(kRealContacts);
     await launchApp(tester);
-    expect(await tapAndWaitForResult(tester, 'Create Fake Contacts'),
+    expect(
+        await tapAndWaitForResult(tester, kCreate,
+            confirm: 'Create 4 fake contacts?'),
         'Created 4 fake contact(s).');
-    expect(await readAddressBook(), hasLength(real.length + kFakes.length));
+    final withFakes = await readAddressBook();
+    expect(withFakes, hasLength(real.length + kFakes.length));
+    final ledgerWithFakes = await storedLedger();
 
-    expect(await tapAndWaitForResult(tester, 'Delete Fake Contacts'),
+    await tapAndCancel(tester, kDelete, 'Delete 4 fake contacts?');
+    expect(describeAll(await readAddressBook()), describeAll(withFakes));
+    expect(await storedLedger(), ledgerWithFakes);
+
+    expect(
+        await tapAndWaitForResult(tester, kDelete,
+            confirm: 'Delete 4 fake contacts?'),
         'Deleted 4 fake contact(s).');
 
     final book = await readAddressBook();
     expect(describeAll(book), describeAll(real));
     expect(await storedLedger(), isEmpty);
 
-    expect(await tapAndWaitForResult(tester, 'Delete Fake Contacts'),
-        'Deleted 0 fake contact(s).');
+    expect(await tapAndWaitForResult(tester, kDelete),
+        'No fake contacts to delete.');
     expect(describeAll(await readAddressBook()), describeAll(real));
   });
 
@@ -148,7 +161,9 @@ void main() {
     final real = await seed(kRealContacts);
     await launchApp(tester);
 
-    expect(await tapAndWaitForResult(tester, 'Create Fake Contacts'),
+    expect(
+        await tapAndWaitForResult(tester, kCreate,
+            confirm: 'Create 4 fake contacts?'),
         'Created 4 fake contact(s).');
     // Linking can give the contact a new contact ID; its raw contact keeps
     // its ID.
@@ -158,8 +173,11 @@ void main() {
         reason: 'Android should have linked the fake Zach Zima into the real '
             'one: $merged');
 
-    expect(await tapAndWaitForResult(tester, 'Delete Fake Contacts'),
-        'Deleted 3 fake contact(s). 1$kMergedSuffix');
+    expect(
+        await tapAndWaitForResult(tester, kDelete,
+            confirm: 'Delete 3 fake contacts?'),
+        'Deleted 3 fake contact(s). 1 was merged with another contact and '
+        'was left alone.');
 
     final book = await readAddressBook();
     expect(book, hasLength(real.length + 1));
@@ -198,13 +216,15 @@ void main() {
     await prefs.setString(kLedgerPrefsKey, jsonEncode(ledger));
     await launchApp(tester);
 
-    expect(await tapAndWaitForResult(tester, 'Delete Fake Contacts'),
-        'Deleted 0 fake contact(s). 3$kChangedSuffix');
+    // Nothing to delete, so no dialog.
+    expect(await tapAndWaitForResult(tester, kDelete),
+        "No fake contacts to delete. 3 no longer match what this app created "
+        "(edited, or the app's records came from another phone) and were left "
+        "alone.");
 
     expect(describeAll(await readAddressBook()), describeAll(real));
-    // Skipped entries stay in the ledger (the name-only one is saved with
-    // the details it was checked against).
-    expect((await storedLedger()).keys, unorderedEquals(ledger.keys));
+    // Nothing ran, so the ledger is as it was.
+    expect(await storedLedger(), ledger);
   });
 }
 
@@ -274,11 +294,20 @@ bool createButtonEnabled(WidgetTester tester) {
 /// Taps the button labelled [label] and returns the text of the snack bar
 /// with the result. The app talks to the real contacts provider, so this
 /// waits in real time rather than relying on pumpAndSettle.
-Future<String> tapAndWaitForResult(WidgetTester tester, String label) async {
-  final button = find.text(label);
-  await tester.ensureVisible(button);
-  await tester.pumpAndSettle();
-  await tester.tap(button);
+///
+/// If [confirm] is given, expects the dialog that asks to go ahead, with
+/// that title, and confirms it. Otherwise expects the result without a
+/// dialog.
+Future<String> tapAndWaitForResult(WidgetTester tester, String label,
+    {String? confirm}) async {
+  await tapAndWaitForAnswer(tester, label);
+  if (confirm != null) {
+    expectDialog(tester, confirm);
+    await tester.tap(dialogButton(label.split(' ').first));
+  } else {
+    expect(find.byType(AlertDialog), findsNothing,
+        reason: '"$label" should not ask here');
+  }
   await pumpUntil(tester, () => find.byType(SnackBar).evaluate().isNotEmpty,
       'result of "$label"');
   final bar = tester.widget<SnackBar>(find.byType(SnackBar));
@@ -291,6 +320,47 @@ Future<String> tapAndWaitForResult(WidgetTester tester, String label) async {
   await tester.pumpAndSettle();
   return text;
 }
+
+/// Taps the button labelled [label], expects the dialog that asks to go
+/// ahead, with the title [title], and taps Cancel.
+Future<void> tapAndCancel(
+    WidgetTester tester, String label, String title) async {
+  await tapAndWaitForAnswer(tester, label);
+  expectDialog(tester, title);
+  await tester.tap(dialogButton('Cancel'));
+  await pumpUntil(tester, () => find.byType(AlertDialog).evaluate().isEmpty,
+      'dialog closed');
+  await pumpUntil(tester, () => createButtonEnabled(tester), 'app idle');
+  await tester.pumpAndSettle();
+  expect(find.byType(SnackBar), findsNothing);
+}
+
+/// Taps the button labelled [label] and waits until the app either asks to
+/// go ahead or shows a result.
+Future<void> tapAndWaitForAnswer(WidgetTester tester, String label) async {
+  final button = find.text(label);
+  await tester.ensureVisible(button);
+  await tester.pumpAndSettle();
+  await tester.tap(button);
+  await pumpUntil(
+      tester,
+      () =>
+          find.byType(AlertDialog).evaluate().isNotEmpty ||
+          find.byType(SnackBar).evaluate().isNotEmpty,
+      'answer to "$label"');
+  await tester.pumpAndSettle();
+}
+
+void expectDialog(WidgetTester tester, String title) {
+  expect(find.byType(AlertDialog), findsOneWidget,
+      reason: 'expected the dialog "$title"');
+  expect(
+      find.descendant(of: find.byType(AlertDialog), matching: find.text(title)),
+      findsOneWidget);
+}
+
+Finder dialogButton(String label) => find.descendant(
+    of: find.byType(AlertDialog), matching: find.widgetWithText(TextButton, label));
 
 Future<void> pumpUntil(
     WidgetTester tester, bool Function() condition, String what) async {
