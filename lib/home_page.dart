@@ -548,6 +548,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                           enabled: bCanAct,
                           keyboardType: TextInputType.emailAddress,
                           autocorrect: false,
+                          // Suggestions stay on: without them Android gets a
+                          // keyboard with no @ key.
                           decoration: _fieldDecoration('Email address template',
                               warning: _checks.emailWarning),
                         ),

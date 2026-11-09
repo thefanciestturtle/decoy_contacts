@@ -754,6 +754,13 @@ void main() {
       expect(field.keyboardType, TextInputType.text);
       expect(field.autocorrect, isFalse);
       expect(field.enableSuggestions, isFalse);
+      // The email template keeps the email keyboard (with an @ key), which
+      // Android only gives with suggestions on; autocorrect is off.
+      final email =
+          tester.widget<TextField>(find.byKey(const Key('EmailAddressTemplate')));
+      expect(email.keyboardType, TextInputType.emailAddress);
+      expect(email.autocorrect, isFalse);
+      expect(email.enableSuggestions, isTrue);
     });
 
     testWidgets('warnings fit a small screen at a large font size',

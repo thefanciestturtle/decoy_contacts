@@ -63,6 +63,9 @@ void main() {
       // A lone accent can't be seen on its own.
       expect(phoneTemplateWarning('\u0301+44 7700 900nnn'),
           'A phone number can\'t contain U+0301.');
+      // A zero-width joiner joins the digit before it, and is named.
+      expect(phoneTemplateWarning('+44 1\u200Dnnn'),
+          'A phone number can\'t contain "1<U+200D>".');
     });
 
     test('characters that can\'t be seen are named by their code', () {
@@ -157,6 +160,11 @@ void main() {
       // can be seen.
       expect(email(kDefaultEmailTemplate, first: ['Zo\u200Be']),
           one('Zo<U+200B>e'));
+      // Also when it joins the letter before it.
+      expect(email(kDefaultEmailTemplate, first: ['Zoe\u200D']),
+          one('Zoe<U+200D>'));
+      expect(email(kDefaultEmailTemplate, first: ['Zoe\u200C']),
+          one('Zoe<U+200C>'));
       expect(email(kDefaultEmailTemplate, first: ['Zoe\u{1F600}']),
           one('Zoe\u{1F600}'));
       expect(email('FIRST@LAST.com', last: ['Müller', 'Жуков']), isNull);
@@ -191,6 +199,17 @@ void main() {
       expect(email(kDefaultEmailTemplate, first: ['Z' * 70]),
           '"${'Z' * 70}" can\'t be part of an email address, so those '
           'addresses won\'t work.');
+    });
+
+    test('the longest names together may be too long', () {
+      final first = 'F' * 40, last = 'L' * 40;
+      expect(email('FIRSTLAST@example.com', first: [first, 'Zoe'], last: [last]),
+          '"$first" with "$last" makes an email address that\'s too long '
+          'to work.');
+      // Each one alone, or a short partner, is fine.
+      expect(email('FIRSTLAST@example.com', first: [first], last: ['Zen']),
+          isNull);
+      expect(email('FIRST@LAST.example', first: [first], last: [last]), isNull);
     });
 
     test('a template that isn\'t an address says only that', () {

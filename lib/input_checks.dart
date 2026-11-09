@@ -20,12 +20,14 @@ final RegExp _whitespace = RegExp(r'\s');
 /// emoji, a zero-width space) may not.
 final RegExp _nonAsciiLetter = RegExp(r'(?![\x00-\x7F])[\p{L}\p{M}]', unicode: true);
 
-/// Characters that can't be seen when quoted on their own: spaces other
-/// than " ", controls, formatting characters such as a zero-width space,
-/// and lone accents or variation selectors.
-final RegExp _invisible = RegExp(r'^[\p{C}\p{Z}\p{M}]+$', unicode: true);
+/// Code points that can't be seen: spaces other than " ", controls and
+/// formatting characters such as a zero-width space or joiner.
+final RegExp _hidden = RegExp(r'^[\p{C}\p{Z}]$', unicode: true);
 
-/// Bad phone characters named in a warning before "and N more".
+/// A lone accent or variation selector, which can't be seen on its own.
+final RegExp _mark = RegExp(r'^\p{M}$', unicode: true);
+
+/// Bad phone characters named in a warning before "or N more".
 const int _kNamedAtMost = 5;
 
 /// Characters allowed in the part of an address before the @ (RFC 5322
@@ -56,18 +58,36 @@ String? phoneTemplateWarning(String template) {
 /// How a character is named in a warning: in quotes, or by its code
 /// (U+200B) if it can't be seen.
 String _named(String c) =>
-    _invisible.hasMatch(c) ? _codes(c) : '"$c"';
+    _isInvisible(c) ? c.runes.map(_code).join(' ') : _quoted(c);
 
-/// A name in quotes, with the characters in it that can't be seen given by
-/// their code: `"Zoe<U+200B>"`. Plain spaces stay spaces.
-String _quotedName(String name) => '"${[
-      for (final c in name.characters)
-        c != ' ' && _invisible.hasMatch(c) ? '<${_codes(c)}>' : c,
+/// [text] in quotes, with each code point that can't be seen given by its
+/// code (`"Zoe<U+200B>"`, also when it is joined to the letter before it,
+/// as a zero-width joiner is). Plain spaces stay spaces, accents stay on
+/// their letters, and a lone accent is given by its code too.
+String _quoted(String text) => '"${[
+      for (final c in text.characters)
+        if (_isInvisible(c))
+          '<${c.runes.map(_code).join(' ')}>'
+        else
+          [
+            for (final r in c.runes)
+              _hidden.hasMatch(String.fromCharCode(r)) && r != 0x20
+                  ? '<${_code(r)}>'
+                  : String.fromCharCode(r),
+          ].join(),
     ].join()}"';
 
-String _codes(String c) => c.runes
-    .map((r) => 'U+${r.toRadixString(16).toUpperCase().padLeft(4, '0')}')
-    .join(' ');
+/// A character the user sees nothing of: only hidden code points and lone
+/// accents (but not a plain space).
+bool _isInvisible(String c) =>
+    c != ' ' &&
+    c.runes.every((r) {
+      final s = String.fromCharCode(r);
+      return _hidden.hasMatch(s) || _mark.hasMatch(s);
+    });
+
+String _code(int rune) =>
+    'U+${rune.toRadixString(16).toUpperCase().padLeft(4, '0')}';
 
 /// A warning about the email address template (already trimmed), or null.
 /// An empty template is fine: the fakes get no email address.
@@ -93,9 +113,22 @@ String? emailTemplateWarning(String template,
     if (template.contains('LAST'))
       ...lastNames.where((n) => !_looksLikeAnAddress(fill(last: n))),
   }.toList();
-  if (unusable.isEmpty) return null;
+  if (unusable.isEmpty) {
+    // Each name works with a short one for the other placeholder; the
+    // longest of both together may still be too long.
+    if (!template.contains('FIRST') || !template.contains('LAST') ||
+        firstNames.isEmpty || lastNames.isEmpty) {
+      return null;
+    }
+    String longest(List<String> names) =>
+        names.reduce((a, b) => b.length > a.length ? b : a);
+    final first = longest(firstNames), last = longest(lastNames);
+    if (_withinLimits(fill(first: first, last: last))) return null;
+    return "${_quoted(first)} with ${_quoted(last)} makes an email address"
+        " that's too long to work.";
+  }
   final others = unusable.length - 1;
-  final sFirst = _quotedName(unusable.first);
+  final sFirst = _quoted(unusable.first);
   return others == 0
       ? "$sFirst can't be part of an email address, so those addresses won't"
           " work."
@@ -111,14 +144,23 @@ String? emailTemplateWarning(String template,
 bool _looksLikeAnAddress(String address) {
   final parts = address.split('@');
   if (parts.length != 2 || address.contains(_whitespace)) return false;
-  if (address.length > 254 || parts[0].length > 64) return false;
+  if (!_withinLimits(address)) return false;
   bool allowed(String part, RegExp ascii) =>
       ascii.hasMatch(part.replaceAll(_nonAsciiLetter, 'a'));
   final local = parts[0].split('.');
   final domain = parts[1].split('.');
   return local.every((p) => p.isNotEmpty && allowed(p, _localCharacters)) &&
       domain.length >= 2 &&
-      domain.every((p) => p.length <= 63 && allowed(p, _domainLabel));
+      domain.every((p) => allowed(p, _domainLabel));
+}
+
+/// Within the length limits: 254 characters in all, 64 before the last @,
+/// 63 per label after it.
+bool _withinLimits(String address) {
+  final at = address.lastIndexOf('@');
+  return address.length <= 254 &&
+      at <= 64 &&
+      address.substring(at + 1).split('.').every((l) => l.length <= 63);
 }
 
 /// '"a"', '"a" or "b"', '"a", "b" or "c"', and after [_kNamedAtMost]
