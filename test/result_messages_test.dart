@@ -107,6 +107,21 @@ void main() {
           'Enter at least one last name and one first name.');
     });
 
+    test('more than 10000 contacts get a warning (U4)', () {
+      const kWarning = 'That many take a long time to create and can slow '
+          'down your contacts app.';
+      expect(_text(settingsMake(100, 100)), isNot(contains(kWarning)));
+      expect(_text(settingsMake(10001, 1)),
+          '10001 last names × 1 first name = 10001 fake contacts.\n'
+          'For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com\n'
+          '$kWarning');
+      final spoken = settingsPreviewText(settingsMake(2000, 2000));
+      expect(spoken.spoken, endsWith('\n$kWarning'));
+      // The phone number is still where it says.
+      final (start, end) = spoken.spokenPhoneNumber!;
+      expect(spoken.spoken.substring(start, end), '+447700900010');
+    });
+
     test('for a screen reader: words instead of signs and dots', () {
       expect(settingsPreviewText(settingsMake(27, 28)).spoken,
           '27 last names times 28 first names makes 756 fake contacts.\n'

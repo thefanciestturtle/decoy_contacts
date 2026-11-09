@@ -24,6 +24,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Same version as the Flutter SDK pins; for splitting text into the
+  # characters a user sees (input checks).
+  characters: ^1.4.1
   flutter_contacts: ^2.6.0
   shared_preferences: ^2.5.6
 

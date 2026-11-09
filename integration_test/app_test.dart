@@ -119,6 +119,21 @@ void main() {
         'Nothing to create. 4 fake contacts already exist.');
     expect(describeAll(await readAddressBook()), describeAll(book));
     expect(await storedLedger(), ledgerAfterFirst);
+
+    // U4: these settings give no warnings, and without last names Create
+    // is disabled (the preview says why).
+    for (final key in ['PhoneNumberTemplate', 'EmailAddressTemplate']) {
+      expect(tester.widget<TextField>(find.byKey(Key(key))).decoration!.helper,
+          isNull, reason: key);
+    }
+    await tester.enterText(find.byKey(const Key('LastNames')), '');
+    await tester.pumpAndSettle();
+    expect(createButtonEnabled(tester), isFalse);
+    expect(tester.widget<Text>(find.byKey(const Key('Preview'))).data,
+        endsWith('\nEnter at least one last name.'));
+    await tester.enterText(find.byKey(const Key('LastNames')), 'Zen, Zima');
+    await tester.pumpAndSettle();
+    expect(createButtonEnabled(tester), isTrue);
   });
 
   testWidgets('Delete removes the fakes, and every real contact survives',
@@ -307,7 +322,16 @@ Future<Map<String, Contact>> seed(List<RealContact> contacts,
 Future<void> launchApp(WidgetTester tester) async {
   await tester.pumpWidget(const MyApp());
   // The buttons are enabled once the settings are loaded.
-  await pumpUntil(tester, () => createButtonEnabled(tester), 'settings loaded');
+  await pumpUntil(tester, () => appIdle(tester), 'settings loaded');
+}
+
+/// Whether the app is ready for a tap: the settings are loaded and no
+/// Create or Delete is running. (Delete, not Create: Create is also disabled
+/// while a name list is empty.)
+bool appIdle(WidgetTester tester) {
+  final button = find.byType(FilledButton);
+  return button.evaluate().isNotEmpty &&
+      tester.widget<FilledButton>(button).enabled;
 }
 
 bool createButtonEnabled(WidgetTester tester) {
@@ -341,7 +365,7 @@ Future<String> tapAndWaitForResult(WidgetTester tester, String label,
   tester
       .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
       .removeCurrentSnackBar();
-  await pumpUntil(tester, () => createButtonEnabled(tester), 'app idle');
+  await pumpUntil(tester, () => appIdle(tester), 'app idle');
   await tester.pumpAndSettle();
   return text;
 }
@@ -365,7 +389,7 @@ Future<void> tapAndCancel(
   await tester.tap(dialogButton('Cancel'));
   await pumpUntil(tester, () => find.byType(AlertDialog).evaluate().isEmpty,
       'dialog closed');
-  await pumpUntil(tester, () => createButtonEnabled(tester), 'app idle');
+  await pumpUntil(tester, () => appIdle(tester), 'app idle');
   await tester.pumpAndSettle();
   expect(find.byType(SnackBar), findsNothing);
 }

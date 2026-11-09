@@ -7,6 +7,7 @@ import 'package:flutter/rendering.dart';
 
 import 'contact_actions.dart';
 import 'contacts_gateway.dart';
+import 'input_checks.dart';
 import 'result_messages.dart';
 import 'settings_store.dart';
 
@@ -52,13 +53,52 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   final ValueNotifier<PreviewText?> _preview = ValueNotifier(null);
   Settings? _previewSettings;
 
+  /// What the settings as typed allow: Create only with at least one last
+  /// and one first name (the preview says why not), and the warnings shown
+  /// under the template fields (see input_checks.dart).
+  ///
+  /// [createBlocked] is why Create can't be used (the same hint as the
+  /// preview's), also given to TalkBack on the button; null if it can.
+  ({String? createBlocked, String? phoneWarning, String? emailWarning})
+      _checks = (createBlocked: null, phoneWarning: null, emailWarning: null);
+
+  /// The email check for the current template. It remembers each name's
+  /// result, so with a long name list a keystroke only checks new names.
+  EmailTemplateCheck? _emailCheck;
+
+  /// The texts the email warning in [_checks] was worked out from, so a
+  /// keystroke in another field doesn't redo it.
+  (String, String, String)? _emailCheckedFor;
+
   /// Called on any change to a text field, the cursor included.
   void _fieldsChanged() {
     if (!_settingsLoaded) return;
     final settings = _settings;
     if (settings == _previewSettings) return;
     _previewSettings = settings;
-    _preview.value = settingsPreviewText(previewSettings(settings));
+    final preview = previewSettings(settings);
+    _preview.value = settingsPreviewText(preview);
+    if (_emailCheck?.template != settings.emailTemplate) {
+      _emailCheck = EmailTemplateCheck(settings.emailTemplate);
+    }
+    final emailInputs = (settings.emailTemplateText, settings.firstNamesText,
+        settings.lastNamesText);
+    final String? emailWarning = emailInputs == _emailCheckedFor
+        ? _checks.emailWarning
+        : _emailCheck!.warning(
+            firstNames: settings.firstNames, lastNames: settings.lastNames);
+    _emailCheckedFor = emailInputs;
+    final checks = (
+      createBlocked:
+          preview.combinations > 0 ? null : enterNamesHint(preview),
+      phoneWarning: phoneTemplateWarning(settings.phoneTemplate),
+      emailWarning: emailWarning,
+    );
+    if (checks != _checks) {
+      setState(() => _checks = checks);
+      // A warning under a template field moves the preview down.
+      _scheduleRevealPreview();
+    }
   }
 
   // The text fields are the single source of truth for the settings. They
@@ -93,6 +133,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     _preview.addListener(_scheduleRevealPreview);
     _phoneFocus.addListener(_scheduleRevealPreview);
     _emailFocus.addListener(_scheduleRevealPreview);
+    // The email warning is a live region only while its field has the focus.
+    _emailFocus.addListener(_focusChanged);
     _loadSettings();
   }
 
@@ -425,9 +467,36 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         rect: Rect.fromLTRB(caret.left, top, caret.right, bottom));
   }
 
-  InputDecoration _fieldDecoration(String sLabel) {
+  void _focusChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// [warning], if any, is shown under the field like a helper text, but
+  /// never cut off. With [bLive], TalkBack reads it out when it appears or
+  /// changes (a live region, as Flutter gives error texts; helper texts
+  /// have none). The email warning is live only while its field has the
+  /// focus: it names the name being typed in a name field, and would be
+  /// read out on every keystroke there. (Becoming live as the field gets
+  /// the focus may read it once more then.)
+  InputDecoration _fieldDecoration(String sLabel,
+      {String? warning, bool enabled = true, bool bLive = false}) {
+    final theme = Theme.of(context);
     return InputDecoration(
       labelText: sLabel,
+      helper: warning == null
+          ? null
+          : Semantics(
+              liveRegion: bLive,
+              // Material 3's helper text style, which a helper widget
+              // doesn't get by itself.
+              child: Text(
+                warning,
+                style: theme.textTheme.bodySmall?.copyWith(
+                    color: enabled
+                        ? theme.colorScheme.onSurfaceVariant
+                        : theme.colorScheme.onSurface.withValues(alpha: 0.38)),
+              ),
+            ),
       focusedBorder: const OutlineInputBorder(
         borderSide: BorderSide(color: Colors.red, width: 5.0),
       ),
@@ -495,8 +564,16 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                           focusNode: _phoneFocus,
                           onChanged: _settingsChanged,
                           enabled: bCanAct,
-                          keyboardType: TextInputType.phone,
-                          decoration: _fieldDecoration('Phone number template'),
+                          // Not TextInputType.phone: a dial pad has no n.
+                          keyboardType: TextInputType.text,
+                          autocorrect: false,
+                          enableSuggestions: false,
+                          // Always read out as it changes: only typing in
+                          // this field changes it.
+                          decoration: _fieldDecoration('Phone number template',
+                              warning: _checks.phoneWarning,
+                              enabled: bCanAct,
+                              bLive: true),
                         ),
                         const SizedBox(height: 20),
                         TextField(
@@ -507,7 +584,12 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                           enabled: bCanAct,
                           keyboardType: TextInputType.emailAddress,
                           autocorrect: false,
-                          decoration: _fieldDecoration('Email address template'),
+                          // Suggestions stay on: without them Android gets a
+                          // keyboard with no @ key.
+                          decoration: _fieldDecoration('Email address template',
+                              warning: _checks.emailWarning,
+                              enabled: bCanAct,
+                              bLive: _emailFocus.hasFocus),
                         ),
                       ],
                     ),
@@ -554,8 +636,15 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                   const SizedBox(height: 16),
                   Center(
                     child: ElevatedButton(
-                      onPressed: bCanAct ? () => _createAllContacts() : null,
-                      child: const Text("Create Fake Contacts"),
+                      onPressed: bCanAct && _checks.createBlocked == null
+                          ? () => _createAllContacts()
+                          : null,
+                      // While it can't be used, TalkBack also says why.
+                      // (Inside the button, so it joins the button's node.)
+                      child: Semantics(
+                        hint: _checks.createBlocked,
+                        child: const Text("Create Fake Contacts"),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 30),
