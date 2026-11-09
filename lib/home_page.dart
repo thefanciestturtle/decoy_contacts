@@ -103,7 +103,13 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     await widget.settingsStore.save(_settings);
   }
 
+  /// Set from a tap on Create or Delete until its result is shown (or it's
+  /// cancelled). The buttons are disabled meanwhile.
   bool _isBusy = false;
+
+  /// Set while the dialog asking to go ahead is open. No spinner then: the
+  /// app is waiting for the user, not working.
+  bool _isConfirming = false;
 
   void _showResultSnackBar(String message) {
     if (!mounted) return;
@@ -111,60 +117,127 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Asks before going ahead. True only if the user taps the action button;
+  /// Cancel, Back and tapping outside the dialog all count as no.
+  Future<bool> _confirm(Confirmation confirmation) async {
+    final bool? bConfirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        // Long text at a large font size scrolls instead of being cut off.
+        scrollable: true,
+        title: Text(confirmation.title),
+        content: Text(confirmation.body),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(confirmation.action),
+          ),
+        ],
+      ),
+    );
+    return bConfirmed ?? false;
+  }
+
   /// The steps Create and Delete share: ignore taps while busy, save the
-  /// settings, ask for permission, run [action], and show the result.
-  /// [name] is used in the log, [doing] in the error message.
-  Future<void> _runContactsAction<R>({
+  /// settings, ask for permission, work out what [action] would do
+  /// ([preview]), ask the user to confirm that, run [action], and show the
+  /// result.
+  ///
+  /// [nothingToDo] gives the message to show instead of the dialog when the
+  /// preview finds nothing to do, else null. [action] works everything out
+  /// again rather than trusting the preview, since the address book can
+  /// change while the dialog is open; it gets the preview so it can refuse
+  /// (by returning null) to do more than the user agreed to. [name] is used
+  /// in the log, [doing] in the message for an error in [action].
+  Future<void> _runContactsAction<P, R>({
     required String name,
     required String doing,
-    required Future<R> Function(Settings settings) action,
+    required Future<P> Function(Settings settings) preview,
+    required String? Function(P preview) nothingToDo,
+    required Confirmation Function(P preview) confirmation,
+    required Future<R?> Function(Settings settings, P preview) action,
     required String Function(R result) describe,
   }) async {
     if (_isBusy) return;
     setState(() { _isBusy = true; });
+    // An earlier result shouldn't linger under the dialog.
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     unawaited(_saveSettingsNow());
     final settings = _settings;
 
-    log("$name: about to request permission");
-    final bool bGranted = await widget.contacts.requestPermission();
-
-    late final R result;
-    Object? error;
-    if (bGranted) {
-      try {
-        result = await action(settings);
-      } catch (e) {
-        log("$name: error $e");
-        error = e;
-      }
+    void finish(String? message) {
+      if (!mounted) return;
+      setState(() {
+        _isBusy = false;
+        _isConfirming = false;
+      });
+      if (message != null) _showResultSnackBar(message);
     }
+
+    log("$name: about to request permission");
+    if (!await widget.contacts.requestPermission()) {
+      return finish(kPermissionDeniedMessage);
+    }
+
+    final P planned;
+    try {
+      planned = await preview(settings);
+    } catch (e) {
+      log("$name: error in preview $e");
+      // Nothing was changed yet, so don't say "creating" or "deleting".
+      return finish(errorMessage("reading", e));
+    }
+    final sNothingToDo = nothingToDo(planned);
+    if (sNothingToDo != null) return finish(sNothingToDo);
 
     if (!mounted) return;
-    setState(() { _isBusy = false; });
-    final String sMessage;
-    if (!bGranted) {
-      sMessage = kPermissionDeniedMessage;
-    } else if (error != null) {
-      sMessage = errorMessage(doing, error);
-    } else {
-      sMessage = describe(result);
+    setState(() { _isConfirming = true; });
+    if (!await _confirm(confirmation(planned))) {
+      log("$name: cancelled");
+      return finish(null);
     }
-    _showResultSnackBar(sMessage);
+    if (!mounted) return;
+    setState(() { _isConfirming = false; });
+
+    final R? result;
+    try {
+      result = await action(settings, planned);
+    } catch (e) {
+      log("$name: error $e");
+      return finish(errorMessage(doing, e));
+    }
+    finish(result == null ? kChangedMeanwhileMessage : describe(result));
   }
 
   Future<void> _createAllContacts() => _runContactsAction(
         name: "_createAllContacts",
         doing: "creating",
-        action: (settings) =>
-            createFakeContacts(widget.contacts, widget.ledgerStore, settings),
+        preview: (settings) =>
+            previewCreate(widget.contacts, widget.ledgerStore, settings),
+        nothingToDo: (preview) =>
+            preview.toCreate == 0 ? nothingToCreateMessage(preview) : null,
+        confirmation: createConfirmation,
+        action: (settings, preview) => createFakeContacts(
+            widget.contacts, widget.ledgerStore, settings,
+            atMost: preview.toCreate),
         describe: createdMessage,
       );
 
   Future<void> _deleteAllContacts() => _runContactsAction(
         name: "_deleteAllContacts",
         doing: "deleting",
-        action: (settings) =>
-            deleteFakeContacts(widget.contacts, widget.ledgerStore, settings),
+        preview: (settings) =>
+            previewDelete(widget.contacts, widget.ledgerStore, settings),
+        nothingToDo: (preview) =>
+            preview.toDelete == 0 ? nothingToDeleteMessage(preview) : null,
+        confirmation: deleteConfirmation,
+        action: (settings, preview) => deleteFakeContacts(
+            widget.contacts, widget.ledgerStore, settings,
+            atMost: preview.toDelete),
         describe: deletedMessage,
       );
 
@@ -257,7 +330,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                   SizedBox(
                     height: 72,
                     child: Center(
-                      child: (_isBusy || !_settingsLoaded)
+                      child: ((_isBusy && !_isConfirming) || !_settingsLoaded)
                           ? const CircularProgressIndicator()
                           : null,
                     ),

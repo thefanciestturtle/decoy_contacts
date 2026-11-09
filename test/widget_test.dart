@@ -6,6 +6,8 @@ import 'package:fake_contacts/fake_contacts_core.dart';
 import 'package:fake_contacts/home_page.dart';
 import 'package:fake_contacts/main.dart';
 
+import 'in_memory_contacts_gateway.dart';
+
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -126,5 +128,64 @@ void main() {
     expect(style.backgroundColor!.resolve({}), Colors.pink);
     expect(style.backgroundColor!.resolve({WidgetState.disabled}),
         isNot(Colors.pink));
+  });
+
+  testWidgets('The dialog before Delete fits a small screen at a large font '
+      'size', (WidgetTester tester) async {
+    // A small phone (320 x 568 dp) with the text at twice the normal size.
+    tester.view.physicalSize = const Size(640, 1136);
+    tester.view.devicePixelRatio = 2.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    SharedPreferences.setMockInitialValues({
+      'sListOfLastNames': 'Zen, Zima',
+      'sListOfFirstNames': 'Zoe, Zach',
+      'sPhoneNumberTemplate': kDefaultPhoneTemplate,
+      'sEmailAddressTemplate': kDefaultEmailTemplate,
+    });
+    final book = InMemoryContactsGateway();
+    final alice = book.add('Alice Example');
+    await tester.pumpWidget(MyApp(contacts: book));
+    await tester.pumpAndSettle();
+    final scrollable = find.byType(Scrollable).first;
+
+    Future<void> tapButton(String label) async {
+      await tester.scrollUntilVisible(find.text(label), 100,
+          scrollable: scrollable);
+      await tester.tap(find.text(label));
+      await tester.pumpAndSettle();
+    }
+
+    await tapButton('Create Fake Contacts');
+    await tester.tap(find.widgetWithText(TextButton, 'Create'));
+    await tester.pumpAndSettle();
+    // The longest text the dialog can show: some fakes left alone for both
+    // reasons.
+    book.merge(into: alice, from: book.idOf('Zach Zen'));
+    book.setPhones(book.idOf('Zoe Zen'), ['+1 555 0199']);
+    // On a screen this small, the result of Create covers the Delete button.
+    tester
+        .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
+        .removeCurrentSnackBar();
+    await tester.pumpAndSettle();
+    await tapButton('Delete Fake Contacts');
+    expect(tester.takeException(), isNull);
+
+    final dialog = find.byType(AlertDialog);
+    expect(find.descendant(of: dialog, matching: find.textContaining(
+        'will be left alone.', findRichText: true)), findsOneWidget);
+    // Both buttons can be reached, and the text scrolls to its end.
+    for (final label in ['Cancel', 'Delete']) {
+      expect(find.widgetWithText(TextButton, label).hitTestable(),
+          findsOneWidget);
+    }
+    final body = find.descendant(
+        of: dialog, matching: find.byType(Scrollable));
+    await tester.drag(body, const Offset(0, -2000));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.widgetWithText(TextButton, 'Delete').hitTestable(),
+        findsOneWidget);
   });
 }
