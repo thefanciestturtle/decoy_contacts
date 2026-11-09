@@ -48,6 +48,18 @@ void main() {
     expect(c.first.displayName, 'Zoe Zen');
   });
 
+  test('firstCombination is the first of allCombinations', () {
+    for (final (first, last) in [
+      (['Zoe', 'Zach'], ['Zen', 'Zima', 'Zhou']),
+      (['Zach'], ['Zima', 'Zen']),
+      (['Zoe'], ['Zen']),
+    ]) {
+      expect(firstCombination(first, last), allCombinations(first, last).first);
+    }
+    expect(firstCombination([], ['Zen']), isNull);
+    expect(firstCombination(['Zoe'], []), isNull);
+  });
+
   group('entryFor', () {
     test('records the phone and email the fake gets', () {
       final e = fake('Zoe', 'Zen');

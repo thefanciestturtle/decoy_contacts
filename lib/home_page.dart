@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:developer';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import 'contact_actions.dart';
 import 'contacts_gateway.dart';
@@ -36,13 +38,35 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   static const Key keyPhoneNumberTemplate = Key("PhoneNumberTemplate");
   static const Key keyEmailAddressTemplate = Key("EmailAddressTemplate");
   static const Key keyStatus = Key("Status");
+  static const Key keyPreview = Key("Preview");
 
   final TextEditingController lastNamesController = TextEditingController();
   final TextEditingController firstNamesController = TextEditingController();
   final TextEditingController phoneNumberTemplateController = TextEditingController();
   final TextEditingController emailAddressTemplateController = TextEditingController();
 
-  // The text fields are the single source of truth for the settings.
+  /// The preview's text, and what TalkBack reads instead; null until the
+  /// settings are loaded. Worked out once per change of the settings, also
+  /// when code changes the fields, but not when only the cursor or the
+  /// selection moves.
+  final ValueNotifier<PreviewText?> _preview = ValueNotifier(null);
+  Settings? _previewSettings;
+
+  /// Called on any change to a text field, the cursor included.
+  void _fieldsChanged() {
+    if (!_settingsLoaded) return;
+    final settings = _settings;
+    if (settings == _previewSettings) return;
+    _previewSettings = settings;
+    _preview.value = settingsPreviewText(previewSettings(settings));
+  }
+
+  // The text fields are the single source of truth for the settings. They
+  // are disabled while Create or Delete runs, so the preview always shows
+  // what the action is using. (Disabled, not just read-only: a read-only
+  // field can still take the focus, and its keyboard would then open by
+  // itself when the action ends; and TalkBack announces a disabled field
+  // as disabled, while a read-only one silently ignores typing.)
   Settings get _settings => Settings(
         lastNamesText: lastNamesController.text,
         firstNamesText: firstNamesController.text,
@@ -57,6 +81,18 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    for (final controller in [
+      lastNamesController,
+      firstNamesController,
+      phoneNumberTemplateController,
+      emailAddressTemplateController,
+    ]) {
+      controller.addListener(_fieldsChanged);
+    }
+    // The preview may have grown.
+    _preview.addListener(_scheduleRevealPreview);
+    _phoneFocus.addListener(_scheduleRevealPreview);
+    _emailFocus.addListener(_scheduleRevealPreview);
     _loadSettings();
   }
 
@@ -68,7 +104,24 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     firstNamesController.dispose();
     phoneNumberTemplateController.dispose();
     emailAddressTemplateController.dispose();
+    _phoneFocus.dispose();
+    _emailFocus.dispose();
+    _preview.dispose();
     super.dispose();
+  }
+
+  double _lastBottomInset = 0;
+
+  @override
+  void didChangeMetrics() {
+    // Like a text field does for its caret: only when the keyboard opens or
+    // grows, not when it closes or shrinks (as on turning to landscape), so
+    // the page doesn't jump back to the field after the user scrolled away
+    // from it.
+    if (!mounted) return;
+    final double inset = View.of(context).viewInsets.bottom;
+    if (inset > _lastBottomInset) _scheduleRevealPreview();
+    _lastBottomInset = inset;
   }
 
   @override
@@ -98,6 +151,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     phoneNumberTemplateController.text = settings.phoneTemplateText;
     emailAddressTemplateController.text = settings.emailTemplateText;
     setState(() { _settingsLoaded = true; });
+    _fieldsChanged();
     unawaited(_refreshStatus());
   }
 
@@ -210,12 +264,20 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     required String name,
     required String doing,
     required Future<P> Function(Settings settings) preview,
-    required String? Function(P preview) nothingToDo,
+    required String? Function(Settings settings, P preview) nothingToDo,
     required Confirmation Function(P preview) confirmation,
     required Future<R?> Function(Settings settings, P preview) action,
     required String Function(R result) describe,
   }) async {
     if (_isBusy) return;
+    // If a text field has the focus, close the keyboard, so the dialog, the
+    // spinner and the result can be seen. (Otherwise the field gets the
+    // focus back after the dialog, the keyboard opens again and the page
+    // scrolls back up to the field.) Anything else keeps the focus; a
+    // focused button still loses it, as it is disabled while busy (see
+    // ROADMAP U7).
+    final focus = FocusManager.instance.primaryFocus;
+    if (_editableOf(focus) != null) focus!.unfocus();
     _statusRequest++; // a status count still running is out of date
     _statusOutdated = true;
     setState(() { _isBusy = true; });
@@ -247,7 +309,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       // Nothing was changed yet, so don't say "creating" or "deleting".
       return finish(errorMessage("reading", e));
     }
-    final sNothingToDo = nothingToDo(planned);
+    final sNothingToDo = nothingToDo(settings, planned);
     if (sNothingToDo != null) return finish(sNothingToDo);
 
     if (!mounted) return;
@@ -274,8 +336,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         doing: "creating",
         preview: (settings) =>
             previewCreate(widget.contacts, widget.ledgerStore, settings),
-        nothingToDo: (preview) =>
-            preview.toCreate == 0 ? nothingToCreateMessage(preview) : null,
+        nothingToDo: (settings, preview) => preview.toCreate == 0
+            ? nothingToCreateMessage(preview, previewSettings(settings))
+            : null,
         confirmation: createConfirmation,
         action: (settings, preview) => createFakeContacts(
             widget.contacts, widget.ledgerStore, settings,
@@ -288,7 +351,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         doing: "deleting",
         preview: (settings) =>
             previewDelete(widget.contacts, widget.ledgerStore, settings),
-        nothingToDo: (preview) =>
+        nothingToDo: (_, preview) =>
             preview.toDelete == 0 ? nothingToDeleteMessage(preview) : null,
         confirmation: deleteConfirmation,
         action: (settings, preview) => deleteFakeContacts(
@@ -296,6 +359,71 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
             atMost: preview.toDelete),
         describe: deletedMessage,
       );
+
+  // While the phone or email template is edited, the preview under the
+  // fields should stay above the keyboard: it shows what the template gives.
+  final FocusNode _phoneFocus = FocusNode();
+  final FocusNode _emailFocus = FocusNode();
+  final GlobalKey _previewBox = GlobalKey();
+  bool _revealScheduled = false;
+
+  /// The text field that [focus] belongs to, if any.
+  static EditableTextState? _editableOf(FocusNode? focus) =>
+      focus?.context?.findAncestorStateOfType<EditableTextState>();
+
+  /// Calls [_revealPreview] after the next frame, once the preview and the
+  /// keyboard have their new size, if a template field has the focus.
+  void _scheduleRevealPreview() {
+    if (_revealScheduled || !(_phoneFocus.hasFocus || _emailFocus.hasFocus)) {
+      return;
+    }
+    _revealScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _revealScheduled = false;
+      _revealPreview();
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  /// Scrolls so that the caret of the template field being edited (with
+  /// the margin the field keeps clear around it) and the preview below
+  /// are in view; if both don't fit, the caret and as much of the preview
+  /// as fits. Jumps rather than animates, so it can't be undone by the
+  /// field's own animated scroll to its caret: whichever runs first, the
+  /// other then finds the caret already in view.
+  void _revealPreview() {
+    if (!mounted) return;
+    final focus = _phoneFocus.hasFocus
+        ? _phoneFocus
+        : (_emailFocus.hasFocus ? _emailFocus : null);
+    final editable = _editableOf(focus);
+    final previewContext = _previewBox.currentContext;
+    final preview = previewContext?.findRenderObject();
+    if (editable == null || previewContext == null || preview is! RenderBox) {
+      return;
+    }
+    final selection = editable.textEditingValue.selection;
+    // (Not Scrollable.maybeOf, which would make the preview depend on it.)
+    final scrollable = previewContext.findAncestorStateOfType<ScrollableState>();
+    final RenderEditable field = editable.renderEditable;
+    if (!selection.isValid || scrollable == null || !field.attached ||
+        !preview.attached) {
+      return;
+    }
+    // The same margins the field keeps around its caret.
+    final EdgeInsets padding = editable.widget.scrollPadding;
+    final Rect caret = field.getLocalRectForCaret(selection.extent);
+    final double top = caret.top - padding.top;
+    final double previewBottom = field
+        .globalToLocal(preview.localToGlobal(Offset(0, preview.size.height)))
+        .dy;
+    // Taller than the view, the caret might not be the part shown.
+    final double bottom = math.min(previewBottom + padding.bottom,
+        top + scrollable.position.viewportDimension);
+    if (bottom <= caret.bottom) return;
+    field.showOnScreen(
+        rect: Rect.fromLTRB(caret.left, top, caret.right, bottom));
+  }
 
   InputDecoration _fieldDecoration(String sLabel) {
     return InputDecoration(
@@ -305,6 +433,12 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       ),
       enabledBorder: const OutlineInputBorder(
         borderSide: BorderSide(color: Colors.greenAccent, width: 5.0),
+      ),
+      // The same look, greyed, while disabled (before the settings load and
+      // during Create or Delete); without it the fields would switch to a
+      // plain underline on every tap.
+      disabledBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: Colors.grey.shade400, width: 5.0),
       ),
     );
   }
@@ -326,43 +460,86 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  TextField(
-                    key: keyLastNames,
-                    controller: lastNamesController,
-                    onChanged: _settingsChanged,
-                    enabled: _settingsLoaded,
-                    minLines: 1,
-                    maxLines: 4,
-                    decoration: _fieldDecoration('Last names'),
+                  // Also out of reach of the focus while disabled: with a D-pad
+                  // (directional navigation) a disabled TextField can still
+                  // take the focus, and its keyboard would open by itself when
+                  // the action ends.
+                  ExcludeFocus(
+                    excluding: !bCanAct,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        TextField(
+                          key: keyLastNames,
+                          controller: lastNamesController,
+                          onChanged: _settingsChanged,
+                          enabled: bCanAct,
+                          minLines: 1,
+                          maxLines: 4,
+                          decoration: _fieldDecoration('Last names'),
+                        ),
+                        const SizedBox(height: 20),
+                        TextField(
+                          key: keyFirstNames,
+                          controller: firstNamesController,
+                          onChanged: _settingsChanged,
+                          enabled: bCanAct,
+                          minLines: 1,
+                          maxLines: 4,
+                          decoration: _fieldDecoration('First names'),
+                        ),
+                        const SizedBox(height: 30),
+                        TextField(
+                          key: keyPhoneNumberTemplate,
+                          controller: phoneNumberTemplateController,
+                          focusNode: _phoneFocus,
+                          onChanged: _settingsChanged,
+                          enabled: bCanAct,
+                          keyboardType: TextInputType.phone,
+                          decoration: _fieldDecoration('Phone number template'),
+                        ),
+                        const SizedBox(height: 20),
+                        TextField(
+                          key: keyEmailAddressTemplate,
+                          controller: emailAddressTemplateController,
+                          focusNode: _emailFocus,
+                          onChanged: _settingsChanged,
+                          enabled: bCanAct,
+                          keyboardType: TextInputType.emailAddress,
+                          autocorrect: false,
+                          decoration: _fieldDecoration('Email address template'),
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 20),
-                  TextField(
-                    key: keyFirstNames,
-                    controller: firstNamesController,
-                    onChanged: _settingsChanged,
-                    enabled: _settingsLoaded,
-                    minLines: 1,
-                    maxLines: 4,
-                    decoration: _fieldDecoration('First names'),
-                  ),
-                  const SizedBox(height: 30),
-                  TextField(
-                    key: keyPhoneNumberTemplate,
-                    controller: phoneNumberTemplateController,
-                    onChanged: _settingsChanged,
-                    enabled: _settingsLoaded,
-                    keyboardType: TextInputType.phone,
-                    decoration: _fieldDecoration('Phone number template'),
-                  ),
-                  const SizedBox(height: 20),
-                  TextField(
-                    key: keyEmailAddressTemplate,
-                    controller: emailAddressTemplateController,
-                    onChanged: _settingsChanged,
-                    enabled: _settingsLoaded,
-                    keyboardType: TextInputType.emailAddress,
-                    autocorrect: false,
-                    decoration: _fieldDecoration('Email address template'),
+                  const SizedBox(height: 12),
+                  // Follows every keystroke. (Not a live region: TalkBack
+                  // would read it out after each one.)
+                  KeyedSubtree(
+                    key: _previewBox,
+                    child: ValueListenableBuilder(
+                      valueListenable: _preview,
+                      builder: (context, preview, _) => preview == null
+                          ? const SizedBox.shrink()
+                          : Semantics(
+                              container: true,
+                              // The phone number digit by digit.
+                              attributedLabel: AttributedString(preview.spoken,
+                                  attributes: [
+                                    if (preview.spokenPhoneNumber case (final start, final end))
+                                      SpellOutStringAttribute(
+                                          range: TextRange(start: start, end: end)),
+                                  ]),
+                              child: ExcludeSemantics(
+                                child: Text(
+                                  preview.text,
+                                  key: keyPreview,
+                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                      color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                ),
+                              ),
+                            ),
+                    ),
                   ),
                   const SizedBox(height: 32),
                   // Always there, empty without a count, so the buttons

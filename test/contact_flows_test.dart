@@ -53,6 +53,13 @@ Future<void> pumpApp(WidgetTester tester, ContactsGateway contacts) async {
   tester.view.physicalSize = const Size(1080, 2400);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
+  // Unmount the app while the test still runs: an edit that wasn't saved
+  // yet (say, the test failed) is saved on dispose, and must not land in
+  // the next test's settings.
+  addTearDown(() async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
   await tester.pumpWidget(MyApp(contacts: contacts));
   await tester.pumpAndSettle();
 }
@@ -684,8 +691,10 @@ void main() {
 
       await tapExpectingNoDialog(tester, kCreateButton);
 
-      expect(snackBarText(tester),
-          'Nothing to create. Enter at least one first name and one last name.');
+      // The same hint as the preview gives.
+      expect(snackBarText(tester), 'Nothing to create. Enter at least one last name.');
+      expect(tester.widget<Text>(find.byKey(const Key('Preview'))).data,
+          endsWith('\nEnter at least one last name.'));
       expect(book.createAllCalls, isEmpty);
       expect(await storedLedgerJson(), isNull);
     });
@@ -1104,6 +1113,178 @@ void main() {
       slow.firstRead.complete();
       await tester.pumpAndSettle();
       expect(statusText(tester), '4 fake contacts on this phone.');
+    });
+  });
+  group('preview under the fields (U2)', () {
+    String? previewText(WidgetTester tester) =>
+        tester.widget<Text>(find.byKey(const Key('Preview'))).data;
+
+    testWidgets('its count is what Create asks about, and its example is a '
+        'contact Create makes', (tester) async {
+      await pumpApp(tester, book);
+      expect(previewText(tester),
+          '2 last names × 2 first names = 4 fake contacts.\n'
+          'For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com');
+
+      await tapAndOpenDialog(tester, kCreateButton);
+      expect(dialogText(tester).title, 'Create 4 fake contacts?');
+      await tester.tap(dialogButton('Create'));
+      await tester.pumpAndSettle();
+      final zoe = book.all.firstWhere((c) => c.displayName == 'Zoe Zen');
+      expect(zoe.phones, ['+447700900010']);
+      expect(zoe.emails, ['Zoe.Zen@example.com']);
+    });
+
+    testWidgets('an edit shows up in the next Create', (tester) async {
+      await pumpApp(tester, book);
+      await tester.enterText(find.byKey(const Key('LastNames')), 'Zhao');
+      await tester.enterText(
+          find.byKey(const Key('PhoneNumberTemplate')), '+447700900nnn ');
+      await tester.enterText(
+          find.byKey(const Key('EmailAddressTemplate')), 'LAST@example.org');
+      await tester.pump();
+      expect(previewText(tester),
+          '1 last name × 2 first names = 2 fake contacts.\n'
+          'For example: Zoe Zhao · +447700900047 · Zhao@example.org');
+
+      // Straight away, before the edit is saved.
+      await tapAndOpenDialog(tester, kCreateButton);
+      expect(dialogText(tester).title, 'Create 2 fake contacts?');
+      await tester.tap(dialogButton('Create'));
+      await tester.pumpAndSettle();
+      final zoe = book.all.firstWhere((c) => c.displayName == 'Zoe Zhao');
+      expect(zoe.phones, ['+447700900047']);
+      expect(zoe.emails, ['Zhao@example.org']);
+    });
+
+    testWidgets('it is about the settings, not about the phone: Create, '
+        'Cancel and Delete leave it as it was', (tester) async {
+      await pumpApp(tester, book);
+      final before = previewText(tester);
+
+      await tapAndAnswer(tester, kCreateButton, 'Cancel');
+      expect(previewText(tester), before);
+      await tapCreate(tester);
+      expect(previewText(tester), before);
+      expect(statusText(tester), '4 fake contacts on this phone.');
+      await tapDelete(tester);
+      expect(previewText(tester), before);
+    });
+
+    testWidgets('Create and Delete close the keyboard, and the field '
+        'doesn\'t take the focus back after the dialog', (tester) async {
+      await pumpApp(tester, book);
+      bool fieldFocused() => tester
+          .widgetList<EditableText>(find.byType(EditableText))
+          .any((e) => e.focusNode.hasFocus);
+
+      for (final (button, answer) in [
+        (kCreateButton, 'Cancel'),
+        (kCreateButton, 'Create'),
+        (kDeleteButton, 'Delete'),
+      ]) {
+        await tester.tap(find.byKey(const Key('EmailAddressTemplate')));
+        await tester.pump();
+        expect(fieldFocused(), isTrue);
+        expect(tester.testTextInput.isVisible, isTrue);
+
+        await tapAndOpenDialog(tester, button);
+        await tester.tap(dialogButton(answer));
+        await tester.pumpAndSettle();
+        expect(fieldFocused(), isFalse, reason: '$button, $answer');
+        expect(tester.testTextInput.isVisible, isFalse,
+            reason: '$button, $answer');
+        await tester.pumpAndSettle(const Duration(seconds: 5));
+      }
+      expect(book.all, isEmpty);
+    });
+
+    testWidgets('the fields are disabled while Create runs, so it always '
+        'shows what Create is using', (tester) async {
+      final slow = _SlowPermission();
+      await pumpApp(tester, slow);
+      const keys = ['LastNames', 'FirstNames', 'PhoneNumberTemplate',
+          'EmailAddressTemplate'];
+      List<bool> enabled() => [
+            for (final k in keys)
+              tester.widget<TextField>(find.byKey(Key(k))).enabled ?? true,
+          ];
+      expect(enabled(), everyElement(isTrue));
+      final buttonAt = tester.getTopLeft(find.text(kDeleteButton));
+
+      await tester.tap(find.text(kCreateButton));
+      await tester.pump();
+      expect(enabled(), everyElement(isFalse), reason: 'asking for permission');
+      // So it can't take the focus, and no keyboard opens by itself later.
+      await tester.tap(find.byKey(const Key('EmailAddressTemplate')),
+          warnIfMissed: false);
+      await tester.pump();
+      expect(tester.testTextInput.isVisible, isFalse);
+      slow.permission.complete(true);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(enabled(), everyElement(isFalse), reason: 'dialog open');
+      // Nothing moves behind the dialog.
+      expect(tester.getTopLeft(find.text(kDeleteButton)), buttonAt);
+      await tester.tap(dialogButton('Create'));
+      await tester.pumpAndSettle();
+
+      expect(enabled(), everyElement(isTrue));
+      expect(slow.all, hasLength(4));
+      expect(tester.testTextInput.isVisible, isFalse);
+      expect(FocusManager.instance.primaryFocus?.context?.widget,
+          isNot(isA<EditableText>()));
+    });
+
+    testWidgets('with a D-pad too, a field can\'t take the focus while '
+        'Create runs', (tester) async {
+      final slow = _SlowPermission();
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      // Directional navigation, as with a D-pad or on Android TV, where a
+      // disabled TextField can still take the focus.
+      await tester.pumpWidget(MediaQuery(
+          data: const MediaQueryData(navigationMode: NavigationMode.directional),
+          child: MyApp(contacts: slow)));
+      await tester.pumpAndSettle();
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      final email = tester
+          .widget<EditableText>(find.descendant(
+              of: find.byKey(const Key('EmailAddressTemplate')),
+              matching: find.byType(EditableText)))
+          .focusNode;
+
+      await tester.tap(find.text(kCreateButton));
+      await tester.pump();
+      email.requestFocus();
+      await tester.pump();
+      expect(email.hasFocus, isFalse);
+
+      slow.permission.complete(true);
+      await tester.pumpAndSettle();
+      await tester.tap(dialogButton('Create'));
+      await tester.pumpAndSettle();
+      expect(slow.all, hasLength(4));
+      expect(email.hasFocus, isFalse);
+      expect(tester.testTextInput.isVisible, isFalse);
+    });
+
+    testWidgets('an error or a refused permission leaves it as it was',
+        (tester) async {
+      await pumpApp(tester, book);
+      final before = previewText(tester);
+
+      book.getAllError = Exception('no provider');
+      await tapExpectingNoDialog(tester, kCreateButton);
+      expect(snackBarText(tester), startsWith('Error while reading contacts'));
+      expect(previewText(tester), before);
+
+      book.getAllError = null;
+      book.permissionGranted = false;
+      await tapExpectingNoDialog(tester, kCreateButton);
+      expect(snackBarText(tester), kDenied);
+      expect(previewText(tester), before);
     });
   });
 }

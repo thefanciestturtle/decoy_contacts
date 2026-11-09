@@ -19,7 +19,107 @@ const String kChanged = "no longer match what this app created (edited, or "
 const String kOneChanged = "no longer matches what this app created (edited, "
     "or the app's records came from another phone)";
 
+const FakeSample kZoeZen =
+    (name: 'Zoe Zen', phone: '+447700900010', email: 'Zoe.Zen@example.com');
+
+SettingsPreview settingsMake(int lastNames, int firstNames,
+        {FakeSample? sample = kZoeZen}) =>
+    SettingsPreview(
+      lastNameCount: lastNames,
+      firstNameCount: firstNames,
+      sample: lastNames * firstNames == 0 ? null : sample,
+    );
+
+String _text(SettingsPreview preview) => settingsPreviewText(preview).text;
+
 void main() {
+  group('settingsPreviewText', () {
+    test('the count, how it comes about, and an example', () {
+      expect(_text(settingsMake(27, 28)),
+          '27 last names × 28 first names = 756 fake contacts.\n'
+          'For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com');
+    });
+
+    test('singular forms; with only one contact it is not an example', () {
+      expect(_text(settingsMake(1, 1)),
+          '1 last name × 1 first name = 1 fake contact:\n'
+          'Zoe Zen · +447700900010 · Zoe.Zen@example.com');
+      expect(_text(settingsMake(1, 2)),
+          '1 last name × 2 first names = 2 fake contacts.\n'
+          'For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com');
+      expect(_text(settingsMake(3, 1)).split('\n').first,
+          '3 last names × 1 first name = 3 fake contacts.');
+    });
+
+    test('leaves out a phone number or email the contacts won\'t get', () {
+      String sampleLine(String phone, String email) => _text(
+              settingsMake(2, 2,
+                  sample: (name: 'Zoe Zen', phone: phone, email: email)))
+          .split('\n')
+          .last;
+      expect(sampleLine('', 'Zoe.Zen@example.com'),
+          'For example: Zoe Zen · Zoe.Zen@example.com');
+      expect(sampleLine('+447700900010', ''),
+          'For example: Zoe Zen · +447700900010');
+      expect(sampleLine('', ''), 'For example: Zoe Zen');
+    });
+
+    test('an example without combinations is a mistake', () {
+      expect(
+          () => SettingsPreview(
+              lastNameCount: 0, firstNameCount: 2, sample: kZoeZen),
+          throwsAssertionError);
+      expect(() => SettingsPreview(
+              lastNameCount: 3, firstNameCount: 2, sample: null),
+          throwsAssertionError);
+    });
+
+    test('where the phone number is in the spoken text', () {
+      String? spokenPhone(SettingsPreview preview) {
+        final text = settingsPreviewText(preview);
+        final range = text.spokenPhoneNumber;
+        if (range == null) return null;
+        return text.spoken.substring(range.$1, range.$2);
+      }
+
+      expect(spokenPhone(settingsMake(27, 28)), '+447700900010');
+      expect(spokenPhone(settingsMake(1, 1)), '+447700900010');
+      expect(
+          spokenPhone(settingsMake(2, 3,
+              sample: (name: 'Zoe Zen', phone: '+1 555 0105', email: ''))),
+          '+1 555 0105');
+      expect(
+          spokenPhone(settingsMake(2, 3,
+              sample: (name: 'Zoe Zen', phone: '', email: 'z@example.org'))),
+          isNull);
+      expect(spokenPhone(settingsMake(0, 3)), isNull);
+    });
+
+    test('says what is missing when the settings make none', () {
+      expect(_text(settingsMake(0, 28)),
+          '0 last names × 28 first names = no fake contacts.\n'
+          'Enter at least one last name.');
+      expect(_text(settingsMake(1, 0)),
+          '1 last name × 0 first names = no fake contacts.\n'
+          'Enter at least one first name.');
+      expect(_text(settingsMake(0, 0)),
+          '0 last names × 0 first names = no fake contacts.\n'
+          'Enter at least one last name and one first name.');
+    });
+
+    test('for a screen reader: words instead of signs and dots', () {
+      expect(settingsPreviewText(settingsMake(27, 28)).spoken,
+          '27 last names times 28 first names makes 756 fake contacts.\n'
+          'For example: Zoe Zen, +447700900010, Zoe.Zen@example.com');
+      expect(settingsPreviewText(settingsMake(1, 1)).spoken,
+          '1 last name times 1 first name makes 1 fake contact:\n'
+          'Zoe Zen, +447700900010, Zoe.Zen@example.com');
+      expect(settingsPreviewText(settingsMake(0, 1)).spoken,
+          '0 last names times 1 first name makes no fake contacts.\n'
+          'Enter at least one last name.');
+    });
+  });
+
   test('permission denied', () {
     expect(kPermissionDeniedMessage, 'Permission to access contacts was denied.');
   });
@@ -154,15 +254,24 @@ void main() {
 
   group('nothingToCreateMessage', () {
     test('all of them already exist', () {
-      expect(nothingToCreateMessage(toCreate(0, alreadyExisted: 756)),
+      expect(nothingToCreateMessage(toCreate(0, alreadyExisted: 756),
+              settingsMake(27, 28)),
           'Nothing to create. 756 fake contacts already exist.');
-      expect(nothingToCreateMessage(toCreate(0, alreadyExisted: 1)),
+      expect(nothingToCreateMessage(toCreate(0, alreadyExisted: 1),
+              settingsMake(1, 1)),
           'Nothing to create. 1 fake contact already exists.');
     });
 
-    test('no names', () {
-      expect(nothingToCreateMessage(toCreate(0)),
-          'Nothing to create. Enter at least one first name and one last name.');
+    test('no names: says which list is empty, as the preview does', () {
+      expect(nothingToCreateMessage(toCreate(0), settingsMake(0, 0)),
+          'Nothing to create. Enter at least one last name and one first name.');
+      expect(nothingToCreateMessage(toCreate(0), settingsMake(0, 28)),
+          'Nothing to create. Enter at least one last name.');
+      expect(nothingToCreateMessage(toCreate(0), settingsMake(27, 0)),
+          'Nothing to create. Enter at least one first name.');
+      // Never a hint to fill in a list that has names.
+      expect(() => nothingToCreateMessage(toCreate(0), settingsMake(2, 2)),
+          throwsAssertionError);
     });
   });
 

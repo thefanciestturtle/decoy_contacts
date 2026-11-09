@@ -19,8 +19,11 @@ const String kChangedMeanwhileMessage =
 /// label of the button that goes ahead.
 typedef Confirmation = ({String title, String body, String action});
 
+/// "1 [what]" or "[n] [what]s", e.g. "1 fake contact", "2 fake contacts".
+String _count(int n, String what) => n == 1 ? "1 $what" : "$n ${what}s";
+
 /// "1 fake contact" or "[n] fake contacts".
-String _fakeContacts(int n) => n == 1 ? "1 fake contact" : "$n fake contacts";
+String _fakeContacts(int n) => _count(n, "fake contact");
 
 /// Sentences about tracked contacts that Delete leaves alone, in the past
 /// tense if [done], else in the future tense.
@@ -68,6 +71,77 @@ Confirmation deleteConfirmation(DeletePreview preview) => (
       action: "Delete",
     );
 
+/// What to do when [preview] has no names to combine: which list to fill
+/// in.
+String _enterNamesHint(SettingsPreview preview) {
+  assert(preview.combinations == 0, 'both name lists have names');
+  final bNoLast = preview.lastNameCount == 0, bNoFirst = preview.firstNameCount == 0;
+  if (bNoLast && bNoFirst) return "Enter at least one last name and one first name.";
+  return bNoLast ? "Enter at least one last name." : "Enter at least one first name.";
+}
+
+/// The preview under the fields: how many fakes the settings make, and the
+/// first of them, e.g.
+///
+///     27 last names × 28 first names = 756 fake contacts.
+///     For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com
+///
+/// With an empty name list it says so the same way, and which list to fill
+/// in:
+///
+///     0 last names × 28 first names = no fake contacts.
+///     Enter at least one last name.
+typedef PreviewText = ({
+  String text,
+  String spoken,
+  (int, int)? spokenPhoneNumber,
+});
+
+/// The preview's [PreviewText.text]; [PreviewText.spoken], the same for a
+/// screen reader (commas instead of the dots, words for the signs); and
+/// where the example's phone number is in the spoken text, as (start, end),
+/// so the screen reader can be told to read it digit by digit rather than
+/// as one big number (null if the example has none).
+PreviewText settingsPreviewText(SettingsPreview preview) {
+  final spoken = _settingsPreview(preview, spoken: true);
+  return (
+    text: _settingsPreview(preview, spoken: false).text,
+    spoken: spoken.text,
+    spokenPhoneNumber: spoken.phoneNumber,
+  );
+}
+
+({String text, (int, int)? phoneNumber}) _settingsPreview(
+    SettingsPreview preview,
+    {required bool spoken}) {
+  final n = preview.combinations;
+  final sSum = [
+    _count(preview.lastNameCount, "last name"),
+    spoken ? " times " : " × ",
+    _count(preview.firstNameCount, "first name"),
+    spoken ? " makes " : " = ",
+    n == 0 ? "no fake contacts" : _fakeContacts(n),
+    n == 1 ? ":" : ".",
+  ].join();
+  if (n == 0) return (text: "$sSum\n${_enterNamesHint(preview)}", phoneNumber: null);
+  final sample = preview.sample!;
+  final out = StringBuffer("$sSum\n${n == 1 ? "" : "For example: "}");
+  (int, int)? phoneNumber;
+  var bFirst = true;
+  for (final (sPart, bPhone) in [
+    (sample.name, false),
+    (sample.phone, true),
+    (sample.email, false),
+  ]) {
+    if (sPart.isEmpty) continue;
+    if (!bFirst) out.write(spoken ? ", " : " · ");
+    bFirst = false;
+    if (bPhone) phoneNumber = (out.length, out.length + sPart.length);
+    out.write(sPart);
+  }
+  return (text: out.toString(), phoneNumber: phoneNumber);
+}
+
 /// The status line: how many fake contacts are on the phone, counting only
 /// those the app can confirm (see countFakeContacts). If it can confirm
 /// none but tracks some it can't check, it doesn't claim there are none.
@@ -78,11 +152,15 @@ String statusMessage(DeletePreview found) {
       : "No fake contacts on this phone.";
 }
 
-/// Shown instead of the dialog when Create has nothing to add.
-String nothingToCreateMessage(CreatePreview preview) {
+/// Shown instead of the dialog when Create has nothing to add. [settings]
+/// is what the settings Create used make (see previewSettings), to say
+/// which name list is empty, as the preview does.
+String nothingToCreateMessage(CreatePreview preview, SettingsPreview settings) {
   final existed = preview.alreadyExisted;
   if (existed == 0) {
-    return "Nothing to create. Enter at least one first name and one last name.";
+    // Create makes every combination that doesn't exist yet, so making none
+    // with none existing means a name list is empty.
+    return "Nothing to create. ${_enterNamesHint(settings)}";
   }
   return "Nothing to create. ${_fakeContacts(existed)}"
       " ${existed == 1 ? "already exists" : "already exist"}.";

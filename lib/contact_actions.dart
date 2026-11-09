@@ -41,6 +41,52 @@ AddressBook addressBookOf(List<StoredContact> contacts) => {
 Set<String> fingerprintsOfContact(StoredContact c) =>
     fingerprintsOf(c.displayName, c.phones, c.emails).toSet();
 
+/// One fake contact as Create would make it: its name, phone number and
+/// email address ('' if it gets none).
+typedef FakeSample = ({String name, String phone, String email});
+
+/// What a set of [Settings] makes, for the preview under the fields.
+class SettingsPreview {
+  /// How many different last and first names there are.
+  final int lastNameCount;
+  final int firstNameCount;
+
+  /// The first fake the settings make, or null if they make none.
+  final FakeSample? sample;
+
+  /// [sample] is null exactly when there are no combinations.
+  const SettingsPreview({
+    required this.lastNameCount,
+    required this.firstNameCount,
+    required this.sample,
+  }) : assert((sample == null) == (lastNameCount * firstNameCount == 0));
+
+  /// How many fakes the settings make: every last name with every first
+  /// name. Create adds those that don't exist yet.
+  int get combinations => lastNameCount * firstNameCount;
+}
+
+/// Works out what [settings] make, the same way Create does. Reads neither
+/// the address book nor the ledger, so it is cheap enough for every
+/// keystroke.
+SettingsPreview previewSettings(Settings settings) {
+  final lastNames = settings.lastNames;
+  final firstNames = settings.firstNames;
+  final first = firstCombination(firstNames, lastNames);
+  return SettingsPreview(
+    lastNameCount: lastNames.length,
+    firstNameCount: firstNames.length,
+    sample: first == null
+        ? null
+        : _sampleOf(
+            entryFor(first, settings.phoneTemplate, settings.emailTemplate)),
+  );
+}
+
+/// [entryFor] always fills in the phone number and email address.
+FakeSample _sampleOf(LedgerEntry entry) =>
+    (name: entry.name, phone: entry.phone!, email: entry.email!);
+
 /// What Create would do right now, worked out without changing anything.
 class CreatePreview {
   /// Contacts Create would add.
