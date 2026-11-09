@@ -1197,6 +1197,32 @@ void main() {
       expect(book.all, isEmpty);
     });
 
+    testWidgets('the fields can\'t be edited while Create runs, so it '
+        'always shows what Create is using', (tester) async {
+      final slow = _SlowPermission();
+      await pumpApp(tester, slow);
+      const keys = ['LastNames', 'FirstNames', 'PhoneNumberTemplate',
+          'EmailAddressTemplate'];
+      List<bool> readOnly() => [
+            for (final k in keys)
+              tester.widget<TextField>(find.byKey(Key(k))).readOnly,
+          ];
+      expect(readOnly(), everyElement(isFalse));
+
+      await tester.tap(find.text(kCreateButton));
+      await tester.pump();
+      expect(readOnly(), everyElement(isTrue), reason: 'asking for permission');
+      slow.permission.complete(true);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(readOnly(), everyElement(isTrue), reason: 'dialog open');
+      await tester.tap(dialogButton('Create'));
+      await tester.pumpAndSettle();
+
+      expect(readOnly(), everyElement(isFalse));
+      expect(slow.all, hasLength(4));
+    });
+
     testWidgets('an error or a refused permission leaves it as it was',
         (tester) async {
       await pumpApp(tester, book);

@@ -72,10 +72,11 @@ void main() {
 
     test('where the phone number is in the spoken text', () {
       String? spokenPhone(SettingsPreview preview) {
-        final range = spokenPhoneNumberRange(preview);
+        final spoken = spokenSettingsPreview(preview);
+        expect(spoken.text, settingsPreviewMessage(preview, spoken: true));
+        final range = spoken.phoneNumber;
         if (range == null) return null;
-        return settingsPreviewMessage(preview, spoken: true)
-            .substring(range.$1, range.$2);
+        return spoken.text.substring(range.$1, range.$2);
       }
 
       expect(spokenPhone(settingsMake(27, 28)), '+447700900010');

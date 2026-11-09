@@ -60,14 +60,17 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     if (settings == _previewSettings) return;
     _previewSettings = settings;
     final preview = previewSettings(settings);
+    final spoken = spokenSettingsPreview(preview);
     _preview.value = (
       text: settingsPreviewMessage(preview),
-      spoken: settingsPreviewMessage(preview, spoken: true),
-      spellOut: spokenPhoneNumberRange(preview),
+      spoken: spoken.text,
+      spellOut: spoken.phoneNumber,
     );
   }
 
-  // The text fields are the single source of truth for the settings.
+  // The text fields are the single source of truth for the settings. They
+  // are read-only while Create or Delete runs, so the preview always shows
+  // what the action is using.
   Settings get _settings => Settings(
         lastNamesText: lastNamesController.text,
         firstNamesText: firstNamesController.text,
@@ -402,7 +405,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       return;
     }
     final selection = editable.textEditingValue.selection;
-    final scrollable = Scrollable.maybeOf(previewContext);
+    // (Not Scrollable.maybeOf, which would make the preview depend on it.)
+    final scrollable = previewContext.findAncestorStateOfType<ScrollableState>();
     final RenderEditable field = editable.renderEditable;
     if (!selection.isValid || scrollable == null || !field.attached ||
         !preview.attached) {
@@ -457,6 +461,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     controller: lastNamesController,
                     onChanged: _settingsChanged,
                     enabled: _settingsLoaded,
+                    readOnly: _isBusy,
                     minLines: 1,
                     maxLines: 4,
                     decoration: _fieldDecoration('Last names'),
@@ -467,6 +472,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     controller: firstNamesController,
                     onChanged: _settingsChanged,
                     enabled: _settingsLoaded,
+                    readOnly: _isBusy,
                     minLines: 1,
                     maxLines: 4,
                     decoration: _fieldDecoration('First names'),
@@ -478,6 +484,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     focusNode: _phoneFocus,
                     onChanged: _settingsChanged,
                     enabled: _settingsLoaded,
+                    readOnly: _isBusy,
                     keyboardType: TextInputType.phone,
                     decoration: _fieldDecoration('Phone number template'),
                   ),
@@ -488,6 +495,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     focusNode: _emailFocus,
                     onChanged: _settingsChanged,
                     enabled: _settingsLoaded,
+                    readOnly: _isBusy,
                     keyboardType: TextInputType.emailAddress,
                     autocorrect: false,
                     decoration: _fieldDecoration('Email address template'),

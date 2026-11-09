@@ -88,33 +88,22 @@ const String kEnterNamesHint = "Enter at least one last name and one first name.
 ///
 ///     0 last names × 28 first names = no fake contacts.
 ///     Enter at least one last name.
-String settingsPreviewMessage(SettingsPreview preview, {bool spoken = false}) {
+String settingsPreviewMessage(SettingsPreview preview, {bool spoken = false}) =>
+    _settingsPreview(preview, spoken: spoken).text;
+
+/// The preview for a screen reader (see [settingsPreviewMessage]), and
+/// where the example's phone number is in it, as (start, end), so the
+/// screen reader can be told to read it digit by digit rather than as one
+/// big number. [phoneNumber] is null if the example has none.
+({String text, (int, int)? phoneNumber}) spokenSettingsPreview(
+        SettingsPreview preview) =>
+    _settingsPreview(preview, spoken: true);
+
+({String text, (int, int)? phoneNumber}) _settingsPreview(
+    SettingsPreview preview,
+    {required bool spoken}) {
   final n = preview.combinations;
-  final sSum = _previewSum(preview, spoken: spoken);
-  if (n == 0) {
-    final bNoLast = preview.lastNames == 0, bNoFirst = preview.firstNames == 0;
-    final sHint = bNoLast && bNoFirst
-        ? kEnterNamesHint
-        : (bNoLast ? "Enter at least one last name." : "Enter at least one first name.");
-    return "$sSum\n$sHint";
-  }
-  final sample = preview.sample!;
-  final sSample = [sample.name, sample.phone, sample.email]
-      .where((s) => s.isNotEmpty)
-      .join(spoken ? _kSpokenSeparator : " · ");
-  return "$sSum\n${_exampleIntro(n)}$sSample";
-}
-
-const String _kSpokenSeparator = ", ";
-
-String _exampleIntro(int combinations) =>
-    combinations == 1 ? "" : "For example: ";
-
-/// The first line of the preview, e.g. "27 last names × 28 first names =
-/// 756 fake contacts."
-String _previewSum(SettingsPreview preview, {required bool spoken}) {
-  final n = preview.combinations;
-  return [
+  final sSum = [
     _count(preview.lastNames, "last name"),
     spoken ? " times " : " × ",
     _count(preview.firstNames, "first name"),
@@ -122,21 +111,29 @@ String _previewSum(SettingsPreview preview, {required bool spoken}) {
     n == 0 ? "no fake contacts" : _fakeContacts(n),
     n == 1 ? ":" : ".",
   ].join();
-}
-
-/// Where the example's phone number is in the spoken preview (see
-/// [settingsPreviewMessage]), as (start, end), so a screen reader can be
-/// told to read it digit by digit rather than as one big number. Null if
-/// the example has no phone number.
-(int, int)? spokenPhoneNumberRange(SettingsPreview preview) {
-  final sample = preview.sample;
-  if (sample == null || sample.phone.isEmpty) return null;
-  final start = _previewSum(preview, spoken: true).length +
-      "\n".length +
-      _exampleIntro(preview.combinations).length +
-      sample.name.length +
-      _kSpokenSeparator.length;
-  return (start, start + sample.phone.length);
+  if (n == 0) {
+    final bNoLast = preview.lastNames == 0, bNoFirst = preview.firstNames == 0;
+    final sHint = bNoLast && bNoFirst
+        ? kEnterNamesHint
+        : (bNoLast ? "Enter at least one last name." : "Enter at least one first name.");
+    return (text: "$sSum\n$sHint", phoneNumber: null);
+  }
+  final sample = preview.sample!;
+  final out = StringBuffer("$sSum\n${n == 1 ? "" : "For example: "}");
+  (int, int)? phoneNumber;
+  var bFirst = true;
+  for (final (sPart, bPhone) in [
+    (sample.name, false),
+    (sample.phone, true),
+    (sample.email, false),
+  ]) {
+    if (sPart.isEmpty) continue;
+    if (!bFirst) out.write(spoken ? ", " : " · ");
+    bFirst = false;
+    if (bPhone) phoneNumber = (out.length, out.length + sPart.length);
+    out.write(sPart);
+  }
+  return (text: out.toString(), phoneNumber: phoneNumber);
 }
 
 /// The status line: how many fake contacts are on the phone, counting only
