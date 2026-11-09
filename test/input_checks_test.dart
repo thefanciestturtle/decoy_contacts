@@ -56,10 +56,10 @@ void main() {
 
     test('a joiner after a variation selector or a virama is shown as typed',
         () {
-      // 🏳️‍🌈: white flag, variation selector, joiner, rainbow.
+      // The rainbow flag: white flag, variation selector, joiner, rainbow.
       expect(phoneTemplateWarning('+44 \u{1F3F3}\uFE0F\u200D\u{1F308} nnn'),
           'A phone number can\'t contain “\u{1F3F3}\uFE0F\u200D\u{1F308}”.');
-      // क्‍ष, flagged here for the space before it.
+      // Devanagari ka, virama, joiner, ssa; flagged here for the space before it.
       expect(email(kDefaultEmailTemplate, first: ['A \u0915\u094D\u200D\u0937']),
           '“A \u0915\u094D\u200D\u0937” can\'t be part of an email address, '
           'so those addresses won\'t work.');
