@@ -22,6 +22,10 @@ class InMemoryContactsGateway implements ContactsGateway {
   /// What [requestPermission] answers.
   bool permissionGranted = true;
 
+  /// Whether the permission is already granted, for [hasPermission]. Null
+  /// means "as [permissionGranted] says"; [requestPermission] sets it.
+  bool? alreadyGranted;
+
   /// When set, the matching call throws it.
   Object? getAllError;
   Object? createAllError;
@@ -33,6 +37,7 @@ class InMemoryContactsGateway implements ContactsGateway {
   String? Function(NewContact contact)? mergeInto;
 
   int permissionRequests = 0;
+  int permissionChecks = 0;
   int getAllCalls = 0;
   final List<List<NewContact>> createAllCalls = [];
   final List<List<String>> deleteAllCalls = [];
@@ -102,7 +107,14 @@ class InMemoryContactsGateway implements ContactsGateway {
   @override
   Future<bool> requestPermission() async {
     permissionRequests++;
+    alreadyGranted = permissionGranted;
     return permissionGranted;
+  }
+
+  @override
+  Future<bool> hasPermission() async {
+    permissionChecks++;
+    return alreadyGranted ?? permissionGranted;
   }
 
   @override

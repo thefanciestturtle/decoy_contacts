@@ -35,6 +35,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   static const Key keyFirstNames = Key("FirstNames");
   static const Key keyPhoneNumberTemplate = Key("PhoneNumberTemplate");
   static const Key keyEmailAddressTemplate = Key("EmailAddressTemplate");
+  static const Key keyStatus = Key("Status");
 
   final TextEditingController lastNamesController = TextEditingController();
   final TextEditingController firstNamesController = TextEditingController();
@@ -76,6 +77,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       _saveSettingsNow();
     }
+    // Contacts may have been changed in another app meanwhile.
+    if (state == AppLifecycleState.resumed && _settingsLoaded && !_isBusy) {
+      unawaited(_refreshStatus());
+    }
   }
 
   /// Reads the settings once at startup (the store fills in defaults on
@@ -88,6 +93,33 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     phoneNumberTemplateController.text = settings.phoneTemplateText;
     emailAddressTemplateController.text = settings.emailTemplateText;
     setState(() { _settingsLoaded = true; });
+    unawaited(_refreshStatus());
+  }
+
+  /// The status line ([statusMessage]), or null to show none: no permission
+  /// yet, or the address book couldn't be read.
+  String? _status;
+
+  /// Counts [_refreshStatus] calls, so only the latest one's answer is used.
+  int _statusRequest = 0;
+
+  /// Updates the status line, if the contacts permission was already
+  /// granted. Never asks for the permission. Runs at startup, after each
+  /// Create or Delete tap, and when the app comes back to the foreground.
+  Future<void> _refreshStatus() async {
+    final int request = ++_statusRequest;
+    String? status;
+    try {
+      if (await widget.contacts.hasPermission()) {
+        status = statusMessage(await countFakeContacts(
+            widget.contacts, widget.ledgerStore, _settings));
+      }
+    } catch (e) {
+      log("_refreshStatus: error $e");
+    }
+    // A Create or Delete that started meanwhile refreshes it again when done.
+    if (!mounted || request != _statusRequest || _isBusy) return;
+    setState(() { _status = status; });
   }
 
   /// Called on every keystroke; saves once typing pauses.
@@ -163,6 +195,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     required String Function(R result) describe,
   }) async {
     if (_isBusy) return;
+    _statusRequest++; // a status count still running is out of date
     setState(() { _isBusy = true; });
     // An earlier result shouldn't linger under the dialog.
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -176,6 +209,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         _isConfirming = false;
       });
       if (message != null) _showResultSnackBar(message);
+      unawaited(_refreshStatus());
     }
 
     log("$name: about to request permission");
@@ -308,7 +342,21 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     autocorrect: false,
                     decoration: _fieldDecoration('Email address template'),
                   ),
-                  const SizedBox(height: 40),
+                  const SizedBox(height: 32),
+                  if (_status != null) ...[
+                    // TalkBack reads it out when it changes.
+                    Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        _status!,
+                        key: keyStatus,
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ] else
+                    const SizedBox(height: 8),
                   Center(
                     child: ElevatedButton(
                       onPressed: bCanAct ? () => _createAllContacts() : null,

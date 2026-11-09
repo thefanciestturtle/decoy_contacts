@@ -24,6 +24,12 @@ void main() {
     expect(kPermissionDeniedMessage, 'Permission to access contacts was denied.');
   });
 
+  test('status line', () {
+    expect(statusMessage(0), 'No fake contacts on this phone.');
+    expect(statusMessage(1), '1 fake contact on this phone.');
+    expect(statusMessage(756), '756 fake contacts on this phone.');
+  });
+
   test('the address book changed while the dialog was open', () {
     expect(kChangedMeanwhileMessage,
         'Your contacts changed meanwhile, so nothing was done. Try again.');

@@ -77,6 +77,7 @@ void main() {
     await startWithEmptyAddressBook(tester);
     final real = await seed(kRealContacts);
     await launchApp(tester);
+    await expectStatus(tester, 'No fake contacts on this phone.');
 
     await tapAndCancel(tester, kCreate, 'Create 4 fake contacts?');
     expect(describeAll(await readAddressBook()), describeAll(real));
@@ -86,6 +87,7 @@ void main() {
         await tapAndWaitForResult(tester, kCreate,
             confirm: 'Create 4 fake contacts?'),
         'Created 4 fake contacts.');
+    await expectStatus(tester, '4 fake contacts on this phone.');
 
     final book = await readAddressBook();
     final fakes = book.values.where((c) => !real.containsKey(c.id)).toList();
@@ -128,7 +130,9 @@ void main() {
     expect(withFakes, hasLength(real.length + kFakes.length));
     final ledgerWithFakes = await storedLedger();
 
+    await expectStatus(tester, '4 fake contacts on this phone.');
     await tapAndCancel(tester, kDelete, 'Delete 4 fake contacts?');
+    await expectStatus(tester, '4 fake contacts on this phone.');
     expect(describeAll(await readAddressBook()), describeAll(withFakes));
     expect(await storedLedger(), ledgerWithFakes);
 
@@ -136,6 +140,7 @@ void main() {
         await tapAndWaitForResult(tester, kDelete,
             confirm: 'Delete 4 fake contacts?'),
         'Deleted 4 fake contacts.');
+    await expectStatus(tester, 'No fake contacts on this phone.');
 
     final book = await readAddressBook();
     expect(describeAll(book), describeAll(real));
@@ -172,12 +177,15 @@ void main() {
     expect(rawIdsOf(merged), hasLength(2),
         reason: 'Android should have linked the fake Zach Zima into the real '
             'one: $merged');
+    // The linked fake counts too.
+    await expectStatus(tester, '4 fake contacts on this phone.');
 
     expect(
         await tapAndWaitForResult(tester, kDelete,
             confirm: 'Delete 3 fake contacts?'),
         'Deleted 3 fake contacts. 1 was merged with another contact and '
         'was left alone.');
+    await expectStatus(tester, '1 fake contact on this phone.');
 
     final book = await readAddressBook();
     expect(book, hasLength(real.length + 1));
@@ -215,6 +223,10 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(kLedgerPrefsKey, jsonEncode(ledger));
     await launchApp(tester);
+    // None of them counts: their contacts no longer match the ledger.
+    await expectStatus(tester, 'No fake contacts on this phone.');
+    // Counting changed nothing, not even the name-only entry.
+    expect(await storedLedger(), ledger);
 
     // Nothing to delete, so no dialog.
     expect(await tapAndWaitForResult(tester, kDelete),
@@ -327,6 +339,16 @@ Future<String> tapAndWaitForResult(WidgetTester tester, String label,
   await pumpUntil(tester, () => createButtonEnabled(tester), 'app idle');
   await tester.pumpAndSettle();
   return text;
+}
+
+/// Waits until the status line says [text].
+Future<void> expectStatus(WidgetTester tester, String text) async {
+  String? status() {
+    final found = find.byKey(const Key('Status'));
+    return found.evaluate().isEmpty ? null : tester.widget<Text>(found).data;
+  }
+
+  await pumpUntil(tester, () => status() == text, 'status line "$text"');
 }
 
 /// Taps the button labelled [label], expects the dialog that asks to go

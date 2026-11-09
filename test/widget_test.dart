@@ -26,6 +26,10 @@ void main() {
         findsOneWidget);
     expect(find.widgetWithText(FilledButton, 'Delete Fake Contacts'),
         findsOneWidget);
+    // There is no contacts plugin in widget tests, so the permission can't
+    // be checked: no status line, and no error.
+    expect(find.byKey(const Key('Status')), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('First launch fills in the default settings',

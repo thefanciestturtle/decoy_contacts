@@ -68,6 +68,11 @@ Confirmation deleteConfirmation(DeletePreview preview) => (
       action: "Delete",
     );
 
+/// The status line: how many fake contacts are on the phone.
+String statusMessage(int fakeContacts) => fakeContacts == 0
+    ? "No fake contacts on this phone."
+    : "${_fakeContacts(fakeContacts)} on this phone.";
+
 /// Shown instead of the dialog when Create has nothing to add.
 String nothingToCreateMessage(CreatePreview preview) {
   final existed = preview.alreadyExisted;

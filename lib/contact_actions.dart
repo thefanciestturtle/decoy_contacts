@@ -220,6 +220,17 @@ Future<DeletePreview> previewDelete(
   );
 }
 
+/// How many of the fakes this app created are still in the address book, as
+/// far as it can tell: the ones Delete would delete, plus those Android
+/// merged into another contact. Entries that no longer match what was
+/// created aren't counted, since their raw contact may not be a fake at all
+/// (see [planDelete]). Changes nothing, not even the ledger.
+Future<int> countFakeContacts(
+    ContactsGateway contacts, LedgerStore ledgerStore, Settings settings) async {
+  final plan = (await _planDelete(contacts, ledgerStore, settings)).plan;
+  return plan.rawContactsDeleted + plan.skippedMerged;
+}
+
 /// Deletes the fake contacts this app created and recorded in the ledger.
 ///
 /// Only contacts recorded in the ledger at creation time are deleted, never
