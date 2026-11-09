@@ -1,0 +1,32 @@
+# Dependabot opens pull requests that update the GitHub Actions (pinned to
+# commit SHAs in the workflows) and the pub packages. CI then builds and
+# tests each update.
+#
+# Gradle is left out on purpose: the Android Gradle plugin, Kotlin and Gradle
+# versions have to match what the Flutter version supports, so they are
+# updated together with Flutter.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Wait a week after a release before proposing it, so a bad or
+    # compromised release has time to be noticed and pulled.
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: pub
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      pub-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
