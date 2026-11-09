@@ -74,6 +74,7 @@ Confirmation deleteConfirmation(DeletePreview preview) => (
 /// What to do when [preview] has no names to combine: which list to fill
 /// in.
 String _enterNamesHint(SettingsPreview preview) {
+  assert(preview.combinations == 0, 'both name lists have names');
   final bNoLast = preview.lastNameCount == 0, bNoFirst = preview.firstNameCount == 0;
   if (bNoLast && bNoFirst) return "Enter at least one last name and one first name.";
   return bNoLast ? "Enter at least one last name." : "Enter at least one first name.";
@@ -157,6 +158,8 @@ String statusMessage(DeletePreview found) {
 String nothingToCreateMessage(CreatePreview preview, SettingsPreview settings) {
   final existed = preview.alreadyExisted;
   if (existed == 0) {
+    // Create makes every combination that doesn't exist yet, so making none
+    // with none existing means a name list is empty.
     return "Nothing to create. ${_enterNamesHint(settings)}";
   }
   return "Nothing to create. ${_fakeContacts(existed)}"

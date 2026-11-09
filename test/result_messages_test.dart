@@ -269,6 +269,9 @@ void main() {
           'Nothing to create. Enter at least one last name.');
       expect(nothingToCreateMessage(toCreate(0), settingsMake(27, 0)),
           'Nothing to create. Enter at least one first name.');
+      // Never a hint to fill in a list that has names.
+      expect(() => nothingToCreateMessage(toCreate(0), settingsMake(2, 2)),
+          throwsAssertionError);
     });
   });
 
