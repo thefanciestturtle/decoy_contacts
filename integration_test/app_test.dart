@@ -85,7 +85,7 @@ void main() {
     expect(
         await tapAndWaitForResult(tester, kCreate,
             confirm: 'Create 4 fake contacts?'),
-        'Created 4 fake contact(s).');
+        'Created 4 fake contacts.');
 
     final book = await readAddressBook();
     final fakes = book.values.where((c) => !real.containsKey(c.id)).toList();
@@ -123,7 +123,7 @@ void main() {
     expect(
         await tapAndWaitForResult(tester, kCreate,
             confirm: 'Create 4 fake contacts?'),
-        'Created 4 fake contact(s).');
+        'Created 4 fake contacts.');
     final withFakes = await readAddressBook();
     expect(withFakes, hasLength(real.length + kFakes.length));
     final ledgerWithFakes = await storedLedger();
@@ -135,7 +135,7 @@ void main() {
     expect(
         await tapAndWaitForResult(tester, kDelete,
             confirm: 'Delete 4 fake contacts?'),
-        'Deleted 4 fake contact(s).');
+        'Deleted 4 fake contacts.');
 
     final book = await readAddressBook();
     expect(describeAll(book), describeAll(real));
@@ -164,7 +164,7 @@ void main() {
     expect(
         await tapAndWaitForResult(tester, kCreate,
             confirm: 'Create 4 fake contacts?'),
-        'Created 4 fake contact(s).');
+        'Created 4 fake contacts.');
     // Linking can give the contact a new contact ID; its raw contact keeps
     // its ID.
     final merged = contactWithRawId(await readAddressBook(), zachRawId);
@@ -176,7 +176,7 @@ void main() {
     expect(
         await tapAndWaitForResult(tester, kDelete,
             confirm: 'Delete 3 fake contacts?'),
-        'Deleted 3 fake contact(s). 1 was merged with another contact and '
+        'Deleted 3 fake contacts. 1 was merged with another contact and '
         'was left alone.');
 
     final book = await readAddressBook();
@@ -223,8 +223,16 @@ void main() {
         "alone.");
 
     expect(describeAll(await readAddressBook()), describeAll(real));
-    // Nothing ran, so the ledger is as it was.
-    expect(await storedLedger(), ledger);
+    // Skipped entries stay in the ledger, and the name-only one is saved
+    // with the details it was checked against.
+    expect(await storedLedger(), {
+      ...ledger,
+      rawIdOf('Zoe Zen'): {
+        'name': 'Zoe Zen',
+        'phone': '+447700900010',
+        'email': 'Zoe.Zen@example.com',
+      },
+    });
   });
 }
 
@@ -338,6 +346,8 @@ Future<void> tapAndCancel(
 /// Taps the button labelled [label] and waits until the app either asks to
 /// go ahead or shows a result.
 Future<void> tapAndWaitForAnswer(WidgetTester tester, String label) async {
+  // An earlier result still on screen would end the wait below too early.
+  expect(find.byType(SnackBar), findsNothing);
   final button = find.text(label);
   await tester.ensureVisible(button);
   await tester.pumpAndSettle();

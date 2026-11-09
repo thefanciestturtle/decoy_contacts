@@ -187,7 +187,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       planned = await preview(settings);
     } catch (e) {
       log("$name: error in preview $e");
-      return finish(errorMessage(doing, e));
+      // Nothing was changed yet, so don't say "creating" or "deleting".
+      return finish(errorMessage("reading", e));
     }
     final sNothingToDo = nothingToDo(planned);
     if (sNothingToDo != null) return finish(sNothingToDo);

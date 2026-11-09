@@ -6,7 +6,7 @@ import 'contact_actions.dart';
 const String kPermissionDeniedMessage =
     "Permission to access contacts was denied.";
 
-/// [doing] is "creating" or "deleting".
+/// [doing] is "reading", "creating" or "deleting".
 String errorMessage(String doing, Object error) =>
     "Error while $doing contacts: $error";
 
@@ -77,7 +77,7 @@ String nothingToDeleteMessage(DeletePreview preview) =>
     "${_leftAlone(preview.skippedMerged, preview.skippedChanged, done: true)}";
 
 String createdMessage(CreateResult result) {
-  var sMessage = "Created ${result.created} fake contact(s).";
+  var sMessage = "Created ${_fakeContacts(result.created)}.";
   if (result.alreadyExisted > 0) {
     sMessage += " ${result.alreadyExisted} already existed.";
   }
@@ -89,5 +89,5 @@ String createdMessage(CreateResult result) {
 }
 
 String deletedMessage(DeleteResult result) =>
-    "Deleted ${result.deleted} fake contact(s)."
+    "Deleted ${_fakeContacts(result.deleted)}."
     "${_leftAlone(result.skippedMerged, result.skippedChanged, done: true)}";

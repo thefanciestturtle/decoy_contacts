@@ -152,7 +152,7 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
 
-      expect(snackBarText(tester), 'Created 4 fake contact(s).');
+      expect(snackBarText(tester), 'Created 4 fake contacts.');
       expect(book.displayNames, unorderedEquals(kFakeNames));
       final zoe = book.all.firstWhere((c) => c.displayName == 'Zoe Zen');
       expect(zoe.phones, [fakeEntry('Zoe', 'Zen').phone]);
@@ -189,7 +189,7 @@ void main() {
       await tester.enterText(find.byKey(const Key('FirstNames')), 'Zoe, Zach, Zelda');
       await tapCreate(tester);
 
-      expect(snackBarText(tester), 'Created 2 fake contact(s). 4 already existed.');
+      expect(snackBarText(tester), 'Created 2 fake contacts. 4 already existed.');
       expect(book.displayNames,
           unorderedEquals([...kFakeNames, 'Zelda Zen', 'Zelda Zima']));
       expect((await storedLedger()).length, 6);
@@ -202,7 +202,7 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
 
-      expect(snackBarText(tester), 'Created 3 fake contact(s). 1 already existed.');
+      expect(snackBarText(tester), 'Created 3 fake contacts. 1 already existed.');
       expect(book.displayNames.where((n) => n == 'Zoe Zen'), hasLength(1));
       // Not tracked, so Delete will never touch it.
       final ledger = await storedLedger();
@@ -216,7 +216,7 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
 
-      expect(snackBarText(tester), 'Created 4 fake contact(s).');
+      expect(snackBarText(tester), 'Created 4 fake contacts.');
       expect(book.displayNames.where((n) => n == 'Zoe Zen'), hasLength(2));
       final ledger = await storedLedger();
       expect(ledger.length, 4);
@@ -230,7 +230,7 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
 
-      expect(snackBarText(tester), 'Created 4 fake contact(s).');
+      expect(snackBarText(tester), 'Created 4 fake contacts.');
       final raws = book.rawIdsOf(alice);
       expect(raws, hasLength(2));
       final ledger = await storedLedger();
@@ -246,7 +246,7 @@ void main() {
       await tapCreate(tester);
 
       expect(snackBarText(tester),
-          'Created 4 fake contact(s). Warning: 1 could not be recorded and '
+          'Created 4 fake contacts. Warning: 1 could not be recorded and '
           'must be deleted by hand.');
       expect(lossy.all, hasLength(4));
       expect((await storedLedger()).length, 3);
@@ -284,8 +284,9 @@ void main() {
       await pumpApp(tester, book);
       await tapExpectingNoDialog(tester, kCreateButton);
 
+      // It happened before anything was created, and the message says so.
       expect(snackBarText(tester),
-          'Error while creating contacts: Exception: no provider');
+          'Error while reading contacts: Exception: no provider');
       expect(book.createAllCalls, isEmpty);
       expect(await storedLedgerJson(), isNull);
     });
@@ -309,7 +310,7 @@ void main() {
       expect(slow.permissionRequests, 1);
       expect(slow.createAllCalls, hasLength(1));
       expect(slow.deleteAllCalls, isEmpty);
-      expect(snackBarText(tester), 'Created 4 fake contact(s).');
+      expect(snackBarText(tester), 'Created 4 fake contacts.');
     });
   });
 
@@ -324,7 +325,7 @@ void main() {
 
       await tapDelete(tester);
 
-      expect(snackBarText(tester), 'Deleted 4 fake contact(s).');
+      expect(snackBarText(tester), 'Deleted 4 fake contacts.');
       expect(book.displayNames, unorderedEquals(['Alice Example', 'Zoe Zen']));
       expect(book.all.firstWhere((c) => c.displayName == 'Zoe Zen').phones,
           ['+1 555 0100']);
@@ -352,7 +353,7 @@ void main() {
 
       await tapDelete(tester);
 
-      expect(snackBarText(tester), 'Deleted 3 fake contact(s).$kOneMerged');
+      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneMerged');
       expect(book.displayNames, ['Alice Example']);
       expect(book.rawIdsOf(alice), hasLength(2));
       final ledger = await storedLedger();
@@ -368,7 +369,7 @@ void main() {
 
       await tapDelete(tester);
 
-      expect(snackBarText(tester), 'Deleted 3 fake contact(s).$kOneMerged');
+      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneMerged');
       expect(book.displayNames, ['Alice Example']);
       expect(book.rawIdsOf(alice), hasLength(2));
     });
@@ -381,7 +382,7 @@ void main() {
 
       await tapDelete(tester);
 
-      expect(snackBarText(tester), 'Deleted 3 fake contact(s).$kOneChanged');
+      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneChanged');
       expect(book.displayNames, ['Zoe Zen']);
       expect((await storedLedger()).entries.keys, book.rawIdsOf(zoe));
     });
@@ -394,7 +395,7 @@ void main() {
 
       await tapDelete(tester);
 
-      expect(snackBarText(tester), 'Deleted 3 fake contact(s).');
+      expect(snackBarText(tester), 'Deleted 3 fake contacts.');
       expect(book.all, isEmpty);
       expect((await storedLedger()).isEmpty, isTrue);
     });
@@ -437,6 +438,31 @@ void main() {
         expect(snackBarText(tester), 'No fake contacts to delete.${someChanged(2)}');
         expect(book.displayNames, unorderedEquals(['Alice Example', 'Zoe Zen']));
         expect(book.deleteAllCalls, isEmpty);
+        // Saved with the details they were checked against, even though
+        // nothing was deleted.
+        expect((await storedLedger()).entries.values,
+            everyElement(fakeEntry('Zoe', 'Zen')));
+      });
+
+      testWidgets('once checked, name-only entries stay checked against the '
+          'same details', (tester) async {
+        final zoe = book.add('Zoe Zen',
+            phones: ['+15550100'], emails: ['zoe@real.test']);
+        setPrefs(ledger: {book.rawIdsOf(zoe).single: 'Zoe Zen'});
+        await pumpApp(tester, book);
+        await tapExpectingNoDialog(tester, kDeleteButton);
+        expect(snackBarText(tester), 'No fake contacts to delete.$kOneChanged');
+
+        // Templates that happen to give exactly the real contact's details.
+        await tester.enterText(
+            find.byKey(const Key('PhoneNumberTemplate')), '+15550100');
+        await tester.enterText(
+            find.byKey(const Key('EmailAddressTemplate')), 'zoe@real.test');
+        await tapExpectingNoDialog(tester, kDeleteButton);
+
+        expect(snackBarText(tester), 'No fake contacts to delete.$kOneChanged');
+        expect(book.all.map((c) => c.id), [zoe]);
+        expect(book.deleteAllCalls, isEmpty);
       });
 
       testWidgets('old name-only entries for real fakes are still deleted',
@@ -454,7 +480,7 @@ void main() {
 
         await tapDelete(tester);
 
-        expect(snackBarText(tester), 'Deleted 2 fake contact(s).');
+        expect(snackBarText(tester), 'Deleted 2 fake contacts.');
         expect(book.all.map((c) => c.id), [alice]);
       });
 
@@ -469,11 +495,18 @@ void main() {
 
         expect(snackBarText(tester), 'No fake contacts to delete.');
         expect(book.all.map((c) => c.id), [alice]);
-        // Nothing ran, so nothing was saved. The next Create or Delete that
-        // runs drops the entry.
-        expect((await storedLedger()).entries.keys, [gone]);
-        await tapCreate(tester);
-        expect((await storedLedger()).entries.keys, isNot(contains(gone)));
+        expect((await storedLedger()).isEmpty, isTrue);
+      });
+
+      testWidgets('they are dropped even if the user cancels', (tester) async {
+        final gone = book.unusedRawId();
+        setPrefs(ledger: {gone: fakeEntry('Zoe', 'Zen').toJson()});
+        await pumpApp(tester, book);
+
+        await tapAndAnswer(tester, kCreateButton, 'Cancel');
+
+        expect(book.createAllCalls, isEmpty);
+        expect((await storedLedger()).isEmpty, isTrue);
       });
     });
 
@@ -513,7 +546,7 @@ void main() {
       // Once the error is gone, Delete still works.
       book.deleteAllError = null;
       await tapDelete(tester);
-      expect(snackBarText(tester), 'Deleted 4 fake contact(s).');
+      expect(snackBarText(tester), 'Deleted 4 fake contacts.');
       expect(book.all, isEmpty);
     });
   });
@@ -574,7 +607,7 @@ void main() {
       expect(book.deleteAllCalls, isEmpty);
       // Still works afterwards.
       await tapDelete(tester);
-      expect(snackBarText(tester), 'Deleted 4 fake contact(s).');
+      expect(snackBarText(tester), 'Deleted 4 fake contacts.');
     });
 
     testWidgets('Create counts only the new ones', (tester) async {
@@ -650,7 +683,7 @@ void main() {
       await tester.tap(dialogButton('Delete'));
       await tester.pumpAndSettle();
 
-      expect(snackBarText(tester), 'Deleted 3 fake contact(s).$kOneChanged');
+      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneChanged');
       expect(book.displayNames, ['Zoe Zen']);
       expect(book.all.single.phones, ['+1 555 0199']);
     });
@@ -667,7 +700,7 @@ void main() {
       await tester.tap(dialogButton('Create'));
       await tester.pumpAndSettle();
 
-      expect(snackBarText(tester), 'Created 3 fake contact(s). 1 already existed.');
+      expect(snackBarText(tester), 'Created 3 fake contacts. 1 already existed.');
       expect(book.displayNames.where((n) => n == 'Zoe Zen'), hasLength(1));
     });
 

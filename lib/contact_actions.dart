@@ -68,12 +68,25 @@ class DeletePreview {
 /// The address book, the ledger and what Create would add to them.
 class _CreatePlan {
   final AddressBook before;
+
+  /// The ledger as stored, and as checked against the address book.
+  final Ledger stored;
   final Ledger ledger;
+
   final int wanted;
   final List<FakeName> toCreate;
-  final LedgerEntry Function(FakeName) entryOf;
 
-  _CreatePlan(this.before, this.ledger, this.wanted, this.toCreate, this.entryOf);
+  /// The ledger entry for each of [toCreate], in the same order.
+  final List<LedgerEntry> entries;
+
+  _CreatePlan(this.before, this.stored, this.ledger, this.wanted,
+      this.toCreate, this.entries);
+}
+
+/// Saves [checked] if it differs from the [stored] ledger it came from.
+Future<void> _saveIfChanged(
+    LedgerStore ledgerStore, Ledger stored, Ledger checked) async {
+  if (checked.encode() != stored.encode()) await ledgerStore.save(checked);
 }
 
 Future<_CreatePlan> _planCreate(
@@ -83,21 +96,27 @@ Future<_CreatePlan> _planCreate(
   final existingFingerprints = {
     for (final c in everyone) ...fingerprintsOfContact(c),
   };
-  final ledger = (await ledgerStore.load()).prunedTo(allRawIds(before));
+  final stored = await ledgerStore.load();
+  final ledger = stored.prunedTo(allRawIds(before));
   final wanted = allCombinations(settings.firstNames, settings.lastNames);
   LedgerEntry entryOf(FakeName n) =>
       entryFor(n, settings.phoneTemplate, settings.emailTemplate);
   final toCreate = namesToCreate(wanted, ledger, before,
       existingFingerprints: existingFingerprints,
       fingerprintOf: (n) => entryOf(n).fingerprint!);
-  return _CreatePlan(before, ledger, wanted.length, toCreate, entryOf);
+  return _CreatePlan(before, stored, ledger, wanted.length, toCreate,
+      [for (final n in toCreate) entryOf(n)]);
 }
 
 /// Works out what [createFakeContacts] would do with the same arguments.
-/// Reads the address book and the ledger, but changes neither.
+///
+/// Creates nothing. Like Create, it drops ledger entries for raw contacts
+/// that no longer exist, so that happens even if the user then cancels or
+/// there is nothing to create.
 Future<CreatePreview> previewCreate(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings) async {
   final plan = await _planCreate(contacts, ledgerStore, settings);
+  await _saveIfChanged(ledgerStore, plan.stored, plan.ledger);
   return CreatePreview(
     toCreate: plan.toCreate.length,
     alreadyExisted: plan.wanted - plan.toCreate.length,
@@ -118,7 +137,7 @@ Future<CreateResult> createFakeContacts(
   var nCreated = 0;
   var nUntracked = 0;
   if (toCreate.isNotEmpty) {
-    final entries = [for (final n in toCreate) plan.entryOf(n)];
+    final entries = plan.entries;
     final newContacts = [
       for (var i = 0; i < toCreate.length; i++)
         NewContact(
@@ -146,7 +165,11 @@ Future<CreateResult> createFakeContacts(
   );
 }
 
-Future<DeletePlan> _planDelete(
+/// The ledger as stored, as checked against the address book, and what
+/// Delete would do.
+typedef _DeleteCheck = ({Ledger stored, Ledger checked, DeletePlan plan});
+
+Future<_DeleteCheck> _planDelete(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings) async {
   final everyone = await contacts.getAll();
   final book = addressBookOf(everyone);
@@ -159,17 +182,29 @@ Future<DeletePlan> _planDelete(
     for (final n in allCombinations(settings.firstNames, settings.lastNames))
       n.displayName: entryFor(n, settings.phoneTemplate, settings.emailTemplate),
   };
-  final ledger = (await ledgerStore.load())
+  final stored = await ledgerStore.load();
+  final checked = stored
       .prunedTo(allRawIds(book))
       .withDetailsForNameOnly((name) => current[name]);
-  return planDelete(ledger, book, fingerprintsByContact);
+  return (
+    stored: stored,
+    checked: checked,
+    plan: planDelete(checked, book, fingerprintsByContact),
+  );
 }
 
 /// Works out what [deleteFakeContacts] would do with the same arguments.
-/// Reads the address book and the ledger, but changes neither.
+///
+/// Deletes nothing. Like Delete, it drops ledger entries for raw contacts
+/// that no longer exist and saves old name-only entries with the details
+/// they were checked against, so that happens even if the user then cancels
+/// or there is nothing to delete. (Otherwise those entries would be checked
+/// against whatever the settings say at the next Delete.)
 Future<DeletePreview> previewDelete(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings) async {
-  final plan = await _planDelete(contacts, ledgerStore, settings);
+  final (:stored, :checked, :plan) =
+      await _planDelete(contacts, ledgerStore, settings);
+  await _saveIfChanged(ledgerStore, stored, checked);
   return DeletePreview(
     toDelete: plan.rawContactsDeleted,
     skippedMerged: plan.skippedMerged,
@@ -188,7 +223,8 @@ Future<DeletePreview> previewDelete(
 /// made earlier never decides what is deleted.
 Future<DeleteResult> deleteFakeContacts(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings) async {
-  final plan = await _planDelete(contacts, ledgerStore, settings);
+  final (:plan, stored: _, checked: _) =
+      await _planDelete(contacts, ledgerStore, settings);
   log("deleteFakeContacts: about to call deleteAll for ${plan.contactIdsToDelete.length} contact(s)");
   await contacts.deleteAll(plan.contactIdsToDelete);
   await ledgerStore.save(plan.remaining);
