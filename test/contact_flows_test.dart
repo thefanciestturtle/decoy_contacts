@@ -172,6 +172,22 @@ class _FailsAfterDelete extends InMemoryContactsGateway {
   }
 }
 
+/// The first read of the address book after something was deleted waits
+/// until [held] is completed.
+class _HoldsReadAfterDelete extends InMemoryContactsGateway {
+  final Completer<void> held = Completer();
+  var _holding = false;
+
+  @override
+  Future<List<StoredContact>> getAll({List<String>? ids}) async {
+    if (deleteAllCalls.isEmpty || _holding) return super.getAll(ids: ids);
+    _holding = true;
+    final found = await super.getAll(ids: ids);
+    await held.future;
+    return found;
+  }
+}
+
 /// Can't find the first new contact when looking them up after creating
 /// them, so its raw contact can't be recorded.
 class _LosesFirstNewContact extends InMemoryContactsGateway {
@@ -1003,6 +1019,41 @@ void main() {
       expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneChanged');
       expect(failing.displayNames, ['Zoe Zen']);
       expect(statusText(tester), isNull);
+    });
+
+    testWidgets('a failed update that overtakes the one after an action '
+        'shows no count either', (tester) async {
+      final holding = _HoldsReadAfterDelete();
+      await pumpApp(tester, holding);
+      await tapCreate(tester);
+      holding.setPhones(holding.idOf('Zoe Zen'), ['+1 555 0199']);
+      await tapDelete(tester); // its count afterwards is now waiting
+      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneChanged');
+      expect(statusText(tester), '4 fake contacts on this phone.');
+
+      // The user leaves and comes back; that count fails.
+      holding.getAllError = Exception('busy syncing');
+      await leaveAndReturn(tester);
+      expect(statusText(tester), isNull);
+
+      // The count from after Delete arrives last and is out of date.
+      holding.held.complete();
+      await tester.pumpAndSettle();
+      expect(statusText(tester), isNull);
+    });
+
+    testWidgets('old name-only entries are not counted, whatever the '
+        'templates say', (tester) async {
+      // A fake from an older version, which recorded only the name. Its
+      // details match the current settings, so Delete would delete it.
+      final e = fakeEntry('Zoe', 'Zen');
+      final zoe = book.add('Zoe Zen', phones: [e.phone!], emails: [e.email!]);
+      setPrefs(ledger: {book.rawIdsOf(zoe).single: 'Zoe Zen'});
+      await pumpApp(tester, book);
+
+      expect(statusText(tester), 'No fake contacts this app can delete.');
+      await tapAndOpenDialog(tester, kDeleteButton);
+      expect(dialogText(tester).title, 'Delete 1 fake contact?');
     });
 
     testWidgets('a failed update keeps the last count', (tester) async {

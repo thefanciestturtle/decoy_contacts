@@ -110,28 +110,37 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// Counts [_refreshStatus] calls, so only the latest one's answer is used.
   int _statusRequest = 0;
 
+  /// Set when a Create or Delete starts, cleared once a count after it is
+  /// shown: until then the line may show a count from before it.
+  bool _statusOutdated = false;
+
   /// Updates the status line, if the contacts permission was already
   /// granted. Never asks for the permission. Runs at startup, after each
-  /// Create or Delete tap ([afterAction]), and when the app comes back to
-  /// the foreground.
+  /// Create or Delete tap, and when the app comes back to the foreground.
   ///
   /// If counting fails, the last count stays, since it may only be a
-  /// passing problem; but not after an action, which may have changed it.
-  Future<void> _refreshStatus({bool afterAction = false}) async {
+  /// passing problem; but not if a Create or Delete may have changed it
+  /// since ([_statusOutdated]).
+  Future<void> _refreshStatus() async {
     final int request = ++_statusRequest;
     String? status;
+    var bFailed = false;
     try {
       if (await widget.contacts.hasPermission()) {
-        status = statusMessage(await countFakeContacts(
-            widget.contacts, widget.ledgerStore, _settings));
+        status = statusMessage(
+            await countFakeContacts(widget.contacts, widget.ledgerStore));
       }
     } catch (e) {
       log("_refreshStatus: error $e");
-      if (!afterAction) return;
+      bFailed = true;
     }
     // A Create or Delete that started meanwhile refreshes it again when done.
     if (!mounted || request != _statusRequest) return;
-    setState(() { _status = status; });
+    if (bFailed && !_statusOutdated) return;
+    setState(() {
+      _status = status;
+      if (!bFailed) _statusOutdated = false;
+    });
   }
 
   /// Called on every keystroke; saves once typing pauses.
@@ -208,6 +217,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   }) async {
     if (_isBusy) return;
     _statusRequest++; // a status count still running is out of date
+    _statusOutdated = true;
     setState(() { _isBusy = true; });
     // An earlier result shouldn't linger under the dialog.
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -221,7 +231,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         _isConfirming = false;
       });
       if (message != null) _showResultSnackBar(message);
-      unawaited(_refreshStatus(afterAction: true));
+      unawaited(_refreshStatus());
     }
 
     log("$name: about to request permission");
