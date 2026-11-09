@@ -43,8 +43,11 @@ jobs:
         with:
           path: ${{ env.GRADLE_CACHE_PATHS }}
           key: gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
+          # The last line falls back to the per-job cache used before this
+          # shared one, until that has been deleted (then it matches nothing).
           restore-keys: |
             gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
+            gradle-integration-test-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
