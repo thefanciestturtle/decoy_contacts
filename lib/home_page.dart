@@ -77,9 +77,14 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       _saveSettingsNow();
     }
-    // Contacts may have been changed in another app meanwhile.
-    if (state == AppLifecycleState.resumed && _settingsLoaded && !_isBusy) {
-      unawaited(_refreshStatus());
+    // Contacts may have been changed in another app meanwhile. (Not after
+    // only "inactive", e.g. for the notification shade or a system dialog.)
+    if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
+      _wasInBackground = true;
+    }
+    if (state == AppLifecycleState.resumed && _wasInBackground) {
+      _wasInBackground = false;
+      if (_settingsLoaded && !_isBusy) unawaited(_refreshStatus());
     }
   }
 
@@ -96,8 +101,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     unawaited(_refreshStatus());
   }
 
-  /// The status line ([statusMessage]), or null to show none: no permission
-  /// yet, or the address book couldn't be read.
+  bool _wasInBackground = false;
+
+  /// The status line ([statusMessage]), or null to show none: no permission,
+  /// or the address book couldn't be read yet.
   String? _status;
 
   /// Counts [_refreshStatus] calls, so only the latest one's answer is used.
@@ -115,7 +122,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
             widget.contacts, widget.ledgerStore, _settings));
       }
     } catch (e) {
+      // Keep showing the last count; it may only be a passing problem.
       log("_refreshStatus: error $e");
+      return;
     }
     // A Create or Delete that started meanwhile refreshes it again when done.
     if (!mounted || request != _statusRequest || _isBusy) return;
@@ -343,20 +352,19 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     decoration: _fieldDecoration('Email address template'),
                   ),
                   const SizedBox(height: 32),
-                  if (_status != null) ...[
-                    // TalkBack reads it out when it changes.
-                    Semantics(
-                      liveRegion: true,
-                      child: Text(
-                        _status!,
-                        key: keyStatus,
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodyLarge,
-                      ),
+                  // Always there, empty without a count, so the buttons
+                  // don't move when it appears. TalkBack reads it out when
+                  // it changes.
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _status ?? "",
+                      key: keyStatus,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyLarge,
                     ),
-                    const SizedBox(height: 16),
-                  ] else
-                    const SizedBox(height: 8),
+                  ),
+                  const SizedBox(height: 16),
                   Center(
                     child: ElevatedButton(
                       onPressed: bCanAct ? () => _createAllContacts() : null,

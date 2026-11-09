@@ -28,7 +28,7 @@ void main() {
         findsOneWidget);
     // There is no contacts plugin in widget tests, so the permission can't
     // be checked: no status line, and no error.
-    expect(find.byKey(const Key('Status')), findsNothing);
+    expect(tester.widget<Text>(find.byKey(const Key('Status'))).data, isEmpty);
     expect(tester.takeException(), isNull);
   });
 

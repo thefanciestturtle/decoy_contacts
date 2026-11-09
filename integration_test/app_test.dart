@@ -177,15 +177,15 @@ void main() {
     expect(rawIdsOf(merged), hasLength(2),
         reason: 'Android should have linked the fake Zach Zima into the real '
             'one: $merged');
-    // The linked fake counts too.
-    await expectStatus(tester, '4 fake contacts on this phone.');
+    // The linked fake isn't counted: its details can't be checked.
+    await expectStatus(tester, '3 fake contacts on this phone.');
 
     expect(
         await tapAndWaitForResult(tester, kDelete,
             confirm: 'Delete 3 fake contacts?'),
         'Deleted 3 fake contacts. 1 was merged with another contact and '
         'was left alone.');
-    await expectStatus(tester, '1 fake contact on this phone.');
+    await expectStatus(tester, 'No fake contacts on this phone.');
 
     final book = await readAddressBook();
     expect(book, hasLength(real.length + 1));

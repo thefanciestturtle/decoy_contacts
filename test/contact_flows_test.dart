@@ -113,10 +113,10 @@ Future<String?> storedLedgerJson() async =>
 
 Future<Ledger> storedLedger() async => Ledger.decode(await storedLedgerJson());
 
-/// The status line's text, or null if there is none.
+/// The status line's text, or null if it is empty.
 String? statusText(WidgetTester tester) {
-  final status = find.byKey(const Key('Status'));
-  return status.evaluate().isEmpty ? null : tester.widget<Text>(status).data;
+  final text = tester.widget<Text>(find.byKey(const Key('Status'))).data!;
+  return text.isEmpty ? null : text;
 }
 
 /// The app goes to the background and comes back.
@@ -829,6 +829,7 @@ void main() {
       await pumpApp(tester, book);
 
       expect(statusText(tester), '2 fake contacts on this phone.');
+      expect(book.permissionChecks, greaterThan(0));
       expect(book.permissionRequests, 0);
       expect(await storedLedgerJson(), ledger);
     });
@@ -864,15 +865,31 @@ void main() {
       await tapCreate(tester);
       expect(statusText(tester), '4 fake contacts on this phone.');
 
-      await tapAndAnswer(tester, kDeleteButton, 'Cancel');
-      expect(statusText(tester), '4 fake contacts on this phone.');
+      // One is deleted by hand while the dialog is open; Cancel still
+      // updates the count.
+      await tapAndOpenDialog(tester, kDeleteButton);
+      await book.deleteAll([book.idOf('Zoe Zen')]);
+      await tester.tap(dialogButton('Cancel'));
+      await tester.pumpAndSettle();
+      expect(statusText(tester), '3 fake contacts on this phone.');
 
       await tapDelete(tester);
       expect(statusText(tester), 'No fake contacts on this phone.');
     });
 
-    testWidgets('counts fakes merged into other contacts, but not ones that '
-        'no longer match', (tester) async {
+    testWidgets('the buttons stay put when it appears', (tester) async {
+      book.alreadyGranted = false;
+      await pumpApp(tester, book);
+      final before = tester.getCenter(find.text(kDeleteButton));
+
+      await tapCreate(tester);
+      expect(statusText(tester), '4 fake contacts on this phone.');
+
+      expect(tester.getCenter(find.text(kDeleteButton)), before);
+    });
+
+    testWidgets('counts neither fakes merged into other contacts nor ones '
+        'that no longer match', (tester) async {
       final alice = book.add('Alice Example', phones: ['+1 555 0101']);
       await pumpApp(tester, book);
       await tapCreate(tester);
@@ -881,7 +898,21 @@ void main() {
 
       await leaveAndReturn(tester);
 
-      expect(statusText(tester), '3 fake contacts on this phone.');
+      expect(statusText(tester), '2 fake contacts on this phone.');
+    });
+
+    testWidgets('a ledger entry landing on part of a real contact is not '
+        'counted (S1)', (tester) async {
+      // A real contact made of two raw contacts (e.g. two accounts); a
+      // ledger from another phone names one of them.
+      final bob = book.add('Bob Example', phones: ['+1 555 0102']);
+      book.merge(into: bob, from: book.add('Bob Example'));
+      setPrefs(ledger: {
+        book.rawIdsOf(bob).first: fakeEntry('Zoe', 'Zen').toJson(),
+      });
+      await pumpApp(tester, book);
+
+      expect(statusText(tester), 'No fake contacts on this phone.');
     });
 
     testWidgets('a ledger pointing at real contacts counts none (S1)',
@@ -909,6 +940,31 @@ void main() {
       await leaveAndReturn(tester);
 
       expect(statusText(tester), '3 fake contacts on this phone.');
+    });
+
+    testWidgets('only after the app was in the background, not after the '
+        'notification shade', (tester) async {
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      await book.deleteAll([book.idOf('Zoe Zen')]);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(statusText(tester), '4 fake contacts on this phone.');
+
+      await leaveAndReturn(tester);
+      expect(statusText(tester), '3 fake contacts on this phone.');
+    });
+
+    testWidgets('a failed update keeps the last count', (tester) async {
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+
+      book.getAllError = Exception('busy syncing');
+      await leaveAndReturn(tester);
+
+      expect(statusText(tester), '4 fake contacts on this phone.');
     });
 
     testWidgets('disappears if the permission is taken away', (tester) async {
