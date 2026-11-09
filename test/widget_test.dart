@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:fake_contacts/fake_contacts_core.dart';
+import 'package:fake_contacts/home_page.dart';
 import 'package:fake_contacts/main.dart';
 
 void main() {
