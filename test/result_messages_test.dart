@@ -144,12 +144,14 @@ void main() {
     expect(permissionSettingsConfirmation('create'), (
       title: 'Contacts access is off',
       body: 'To create fake contacts, this app needs access to your contacts.'
-          ' In Settings, tap Permissions, then Contacts, then Allow.',
+          ' In Settings, tap Permissions and allow Contacts.',
       action: 'Open settings',
     ));
     expect(permissionSettingsConfirmation('delete').body,
         startsWith('To delete fake contacts, '));
     expect(kOpenSettingsFailedMessage, "Couldn't open Settings.");
+    expect(kPermissionRequestFailedMessage,
+        "Couldn't ask for permission to access contacts.");
   });
 
   test('status line', () {

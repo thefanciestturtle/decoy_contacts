@@ -156,6 +156,21 @@ class _SlowPermission extends InMemoryContactsGateway {
   }
 }
 
+/// Asking for the permission throws, as the plugin does while another
+/// request is open, until [fail] is cleared.
+class _FailingPermission extends InMemoryContactsGateway {
+  bool fail = true;
+
+  @override
+  Future<PermissionAnswer> requestPermission() {
+    if (fail) {
+      permissionRequests++;
+      throw Exception('Another permission request is in progress');
+    }
+    return super.requestPermission();
+  }
+}
+
 /// The first time the address book is read, the answer waits until
 /// [firstRead] is completed; later reads answer at once.
 class _SlowFirstRead extends InMemoryContactsGateway {
@@ -1314,7 +1329,7 @@ void main() {
     const kTitle = 'Contacts access is off';
     String body(String verb) =>
         'To $verb fake contacts, this app needs access to your contacts.'
-        ' In Settings, tap Permissions, then Contacts, then Allow.';
+        ' In Settings, tap Permissions and allow Contacts.';
 
     setUp(() => book.permission = PermissionAnswer.permanentlyDenied);
 
@@ -1417,6 +1432,23 @@ void main() {
       expect(snackBarText(tester), "Couldn't open Settings.");
       expect(buttonsEnabled(tester), isTrue);
       expect(find.byType(CircularProgressIndicator), findsNothing);
+    });
+
+    testWidgets('if asking fails, it says so, and the app still works',
+        (tester) async {
+      final failing = _FailingPermission();
+      await pumpApp(tester, failing);
+
+      await tapExpectingNoDialog(tester, kCreateButton);
+
+      expect(snackBarText(tester),
+          "Couldn't ask for permission to access contacts.");
+      expect(buttonsEnabled(tester), isTrue);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(failing.getAllCalls, 0);
+      failing.fail = false;
+      await tapCreate(tester);
+      expect(snackBarText(tester), 'Created 4 fake contacts.');
     });
 
     testWidgets('a plain denial (Android may still ask) gets the message, '

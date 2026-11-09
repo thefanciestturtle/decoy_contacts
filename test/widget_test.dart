@@ -300,7 +300,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(
-        tester.getRect(find.textContaining('then Allow.')).bottom,
+        tester.getRect(find.textContaining('allow Contacts.')).bottom,
         lessThanOrEqualTo(tester.getRect(body).bottom + 0.01));
     await tester.tap(find.widgetWithText(TextButton, 'Open settings'));
     await tester.pumpAndSettle();

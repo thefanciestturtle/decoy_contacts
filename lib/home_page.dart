@@ -256,7 +256,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// cancelled). The buttons are disabled meanwhile.
   bool _isBusy = false;
 
-  /// Set while the dialog asking to go ahead is open. No spinner then: the
+  /// Set while a dialog asks the user ([_confirm]). No spinner then: the
   /// app is waiting for the user, not working.
   bool _isConfirming = false;
 
@@ -269,6 +269,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// Asks before going ahead. True only if the user taps the action button;
   /// Cancel, Back and tapping outside the dialog all count as no.
   Future<bool> _confirm(Confirmation confirmation) async {
+    if (!mounted) return false;
+    setState(() { _isConfirming = true; });
     final bool? bConfirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -288,6 +290,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         ],
       ),
     );
+    if (mounted) setState(() { _isConfirming = false; });
     return bConfirmed ?? false;
   }
 
@@ -296,20 +299,20 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// ([preview]), ask the user to confirm that, run [action], and show the
   /// result.
   ///
-  /// If Android no longer asks for the permission, a dialog offers the
-  /// app's settings instead; after it the user taps the button again.
+  /// If Android no longer asks for the permission, the dialog
+  /// [permissionSettings] offers the app's settings instead; after it the
+  /// user taps the button again.
   ///
   /// [nothingToDo] gives the message to show instead of the dialog when the
   /// preview finds nothing to do, else null. [action] works everything out
   /// again rather than trusting the preview, since the address book can
   /// change while the dialog is open; it gets the preview so it can refuse
   /// (by returning null) to do more than the user agreed to. [name] is used
-  /// in the log, [verb] ("create" or "delete") in the settings dialog,
-  /// [doing] in the message for an error in [action].
+  /// in the log, [doing] in the message for an error in [action].
   Future<void> _runContactsAction<P, R>({
     required String name,
-    required String verb,
     required String doing,
+    required Confirmation permissionSettings,
     required Future<P> Function(Settings settings) preview,
     required String? Function(Settings settings, P preview) nothingToDo,
     required Confirmation Function(P preview) confirmation,
@@ -344,15 +347,21 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     }
 
     log("$name: about to request permission");
-    switch (await widget.contacts.requestPermission()) {
+    final PermissionAnswer permission;
+    try {
+      permission = await widget.contacts.requestPermission();
+    } catch (e) {
+      // E.g. the plugin's "another permission request is in progress".
+      log("$name: error requesting permission $e");
+      return finish(kPermissionRequestFailedMessage);
+    }
+    switch (permission) {
       case PermissionAnswer.granted:
         break;
       case PermissionAnswer.denied:
         return finish(kPermissionDeniedMessage);
       case PermissionAnswer.permanentlyDenied:
-        if (!mounted) return;
-        setState(() { _isConfirming = true; });
-        if (!await _confirm(permissionSettingsConfirmation(verb))) {
+        if (!await _confirm(permissionSettings)) {
           log("$name: settings not opened");
           return finish(null);
         }
@@ -377,14 +386,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     final sNothingToDo = nothingToDo(settings, planned);
     if (sNothingToDo != null) return finish(sNothingToDo);
 
-    if (!mounted) return;
-    setState(() { _isConfirming = true; });
     if (!await _confirm(confirmation(planned))) {
       log("$name: cancelled");
       return finish(null);
     }
     if (!mounted) return;
-    setState(() { _isConfirming = false; });
 
     final R? result;
     try {
@@ -398,8 +404,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
 
   Future<void> _createAllContacts() => _runContactsAction(
         name: "_createAllContacts",
-        verb: "create",
         doing: "creating",
+        permissionSettings: permissionSettingsConfirmation("create"),
         preview: (settings) =>
             previewCreate(widget.contacts, widget.ledgerStore, settings),
         nothingToDo: (settings, preview) => preview.toCreate == 0
@@ -414,8 +420,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
 
   Future<void> _deleteAllContacts() => _runContactsAction(
         name: "_deleteAllContacts",
-        verb: "delete",
         doing: "deleting",
+        permissionSettings: permissionSettingsConfirmation("delete"),
         preview: (settings) =>
             previewDelete(widget.contacts, widget.ledgerStore, settings),
         nothingToDo: (_, preview) =>

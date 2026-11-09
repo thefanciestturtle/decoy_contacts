@@ -8,7 +8,7 @@
 // other tests.
 
 import 'package:fake_contacts/main.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -22,7 +22,6 @@ import 'app_test.dart'
         kCreate,
         kDelete,
         pumpUntil,
-        tapAndCancel,
         tapAndWaitForAnswer;
 
 const String kTitle = 'Contacts access is off';
@@ -33,8 +32,11 @@ void main() {
   setUpAll(() async {
     final status =
         await FlutterContacts.permissions.check(PermissionType.readWrite);
-    if (status == PermissionStatus.granted) {
-      fail('The contacts permission is granted. These tests need it '
+    // Android says "denied" only while it would still ask (show its
+    // dialog); "not determined" covers both never asked and won't ask.
+    if (status == PermissionStatus.granted ||
+        status == PermissionStatus.denied) {
+      fail('The contacts permission is $status. These tests need it '
           'permanently denied; tool/integration_test.sh sets that up.');
     }
   });
@@ -52,8 +54,15 @@ void main() {
 
     // No system dialog comes up (the test would time out waiting for it),
     // only the app's own.
-    await tapAndCancel(tester, kCreate, kTitle);
-    expect(find.textContaining('To create fake contacts'), findsNothing);
+    await tapAndWaitForAnswer(tester, kCreate);
+    expectDialog(tester, kTitle);
+    expect(find.textContaining('To create fake contacts'), findsOneWidget);
+    await tester.tap(dialogButton('Cancel'));
+    await pumpUntil(tester, () => find.byType(AlertDialog).evaluate().isEmpty,
+        'dialog closed');
+    await pumpUntil(tester, () => appIdle(tester), 'app idle');
+    expect(find.byType(SnackBar), findsNothing);
+
     await tapAndWaitForAnswer(tester, kDelete);
     expectDialog(tester, kTitle);
     expect(find.textContaining('To delete fake contacts'), findsOneWidget);
