@@ -68,6 +68,37 @@ Confirmation deleteConfirmation(DeletePreview preview) => (
       action: "Delete",
     );
 
+/// The preview under the fields: how many fakes the settings make, and the
+/// first of them, e.g.
+///
+///     27 last names × 28 first names = 756 fake contacts.
+///     For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com
+///
+/// With [spoken], the same for a screen reader: commas instead of the dots,
+/// and words for the signs.
+String settingsPreviewMessage(SettingsPreview preview, {bool spoken = false}) {
+  final sample = preview.sample;
+  if (sample == null) {
+    final bNoLast = preview.lastNames == 0, bNoFirst = preview.firstNames == 0;
+    if (bNoLast && bNoFirst) return "Enter at least one last name and one first name.";
+    return bNoLast ? "Enter at least one last name." : "Enter at least one first name.";
+  }
+  String count(int n, String what) => n == 1 ? "1 $what" : "$n ${what}s";
+  final n = preview.combinations;
+  final sSum = [
+    count(preview.lastNames, "last name"),
+    spoken ? " times " : " × ",
+    count(preview.firstNames, "first name"),
+    spoken ? " makes " : " = ",
+    _fakeContacts(n),
+    n == 1 ? ":" : ".",
+  ].join();
+  final sSample = [sample.name, sample.phone!, sample.email!]
+      .where((s) => s.isNotEmpty)
+      .join(spoken ? ", " : " · ");
+  return "$sSum\n${n == 1 ? "" : "For example: "}$sSample";
+}
+
 /// The status line: how many fake contacts are on the phone, counting only
 /// those the app can confirm (see countFakeContacts). If it can confirm
 /// none but tracks some it can't check, it doesn't claim there are none.

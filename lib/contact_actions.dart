@@ -41,6 +41,45 @@ AddressBook addressBookOf(List<StoredContact> contacts) => {
 Set<String> fingerprintsOfContact(StoredContact c) =>
     fingerprintsOf(c.displayName, c.phones, c.emails).toSet();
 
+/// What a set of [Settings] makes, for the preview under the fields.
+class SettingsPreview {
+  /// How many different last and first names there are.
+  final int lastNames;
+  final int firstNames;
+
+  /// The first fake the settings make, with its phone number and email
+  /// address ('' if none), or null if they make none.
+  final LedgerEntry? sample;
+
+  const SettingsPreview({
+    required this.lastNames,
+    required this.firstNames,
+    required this.sample,
+  });
+
+  /// How many fakes the settings make: every last name with every first
+  /// name. Create adds those that don't exist yet.
+  int get combinations => lastNames * firstNames;
+}
+
+/// Works out what [settings] make, the same way Create does. Reads neither
+/// the address book nor the ledger, so it is cheap enough for every
+/// keystroke.
+SettingsPreview previewSettings(Settings settings) {
+  final lastNames = settings.lastNames;
+  final firstNames = settings.firstNames;
+  final combinations = allCombinations(firstNames.take(1).toList(),
+      lastNames.take(1).toList());
+  return SettingsPreview(
+    lastNames: lastNames.length,
+    firstNames: firstNames.length,
+    sample: combinations.isEmpty
+        ? null
+        : entryFor(combinations.first, settings.phoneTemplate,
+            settings.emailTemplate),
+  );
+}
+
 /// What Create would do right now, worked out without changing anything.
 class CreatePreview {
   /// Contacts Create would add.

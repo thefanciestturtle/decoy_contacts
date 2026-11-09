@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -36,11 +37,20 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   static const Key keyPhoneNumberTemplate = Key("PhoneNumberTemplate");
   static const Key keyEmailAddressTemplate = Key("EmailAddressTemplate");
   static const Key keyStatus = Key("Status");
+  static const Key keyPreview = Key("Preview");
 
   final TextEditingController lastNamesController = TextEditingController();
   final TextEditingController firstNamesController = TextEditingController();
   final TextEditingController phoneNumberTemplateController = TextEditingController();
   final TextEditingController emailAddressTemplateController = TextEditingController();
+
+  /// Notifies on any change to the text fields.
+  late final Listenable _fields = Listenable.merge([
+    lastNamesController,
+    firstNamesController,
+    phoneNumberTemplateController,
+    emailAddressTemplateController,
+  ]);
 
   // The text fields are the single source of truth for the settings.
   Settings get _settings => Settings(
@@ -297,6 +307,63 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         describe: deletedMessage,
       );
 
+  // While the phone or email template is edited, the preview under the
+  // fields should stay above the keyboard: it shows what the template
+  // gives. A text field keeps its caret plus its scrollPadding in view, so
+  // their scrollPadding reaches down to the end of the preview, as measured
+  // after layout.
+  final GlobalKey _phoneFieldBox = GlobalKey();
+  final GlobalKey _emailFieldBox = GlobalKey();
+  final GlobalKey _previewBox = GlobalKey();
+  double _previewBelowPhone = 0;
+  double _previewBelowEmail = 0;
+  bool _previewMeasureScheduled = false;
+
+  /// Measures, after this frame, how far below each template field the
+  /// preview ends.
+  void _schedulePreviewMeasure() {
+    if (_previewMeasureScheduled) return;
+    _previewMeasureScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _previewMeasureScheduled = false;
+      if (!mounted) return;
+      double bottomOf(GlobalKey key) {
+        final box = key.currentContext?.findRenderObject();
+        if (box is! RenderBox || !box.hasSize || !box.attached) return 0;
+        return box.localToGlobal(Offset(0, box.size.height)).dy;
+      }
+
+      final previewBottom = bottomOf(_previewBox);
+      final phone = math.max(0.0, previewBottom - bottomOf(_phoneFieldBox));
+      final email = math.max(0.0, previewBottom - bottomOf(_emailFieldBox));
+      if (phone != _previewBelowPhone || email != _previewBelowEmail) {
+        setState(() {
+          _previewBelowPhone = phone;
+          _previewBelowEmail = email;
+        });
+      }
+    });
+  }
+
+  /// The scrollPadding for a template field whose bottom is [below] above
+  /// the end of the preview, in a scroll view [viewportHeight] high (less
+  /// while the keyboard is up). If the caret line and the preview don't
+  /// both fit, keeps only as much of the preview in view as does fit: a
+  /// larger padding would scroll the caret itself out of view.
+  EdgeInsets _templateScrollPadding(
+      BuildContext context, double below, double viewportHeight) {
+    const double kDefault = 20; // TextField's default scrollPadding
+    // From the bottom of the caret down to the field's bottom edge.
+    const double kCaretToFieldBottom = 24;
+    // The caret's height: one line of the field's text (16 sp, line height
+    // 1.5), scaled with the font size.
+    final double caret = MediaQuery.textScalerOf(context).scale(24);
+    final double fits = viewportHeight - kDefault - caret - 8;
+    final double wanted = below + kCaretToFieldBottom + kDefault;
+    return EdgeInsets.fromLTRB(kDefault, kDefault, kDefault,
+        math.max(kDefault, math.min(wanted, fits)));
+  }
+
   InputDecoration _fieldDecoration(String sLabel) {
     return InputDecoration(
       labelText: sLabel,
@@ -318,7 +385,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         title: Text(widget.title),
       ),
       body: SafeArea(
-        child: Center(
+        child: LayoutBuilder(builder: (context, viewport) => Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: ConstrainedBox(
@@ -346,23 +413,58 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     decoration: _fieldDecoration('First names'),
                   ),
                   const SizedBox(height: 30),
-                  TextField(
-                    key: keyPhoneNumberTemplate,
-                    controller: phoneNumberTemplateController,
-                    onChanged: _settingsChanged,
-                    enabled: _settingsLoaded,
-                    keyboardType: TextInputType.phone,
-                    decoration: _fieldDecoration('Phone number template'),
+                  KeyedSubtree(
+                    key: _phoneFieldBox,
+                    child: TextField(
+                      key: keyPhoneNumberTemplate,
+                      controller: phoneNumberTemplateController,
+                      onChanged: _settingsChanged,
+                      enabled: _settingsLoaded,
+                      keyboardType: TextInputType.phone,
+                      scrollPadding: _templateScrollPadding(
+                          context, _previewBelowPhone, viewport.maxHeight),
+                      decoration: _fieldDecoration('Phone number template'),
+                    ),
                   ),
                   const SizedBox(height: 20),
-                  TextField(
-                    key: keyEmailAddressTemplate,
-                    controller: emailAddressTemplateController,
-                    onChanged: _settingsChanged,
-                    enabled: _settingsLoaded,
-                    keyboardType: TextInputType.emailAddress,
-                    autocorrect: false,
-                    decoration: _fieldDecoration('Email address template'),
+                  KeyedSubtree(
+                    key: _emailFieldBox,
+                    child: TextField(
+                      key: keyEmailAddressTemplate,
+                      controller: emailAddressTemplateController,
+                      onChanged: _settingsChanged,
+                      enabled: _settingsLoaded,
+                      keyboardType: TextInputType.emailAddress,
+                      autocorrect: false,
+                      scrollPadding: _templateScrollPadding(
+                          context, _previewBelowEmail, viewport.maxHeight),
+                      decoration: _fieldDecoration('Email address template'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // Follows every keystroke. (Not a live region: TalkBack
+                  // would read it out after each one.)
+                  ListenableBuilder(
+                    listenable: _fields,
+                    builder: (context, _) {
+                      // Its height can change with every keystroke.
+                      _schedulePreviewMeasure();
+                      if (!_settingsLoaded) {
+                        return SizedBox.shrink(key: _previewBox);
+                      }
+                      final preview = previewSettings(_settings);
+                      return KeyedSubtree(
+                        key: _previewBox,
+                        child: Text(
+                          settingsPreviewMessage(preview),
+                          key: keyPreview,
+                          semanticsLabel:
+                              settingsPreviewMessage(preview, spoken: true),
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: Theme.of(context).colorScheme.onSurfaceVariant),
+                        ),
+                      );
+                    },
                   ),
                   const SizedBox(height: 32),
                   // Always there, empty without a count, so the buttons
@@ -405,7 +507,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
               ),
             ),
           ),
-        ),
+        )),
       ),
     );
   }

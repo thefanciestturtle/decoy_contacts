@@ -53,6 +53,13 @@ Future<void> pumpApp(WidgetTester tester, ContactsGateway contacts) async {
   tester.view.physicalSize = const Size(1080, 2400);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
+  // Unmount the app while the test still runs: an edit that wasn't saved
+  // yet (say, the test failed) is saved on dispose, and must not land in
+  // the next test's settings.
+  addTearDown(() async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
   await tester.pumpWidget(MyApp(contacts: contacts));
   await tester.pumpAndSettle();
 }
@@ -1104,6 +1111,79 @@ void main() {
       slow.firstRead.complete();
       await tester.pumpAndSettle();
       expect(statusText(tester), '4 fake contacts on this phone.');
+    });
+  });
+  group('preview under the fields (U2)', () {
+    String? previewText(WidgetTester tester) =>
+        tester.widget<Text>(find.byKey(const Key('Preview'))).data;
+
+    testWidgets('its count is what Create asks about, and its example is a '
+        'contact Create makes', (tester) async {
+      await pumpApp(tester, book);
+      expect(previewText(tester),
+          '2 last names × 2 first names = 4 fake contacts.\n'
+          'For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com');
+
+      await tapAndOpenDialog(tester, kCreateButton);
+      expect(dialogText(tester).title, 'Create 4 fake contacts?');
+      await tester.tap(dialogButton('Create'));
+      await tester.pumpAndSettle();
+      final zoe = book.all.firstWhere((c) => c.displayName == 'Zoe Zen');
+      expect(zoe.phones, ['+447700900010']);
+      expect(zoe.emails, ['Zoe.Zen@example.com']);
+    });
+
+    testWidgets('an edit shows up in the next Create', (tester) async {
+      await pumpApp(tester, book);
+      await tester.enterText(find.byKey(const Key('LastNames')), 'Zhao');
+      await tester.enterText(
+          find.byKey(const Key('PhoneNumberTemplate')), '+447700900nnn ');
+      await tester.enterText(
+          find.byKey(const Key('EmailAddressTemplate')), 'LAST@example.org');
+      await tester.pump();
+      expect(previewText(tester),
+          '1 last name × 2 first names = 2 fake contacts.\n'
+          'For example: Zoe Zhao · +447700900047 · Zhao@example.org');
+
+      // Straight away, before the edit is saved.
+      await tapAndOpenDialog(tester, kCreateButton);
+      expect(dialogText(tester).title, 'Create 2 fake contacts?');
+      await tester.tap(dialogButton('Create'));
+      await tester.pumpAndSettle();
+      final zoe = book.all.firstWhere((c) => c.displayName == 'Zoe Zhao');
+      expect(zoe.phones, ['+447700900047']);
+      expect(zoe.emails, ['Zhao@example.org']);
+    });
+
+    testWidgets('it is about the settings, not about the phone: Create, '
+        'Cancel and Delete leave it as it was', (tester) async {
+      await pumpApp(tester, book);
+      final before = previewText(tester);
+
+      await tapAndAnswer(tester, kCreateButton, 'Cancel');
+      expect(previewText(tester), before);
+      await tapCreate(tester);
+      expect(previewText(tester), before);
+      expect(statusText(tester), '4 fake contacts on this phone.');
+      await tapDelete(tester);
+      expect(previewText(tester), before);
+    });
+
+    testWidgets('an error or a refused permission leaves it as it was',
+        (tester) async {
+      await pumpApp(tester, book);
+      final before = previewText(tester);
+
+      book.getAllError = Exception('no provider');
+      await tapExpectingNoDialog(tester, kCreateButton);
+      expect(snackBarText(tester), startsWith('Error while reading contacts'));
+      expect(previewText(tester), before);
+
+      book.getAllError = null;
+      book.permissionGranted = false;
+      await tapExpectingNoDialog(tester, kCreateButton);
+      expect(snackBarText(tester), kDenied);
+      expect(previewText(tester), before);
     });
   });
 }

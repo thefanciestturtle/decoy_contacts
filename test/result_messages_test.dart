@@ -1,4 +1,5 @@
 import 'package:fake_contacts/contact_actions.dart';
+import 'package:fake_contacts/fake_contacts_core.dart';
 import 'package:fake_contacts/result_messages.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -19,7 +20,69 @@ const String kChanged = "no longer match what this app created (edited, or "
 const String kOneChanged = "no longer matches what this app created (edited, "
     "or the app's records came from another phone)";
 
+const LedgerEntry kZoeZen =
+    LedgerEntry('Zoe Zen', '+447700900010', 'Zoe.Zen@example.com');
+
+SettingsPreview settingsMake(int lastNames, int firstNames,
+        {LedgerEntry? sample = kZoeZen}) =>
+    SettingsPreview(
+      lastNames: lastNames,
+      firstNames: firstNames,
+      sample: lastNames * firstNames == 0 ? null : sample,
+    );
+
 void main() {
+  group('settingsPreviewMessage', () {
+    test('the count, how it comes about, and an example', () {
+      expect(settingsPreviewMessage(settingsMake(27, 28)),
+          '27 last names × 28 first names = 756 fake contacts.\n'
+          'For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com');
+    });
+
+    test('singular forms; with only one contact it is not an example', () {
+      expect(settingsPreviewMessage(settingsMake(1, 1)),
+          '1 last name × 1 first name = 1 fake contact:\n'
+          'Zoe Zen · +447700900010 · Zoe.Zen@example.com');
+      expect(settingsPreviewMessage(settingsMake(1, 2)),
+          '1 last name × 2 first names = 2 fake contacts.\n'
+          'For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com');
+      expect(settingsPreviewMessage(settingsMake(3, 1)).split('\n').first,
+          '3 last names × 1 first name = 3 fake contacts.');
+    });
+
+    test('leaves out a phone number or email the contacts won\'t get', () {
+      String sampleLine(String phone, String email) => settingsPreviewMessage(
+              settingsMake(2, 2, sample: LedgerEntry('Zoe Zen', phone, email)))
+          .split('\n')
+          .last;
+      expect(sampleLine('', 'Zoe.Zen@example.com'),
+          'For example: Zoe Zen · Zoe.Zen@example.com');
+      expect(sampleLine('+447700900010', ''),
+          'For example: Zoe Zen · +447700900010');
+      expect(sampleLine('', ''), 'For example: Zoe Zen');
+    });
+
+    test('says what is missing when the settings make none', () {
+      expect(settingsPreviewMessage(settingsMake(0, 28)),
+          'Enter at least one last name.');
+      expect(settingsPreviewMessage(settingsMake(27, 0)),
+          'Enter at least one first name.');
+      expect(settingsPreviewMessage(settingsMake(0, 0)),
+          'Enter at least one last name and one first name.');
+    });
+
+    test('for a screen reader: words instead of signs and dots', () {
+      expect(settingsPreviewMessage(settingsMake(27, 28), spoken: true),
+          '27 last names times 28 first names makes 756 fake contacts.\n'
+          'For example: Zoe Zen, +447700900010, Zoe.Zen@example.com');
+      expect(settingsPreviewMessage(settingsMake(1, 1), spoken: true),
+          '1 last name times 1 first name makes 1 fake contact:\n'
+          'Zoe Zen, +447700900010, Zoe.Zen@example.com');
+      expect(settingsPreviewMessage(settingsMake(0, 1), spoken: true),
+          'Enter at least one last name.');
+    });
+  });
+
   test('permission denied', () {
     expect(kPermissionDeniedMessage, 'Permission to access contacts was denied.');
   });

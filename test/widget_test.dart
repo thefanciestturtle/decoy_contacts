@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -5,8 +7,66 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fake_contacts/fake_contacts_core.dart';
 import 'package:fake_contacts/home_page.dart';
 import 'package:fake_contacts/main.dart';
+import 'package:fake_contacts/settings_store.dart';
 
 import 'in_memory_contacts_gateway.dart';
+
+const String kDefaultPreview =
+    '27 last names × 28 first names = 756 fake contacts.\n'
+    'For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com';
+
+/// The preview under the fields, or null if there is none.
+String? previewText(WidgetTester tester) {
+  final found = find.byKey(const Key('Preview'));
+  return found.evaluate().isEmpty ? null : tester.widget<Text>(found).data;
+}
+
+/// Loads the settings only when [loaded] is completed.
+class _SlowSettingsStore extends SettingsStore {
+  final Completer<void> loaded = Completer();
+
+  @override
+  Future<Settings> load() async {
+    await loaded.future;
+    return Settings.defaults;
+  }
+
+  @override
+  Future<void> save(Settings settings) async {}
+}
+
+/// The part of the screen not covered by the app bar or the keyboard.
+Rect visibleArea(WidgetTester tester) {
+  final view = tester.view;
+  return Rect.fromLTRB(
+      0,
+      tester.getBottomLeft(find.byType(AppBar)).dy,
+      view.physicalSize.width / view.devicePixelRatio,
+      (view.physicalSize.height - view.viewInsets.bottom) /
+          view.devicePixelRatio);
+}
+
+/// Where the text of the field with [key] is, caret included.
+Rect editableTextOf(WidgetTester tester, Key key) => tester.getRect(
+    find.descendant(of: find.byKey(key), matching: find.byType(EditableText)));
+
+bool contains(Rect outer, Rect inner) =>
+    inner.top >= outer.top - 0.01 && inner.bottom <= outer.bottom + 0.01;
+
+/// Scrolls the field with [key] to the bottom of the screen (where the
+/// keyboard will cover it and the preview is furthest away), taps it and
+/// opens a keyboard [keyboardHeight] physical pixels high, as Android does:
+/// first focus, then the keyboard.
+Future<void> editWithKeyboard(
+    WidgetTester tester, Key key, double keyboardHeight) async {
+  await Scrollable.ensureVisible(tester.element(find.byKey(key)),
+      alignment: 1.0);
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(key));
+  await tester.pump();
+  tester.view.viewInsets = FakeViewPadding(bottom: keyboardHeight);
+  await tester.pumpAndSettle();
+}
 
 void main() {
   setUp(() {
@@ -191,5 +251,208 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.widgetWithText(TextButton, 'Delete').hitTestable(),
         findsOneWidget);
+  });
+  group('preview under the fields (U2)', () {
+    testWidgets('shows what the settings make, with an example',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(const MyApp());
+      await tester.pumpAndSettle();
+
+      expect(previewText(tester), kDefaultPreview);
+      expect(tester.widget<Text>(find.byKey(const Key('Preview'))).semanticsLabel,
+          '27 last names times 28 first names makes 756 fake contacts.\n'
+          'For example: Zoe Zen, +447700900010, Zoe.Zen@example.com');
+    });
+
+    testWidgets('follows every edit at once, before it is saved',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(const MyApp());
+      await tester.pumpAndSettle();
+      final prefs = await SharedPreferences.getInstance();
+
+      Future<void> type(String key, String text) async {
+        await tester.enterText(find.byKey(Key(key)), text);
+        await tester.pump();
+      }
+
+      await type('LastNames', 'Zima, Zen');
+      expect(previewText(tester),
+          '2 last names × 28 first names = 56 fake contacts.\n'
+          'For example: Zoe Zima · +447700900059 · Zoe.Zima@example.com');
+      await type('FirstNames', 'Zach');
+      expect(previewText(tester),
+          '2 last names × 1 first name = 2 fake contacts.\n'
+          'For example: Zach Zima · +447700900059 · Zach.Zima@example.com');
+      await type('PhoneNumberTemplate', '+1 555 01nn');
+      await type('EmailAddressTemplate', 'LAST.FIRST@example.org');
+      expect(previewText(tester),
+          '2 last names × 1 first name = 2 fake contacts.\n'
+          'For example: Zach Zima · +1 555 0105 · Zima.Zach@example.org');
+      await type('LastNames', 'Zima');
+      expect(previewText(tester),
+          '1 last name × 1 first name = 1 fake contact:\n'
+          'Zach Zima · +1 555 0105 · Zima.Zach@example.org');
+      await type('LastNames', ' , ');
+      expect(previewText(tester), 'Enter at least one last name.');
+      await type('FirstNames', '');
+      expect(previewText(tester),
+          'Enter at least one last name and one first name.');
+      await type('LastNames', 'Zen');
+      expect(previewText(tester), 'Enter at least one first name.');
+
+      // None of it was saved yet.
+      expect(prefs.getString('sListOfLastNames'), startsWith('Zen,Zaragoza'));
+      await tester.pumpAndSettle(kSaveDelay);
+    });
+
+    testWidgets('none until the settings are loaded',
+        (WidgetTester tester) async {
+      final store = _SlowSettingsStore();
+      await tester.pumpWidget(MaterialApp(
+          home: MyHomePage(
+              title: 'Fake Contacts',
+              contacts: InMemoryContactsGateway(),
+              settingsStore: store)));
+      await tester.pump();
+      expect(previewText(tester), isNull);
+
+      store.loaded.complete();
+      await tester.pumpAndSettle();
+      expect(previewText(tester), kDefaultPreview);
+    });
+
+    testWidgets('editing never touches the address book or asks for the '
+        'permission', (WidgetTester tester) async {
+      SharedPreferences.setMockInitialValues({
+        'sListOfLastNames': 'Zen',
+        'sListOfFirstNames': 'Zoe',
+        'sPhoneNumberTemplate': kDefaultPhoneTemplate,
+        'sEmailAddressTemplate': kDefaultEmailTemplate,
+        // So the status line has to read the address book once.
+        kLedgerPrefsKey: '{"1": "Zoe Zen"}',
+      });
+      final book = InMemoryContactsGateway()..add('Zoe Zen');
+      await tester.pumpWidget(MyApp(contacts: book));
+      await tester.pumpAndSettle();
+      final reads = book.getAllCalls;
+      expect(reads, greaterThan(0));
+
+      for (final text in ['Zen, Zima', '', 'Zen, Zima, Zhao']) {
+        await tester.enterText(find.byKey(const Key('LastNames')), text);
+        await tester.pump();
+      }
+      await tester.enterText(
+          find.byKey(const Key('PhoneNumberTemplate')), '+447700900nn');
+      await tester.pumpAndSettle(kSaveDelay);
+
+      expect(previewText(tester), startsWith('3 last names × 1 first name'));
+      expect(book.getAllCalls, reads);
+      expect(book.permissionRequests, 0);
+      expect(book.createAllCalls, isEmpty);
+      expect(book.deleteAllCalls, isEmpty);
+    });
+
+    group('stays above the keyboard while a template is edited', () {
+      // A phone like the emulator's: 411 x 914 dp, the keyboard 337 dp high.
+      void phoneScreen(WidgetTester tester) {
+        tester.view.physicalSize = const Size(1080, 2400);
+        tester.view.devicePixelRatio = 2.625;
+        addTearDown(tester.view.reset);
+      }
+
+      for (final key in ['EmailAddressTemplate', 'PhoneNumberTemplate']) {
+        testWidgets(key, (WidgetTester tester) async {
+          phoneScreen(tester);
+          await tester.pumpWidget(const MyApp());
+          await tester.pumpAndSettle();
+
+          await editWithKeyboard(tester, Key(key), 885);
+
+          final visible = visibleArea(tester);
+          final preview = tester.getRect(find.byKey(const Key('Preview')));
+          expect(contains(visible, preview), isTrue,
+              reason: 'preview $preview should be within $visible');
+          expect(contains(visible, editableTextOf(tester, Key(key))), isTrue);
+
+          // Still when the preview gets longer while typing.
+          await tester.enterText(find.byKey(Key(key)),
+              'FIRST.LAST.FIRST.LAST.FIRST.LAST.FIRST.LAST@example.com');
+          await tester.pumpAndSettle();
+          final longer = tester.getRect(find.byKey(const Key('Preview')));
+          expect(longer.height, greaterThan(preview.height));
+          expect(contains(visibleArea(tester), longer), isTrue,
+              reason: 'preview $longer should be within $visible');
+        });
+      }
+
+      testWidgets('but the names are edited as before',
+          (WidgetTester tester) async {
+        phoneScreen(tester);
+        await tester.pumpWidget(const MyApp());
+        await tester.pumpAndSettle();
+
+        for (final key in ['LastNames', 'FirstNames']) {
+          expect(tester.widget<TextField>(find.byKey(Key(key))).scrollPadding,
+              const TextField().scrollPadding, reason: key);
+        }
+      });
+
+      testWidgets('on a small screen at a large font size, the field comes '
+          'first', (WidgetTester tester) async {
+        // 320 x 568 dp with twice the normal text size; the keyboard
+        // leaves about 280 dp, less the app bar.
+        tester.view.physicalSize = const Size(640, 1136);
+        tester.view.devicePixelRatio = 2.0;
+        tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+        addTearDown(tester.view.reset);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        await tester.pumpWidget(const MyApp());
+        await tester.pumpAndSettle();
+
+        for (final key in ['EmailAddressTemplate', 'PhoneNumberTemplate']) {
+          await editWithKeyboard(tester, Key(key), 570);
+
+          final visible = visibleArea(tester);
+          final field = editableTextOf(tester, Key(key));
+          expect(contains(visible, field), isTrue,
+              reason: '$key $field should be within $visible');
+          // The preview doesn't fit as well, so as much as fits is shown.
+          final preview = tester.getRect(find.byKey(const Key('Preview')));
+          expect(preview.top, lessThan(visible.bottom), reason: key);
+          expect(tester.takeException(), isNull);
+
+          FocusManager.instance.primaryFocus!.unfocus();
+          tester.view.resetViewInsets();
+          await tester.pumpAndSettle();
+        }
+      });
+
+      testWidgets('on a small screen, typing after scrolling away brings the '
+          'caret back', (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(640, 1136);
+        tester.view.devicePixelRatio = 2.0;
+        tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+        addTearDown(tester.view.reset);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        await tester.pumpWidget(const MyApp());
+        await tester.pumpAndSettle();
+        const key = Key('EmailAddressTemplate');
+        await editWithKeyboard(tester, key, 570);
+
+        // Scroll all the way down, so the field is out of view above.
+        await tester.drag(find.byType(SingleChildScrollView).first,
+            const Offset(0, -3000));
+        await tester.pumpAndSettle();
+        expect(editableTextOf(tester, key).bottom,
+            lessThan(visibleArea(tester).top));
+
+        await tester.enterText(find.byKey(key), 'FIRST@example.com');
+        await tester.pumpAndSettle();
+        final visible = visibleArea(tester);
+        final field = editableTextOf(tester, key);
+        expect(contains(visible, field), isTrue,
+            reason: 'field $field should be within $visible');
+      });
+    });
   });
 }

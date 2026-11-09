@@ -78,6 +78,10 @@ void main() {
     final real = await seed(kRealContacts);
     await launchApp(tester);
     await expectStatus(tester, 'No fake contacts on this phone.');
+    // The preview under the fields shows the first of kFakes.
+    expect(tester.widget<Text>(find.byKey(const Key('Preview'))).data,
+        '2 last names × 2 first names = 4 fake contacts.\n'
+        'For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com');
 
     await tapAndCancel(tester, kCreate, 'Create 4 fake contacts?');
     expect(describeAll(await readAddressBook()), describeAll(real));

@@ -11,7 +11,7 @@ The app is available through F-Droid.
 This is a sister-application to "Fake Contacts 2", which puts fake information in some fields of all contacts.
 
 ## Functionality
-The user can set lists of last names and first names for fake contacts, and phone-number and email-address templates for them.  Then click buttons to create or delete fake contacts with all combinations of the first and last names.
+The user can set lists of last names and first names for fake contacts, and phone-number and email-address templates for them.  Then click buttons to create or delete fake contacts with all combinations of the first and last names.  Below the fields, the app shows how many contacts that makes, and an example of one.
 
 
 ## Use
