@@ -4,6 +4,8 @@ Android phone app that creates fake contacts, which will be stored on your smart
 
 Nothing about these fake contacts will interfere with your normal use of your phone or your real contacts.
 
+Only Android is supported.  The source includes an `ios/` folder, but the app doesn't work on iOS: "Delete" relies on Android's internal contact IDs, so on an iPhone it would silently delete nothing.
+
 The app is available through F-Droid.
 
 This is a sister-application to "Fake Contacts 2", which puts fake information in some fields of all contacts.
