@@ -72,10 +72,13 @@ void main() {
 
     test('says what is missing when the settings make none', () {
       expect(settingsPreviewMessage(settingsMake(0, 28)),
+          '0 last names × 28 first names = no fake contacts.\n'
           'Enter at least one last name.');
-      expect(settingsPreviewMessage(settingsMake(27, 0)),
+      expect(settingsPreviewMessage(settingsMake(1, 0)),
+          '1 last name × 0 first names = no fake contacts.\n'
           'Enter at least one first name.');
       expect(settingsPreviewMessage(settingsMake(0, 0)),
+          '0 last names × 0 first names = no fake contacts.\n'
           'Enter at least one last name and one first name.');
     });
 
@@ -87,6 +90,7 @@ void main() {
           '1 last name times 1 first name makes 1 fake contact:\n'
           'Zoe Zen, +447700900010, Zoe.Zen@example.com');
       expect(settingsPreviewMessage(settingsMake(0, 1), spoken: true),
+          '0 last names times 1 first name makes no fake contacts.\n'
           'Enter at least one last name.');
     });
   });
@@ -233,7 +237,7 @@ void main() {
 
     test('no names', () {
       expect(nothingToCreateMessage(toCreate(0)),
-          'Nothing to create. Enter at least one first name and one last name.');
+          'Nothing to create. Enter at least one last name and one first name.');
     });
   });
 

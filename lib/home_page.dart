@@ -45,18 +45,26 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   final TextEditingController phoneNumberTemplateController = TextEditingController();
   final TextEditingController emailAddressTemplateController = TextEditingController();
 
-  /// The settings as typed, for the preview. Kept up to date from the text
-  /// fields (also when code changes them), but notifies only when the text
-  /// changes, not when just the cursor or selection moves.
-  late final ValueNotifier<Settings> _typed = ValueNotifier(_settings);
-  late final Listenable _fields = Listenable.merge([
-    lastNamesController,
-    firstNamesController,
-    phoneNumberTemplateController,
-    emailAddressTemplateController,
-  ]);
+  /// The preview's text, and what TalkBack reads instead; null until the
+  /// settings are loaded. Worked out once per change of the settings, also
+  /// when code changes the fields, but not when only the cursor or the
+  /// selection moves.
+  final ValueNotifier<({String text, String spoken})?> _preview =
+      ValueNotifier(null);
+  Settings? _previewSettings;
 
-  void _fieldsChanged() => _typed.value = _settings;
+  /// Called on any change to a text field, the cursor included.
+  void _fieldsChanged() {
+    if (!_settingsLoaded) return;
+    final settings = _settings;
+    if (settings == _previewSettings) return;
+    _previewSettings = settings;
+    final preview = previewSettings(settings);
+    _preview.value = (
+      text: settingsPreviewMessage(preview),
+      spoken: settingsPreviewMessage(preview, spoken: true),
+    );
+  }
 
   // The text fields are the single source of truth for the settings.
   Settings get _settings => Settings(
@@ -73,7 +81,16 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _fields.addListener(_fieldsChanged);
+    for (final controller in [
+      lastNamesController,
+      firstNamesController,
+      phoneNumberTemplateController,
+      emailAddressTemplateController,
+    ]) {
+      controller.addListener(_fieldsChanged);
+    }
+    // The preview may have grown.
+    _preview.addListener(_scheduleRevealPreview);
     _phoneFocus.addListener(_scheduleRevealPreview);
     _emailFocus.addListener(_scheduleRevealPreview);
     _loadSettings();
@@ -89,7 +106,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     emailAddressTemplateController.dispose();
     _phoneFocus.dispose();
     _emailFocus.dispose();
-    _typed.dispose();
+    _preview.dispose();
     super.dispose();
   }
 
@@ -98,8 +115,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   @override
   void didChangeMetrics() {
     // Like a text field does for its caret: only when the keyboard opens or
-    // grows (which can include a rotation), not when it closes, so the page
-    // doesn't jump back to the field after the user scrolled away from it.
+    // grows, not when it closes or shrinks (as on turning to landscape), so
+    // the page doesn't jump back to the field after the user scrolled away
+    // from it.
     if (!mounted) return;
     final double inset = View.of(context).viewInsets.bottom;
     if (inset > _lastBottomInset) _scheduleRevealPreview();
@@ -133,6 +151,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     phoneNumberTemplateController.text = settings.phoneTemplateText;
     emailAddressTemplateController.text = settings.emailTemplateText;
     setState(() { _settingsLoaded = true; });
+    _fieldsChanged();
     unawaited(_refreshStatus());
   }
 
@@ -176,13 +195,6 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       _status = status;
       if (!bFailed) _statusOutdated = false;
     });
-  }
-
-  /// Called on every keystroke in a template field.
-  void _templateChanged(String text) {
-    _settingsChanged(text);
-    // The preview may have grown.
-    _scheduleRevealPreview();
   }
 
   /// Called on every keystroke; saves once typing pauses.
@@ -258,10 +270,15 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     required String Function(R result) describe,
   }) async {
     if (_isBusy) return;
-    // Close the keyboard, so the dialog, the spinner and the result can be
-    // seen. (Otherwise the field gets the focus back after the dialog, the
-    // keyboard opens again and the page scrolls back up to the field.)
-    FocusManager.instance.primaryFocus?.unfocus();
+    // If a text field has the focus, close the keyboard, so the dialog, the
+    // spinner and the result can be seen. (Otherwise the field gets the
+    // focus back after the dialog, the keyboard opens again and the page
+    // scrolls back up to the field.) A focused button keeps the focus, for
+    // people using a keyboard, D-pad or Switch Access.
+    final focus = FocusManager.instance.primaryFocus;
+    if (focus?.context?.findAncestorStateOfType<EditableTextState>() != null) {
+      focus!.unfocus();
+    }
     _statusRequest++; // a status count still running is out of date
     _statusOutdated = true;
     setState(() { _isBusy = true; });
@@ -457,7 +474,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     key: keyPhoneNumberTemplate,
                     controller: phoneNumberTemplateController,
                     focusNode: _phoneFocus,
-                    onChanged: _templateChanged,
+                    onChanged: _settingsChanged,
                     enabled: _settingsLoaded,
                     keyboardType: TextInputType.phone,
                     decoration: _fieldDecoration('Phone number template'),
@@ -467,7 +484,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     key: keyEmailAddressTemplate,
                     controller: emailAddressTemplateController,
                     focusNode: _emailFocus,
-                    onChanged: _templateChanged,
+                    onChanged: _settingsChanged,
                     enabled: _settingsLoaded,
                     keyboardType: TextInputType.emailAddress,
                     autocorrect: false,
@@ -478,20 +495,17 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                   // would read it out after each one.)
                   KeyedSubtree(
                     key: _previewBox,
-                    child: ValueListenableBuilder<Settings>(
-                      valueListenable: _typed,
-                      builder: (context, settings, _) {
-                        if (!_settingsLoaded) return const SizedBox.shrink();
-                        final preview = previewSettings(settings);
-                        return Text(
-                          settingsPreviewMessage(preview),
-                          key: keyPreview,
-                          semanticsLabel:
-                              settingsPreviewMessage(preview, spoken: true),
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Theme.of(context).colorScheme.onSurfaceVariant),
-                        );
-                      },
+                    child: ValueListenableBuilder(
+                      valueListenable: _preview,
+                      builder: (context, preview, _) => preview == null
+                          ? const SizedBox.shrink()
+                          : Text(
+                              preview.text,
+                              key: keyPreview,
+                              semanticsLabel: preview.spoken,
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant),
+                            ),
                     ),
                   ),
                   const SizedBox(height: 32),

@@ -71,6 +71,9 @@ Confirmation deleteConfirmation(DeletePreview preview) => (
       action: "Delete",
     );
 
+/// What to do when there are no names to combine.
+const String kEnterNamesHint = "Enter at least one last name and one first name.";
+
 /// The preview under the fields: how many fakes the settings make, and the
 /// first of them, e.g.
 ///
@@ -79,22 +82,30 @@ Confirmation deleteConfirmation(DeletePreview preview) => (
 ///
 /// With [spoken], the same for a screen reader: commas instead of the dots,
 /// and words for the signs.
+///
+/// With an empty name list it says so the same way, and which list to fill
+/// in:
+///
+///     0 last names × 28 first names = no fake contacts.
+///     Enter at least one last name.
 String settingsPreviewMessage(SettingsPreview preview, {bool spoken = false}) {
   final n = preview.combinations;
-  if (n == 0) {
-    final bNoLast = preview.lastNames == 0, bNoFirst = preview.firstNames == 0;
-    if (bNoLast && bNoFirst) return "Enter at least one last name and one first name.";
-    return bNoLast ? "Enter at least one last name." : "Enter at least one first name.";
-  }
-  final sample = preview.sample!;
   final sSum = [
     _count(preview.lastNames, "last name"),
     spoken ? " times " : " × ",
     _count(preview.firstNames, "first name"),
     spoken ? " makes " : " = ",
-    _fakeContacts(n),
+    n == 0 ? "no fake contacts" : _fakeContacts(n),
     n == 1 ? ":" : ".",
   ].join();
+  if (n == 0) {
+    final bNoLast = preview.lastNames == 0, bNoFirst = preview.firstNames == 0;
+    final sHint = bNoLast && bNoFirst
+        ? kEnterNamesHint
+        : (bNoLast ? "Enter at least one last name." : "Enter at least one first name.");
+    return "$sSum\n$sHint";
+  }
+  final sample = preview.sample!;
   final sSample = [sample.name, sample.phone, sample.email]
       .where((s) => s.isNotEmpty)
       .join(spoken ? ", " : " · ");
@@ -115,7 +126,7 @@ String statusMessage(DeletePreview found) {
 String nothingToCreateMessage(CreatePreview preview) {
   final existed = preview.alreadyExisted;
   if (existed == 0) {
-    return "Nothing to create. Enter at least one first name and one last name.";
+    return "Nothing to create. $kEnterNamesHint";
   }
   return "Nothing to create. ${_fakeContacts(existed)}"
       " ${existed == 1 ? "already exists" : "already exist"}.";

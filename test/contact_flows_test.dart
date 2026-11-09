@@ -692,7 +692,7 @@ void main() {
       await tapExpectingNoDialog(tester, kCreateButton);
 
       expect(snackBarText(tester),
-          'Nothing to create. Enter at least one first name and one last name.');
+          'Nothing to create. Enter at least one last name and one first name.');
       expect(book.createAllCalls, isEmpty);
       expect(await storedLedgerJson(), isNull);
     });

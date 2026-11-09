@@ -294,12 +294,17 @@ void main() {
           '1 last name × 1 first name = 1 fake contact:\n'
           'Zach Zima · +1 555 0105 · Zima.Zach@example.org');
       await type('LastNames', ' , ');
-      expect(previewText(tester), 'Enter at least one last name.');
+      expect(previewText(tester),
+          '0 last names × 1 first name = no fake contacts.\n'
+          'Enter at least one last name.');
       await type('FirstNames', '');
       expect(previewText(tester),
+          '0 last names × 0 first names = no fake contacts.\n'
           'Enter at least one last name and one first name.');
       await type('LastNames', 'Zen');
-      expect(previewText(tester), 'Enter at least one first name.');
+      expect(previewText(tester),
+          '1 last name × 0 first names = no fake contacts.\n'
+          'Enter at least one first name.');
 
       // None of it was saved yet.
       expect(prefs.getString('sListOfLastNames'), startsWith('Zen,Zaragoza'));
@@ -462,6 +467,24 @@ void main() {
         final preview = tester.getRect(find.byKey(const Key('Preview')));
         expect(containsVertically(visible, preview), isTrue,
             reason: 'preview $preview should be within $visible');
+      });
+
+      testWidgets('also when code changes the template',
+          (WidgetTester tester) async {
+        phoneScreen(tester);
+        await tester.pumpWidget(const MyApp());
+        await tester.pumpAndSettle();
+        const key = Key('EmailAddressTemplate');
+        await editWithKeyboard(tester, key, 885);
+
+        tester.widget<TextField>(find.byKey(key)).controller!.text =
+            '${List.filled(12, 'FIRST.LAST').join('.')}@example.com';
+        await tester.pumpAndSettle();
+        final visible = visibleArea(tester);
+        final preview = tester.getRect(find.byKey(const Key('Preview')));
+        expect(containsVertically(visible, preview), isTrue,
+            reason: 'preview $preview should be within $visible');
+        await tester.pumpAndSettle(kSaveDelay);
       });
 
       testWidgets('closing the keyboard doesn\'t scroll back to the field',
