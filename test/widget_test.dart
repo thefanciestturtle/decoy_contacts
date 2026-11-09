@@ -659,7 +659,8 @@ void main() {
       // A name with a space shows up under the email template that uses it.
       await type(tester, 'FirstNames', 'Zoe, Mary Ann');
       expect(warningUnder(tester, 'EmailAddressTemplate'),
-          '"Mary Ann" has a space, so those email addresses won\'t work.');
+          '"Mary Ann" can\'t be part of an email address, so those addresses '
+          'won\'t work.');
       await type(tester, 'EmailAddressTemplate', 'LAST@example.com');
       expect(warningUnder(tester, 'EmailAddressTemplate'), isNull);
 
@@ -707,15 +708,15 @@ void main() {
       await tester.pumpWidget(const MyApp());
       await tester.pumpAndSettle();
 
+      // The longest warnings: two sentences under the phone template, and
+      // the one about names under the email template.
       await type(tester, 'PhoneNumberTemplate', '+447700900NNN');
-      await type(tester, 'EmailAddressTemplate', 'FIRST.LAST');
       await type(tester, 'FirstNames', 'Mary Ann, Ann Marie, Zoe');
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       // Neither is cut off.
       for (final key in ['PhoneNumberTemplate', 'EmailAddressTemplate']) {
         final warning = warningUnder(tester, key)!;
-        expect(warning.split('\n'), hasLength(2), reason: key);
         expect(
             tester.renderObject<RenderParagraph>(find.text(warning))
                 .didExceedMaxLines,

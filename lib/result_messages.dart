@@ -2,7 +2,9 @@
 // messages shown afterwards.
 
 import 'contact_actions.dart';
-import 'input_checks.dart';
+
+/// More fake contacts than this get a warning in the preview.
+const int kManyFakeContacts = 10000;
 
 const String kPermissionDeniedMessage =
     "Permission to access contacts was denied.";
