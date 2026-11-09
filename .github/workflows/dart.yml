@@ -11,6 +11,12 @@ on:
 permissions:
   contents: read
 
+env:
+  FLUTTER_VERSION: 3.47.9
+  GRADLE_CACHE_PATHS: |
+    ~/.gradle/caches
+    ~/.gradle/wrapper
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,10 +29,24 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # The Gradle distribution and the Kotlin compiler are downloaded from
+      # GitHub releases, which sometimes time out (HTTP 504). Restoring them
+      # from the cache avoids that, and speeds up the build. Each job has its
+      # own cache. A change to the Gradle files, the Flutter version or
+      # pubspec.lock makes a new entry, saved at the end of the job.
+      - name: Restore Gradle cache
+        id: gradle-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: gradle-${{ github.job }}-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
+          restore-keys: |
+            gradle-${{ github.job }}-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
+
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
-          flutter-version: 3.47.9
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Disable analytics
@@ -42,7 +62,25 @@ jobs:
         run: flutter test
 
       - name: Build debug APK
+        id: build-apk
         run: flutter build apk --debug
+
+      # Save the Gradle cache whenever the build worked, even if a later step
+      # failed. Stop Gradle first, so nothing is written to the cache while
+      # it is being saved, and drop its lock files.
+      - name: Stop Gradle
+        if: ${{ !cancelled() && steps.build-apk.outcome == 'success' && steps.gradle-cache.outputs.cache-hit != 'true' }}
+        run: |
+          if [ -x android/gradlew ]; then (cd android && ./gradlew --stop); fi
+          find ~/.gradle/caches -name '*.lock' -delete
+          rm -f ~/.gradle/caches/*/gc.properties
+
+      - name: Save Gradle cache
+        if: ${{ !cancelled() && steps.build-apk.outcome == 'success' && steps.gradle-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
   # Create and Delete against the real Android contacts provider, on an
   # emulator. API 36 matches the app's target SDK and the local test AVD.
@@ -59,10 +97,24 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # The Gradle distribution and the Kotlin compiler are downloaded from
+      # GitHub releases, which sometimes time out (HTTP 504). Restoring them
+      # from the cache avoids that, and speeds up the build. Each job has its
+      # own cache. A change to the Gradle files, the Flutter version or
+      # pubspec.lock makes a new entry, saved at the end of the job.
+      - name: Restore Gradle cache
+        id: gradle-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: gradle-${{ github.job }}-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
+          restore-keys: |
+            gradle-${{ github.job }}-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
+
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
-          flutter-version: 3.47.9
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - name: Disable analytics
@@ -74,6 +126,7 @@ jobs:
       # Build before the emulator starts, so the two don't compete for the
       # CPU. The test script's own build is then mostly up to date.
       - name: Build debug APK
+        id: build-apk
         run: flutter build apk --debug
 
       - name: Enable KVM
@@ -91,3 +144,20 @@ jobs:
           profile: pixel_7
           disable-animations: true
           script: tool/integration_test.sh --wipe-contacts
+
+      # Save the Gradle cache whenever the build worked, even if a later step
+      # failed. Stop Gradle first, so nothing is written to the cache while
+      # it is being saved, and drop its lock files.
+      - name: Stop Gradle
+        if: ${{ !cancelled() && steps.build-apk.outcome == 'success' && steps.gradle-cache.outputs.cache-hit != 'true' }}
+        run: |
+          if [ -x android/gradlew ]; then (cd android && ./gradlew --stop); fi
+          find ~/.gradle/caches -name '*.lock' -delete
+          rm -f ~/.gradle/caches/*/gc.properties
+
+      - name: Save Gradle cache
+        if: ${{ !cancelled() && steps.build-apk.outcome == 'success' && steps.gradle-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
