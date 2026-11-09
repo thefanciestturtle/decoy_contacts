@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import 'contact_actions.dart';
 import 'contacts_gateway.dart';
+import 'result_messages.dart';
 import 'settings_store.dart';
 
 /// How long to wait after the last keystroke before saving the settings.
@@ -110,85 +111,62 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _createAllContacts() async {
+  /// The steps Create and Delete share: ignore taps while busy, save the
+  /// settings, ask for permission, run [action], and show the result.
+  /// [name] is used in the log, [doing] in the error message.
+  Future<void> _runContactsAction<R>({
+    required String name,
+    required String doing,
+    required Future<R> Function(Settings settings) action,
+    required String Function(R result) describe,
+  }) async {
     if (_isBusy) return;
     setState(() { _isBusy = true; });
     unawaited(_saveSettingsNow());
     final settings = _settings;
 
-    log("_createAllContacts: about to request permission");
+    log("$name: about to request permission");
     final bool bGranted = await widget.contacts.requestPermission();
 
-    CreateResult? result;
-    String? sError;
+    late final R result;
+    Object? error;
     if (bGranted) {
       try {
-        result = await createFakeContacts(widget.contacts, widget.ledgerStore, settings);
+        result = await action(settings);
       } catch (e) {
-        log("_createAllContacts: error $e");
-        sError = e.toString();
+        log("$name: error $e");
+        error = e;
       }
     }
 
     if (!mounted) return;
     setState(() { _isBusy = false; });
-    String sMessage;
+    final String sMessage;
     if (!bGranted) {
-      sMessage = "Permission to access contacts was denied.";
-    } else if (sError != null) {
-      sMessage = "Error while creating contacts: $sError";
+      sMessage = kPermissionDeniedMessage;
+    } else if (error != null) {
+      sMessage = errorMessage(doing, error);
     } else {
-      sMessage = "Created ${result!.created} fake contact(s).";
-      if (result.alreadyExisted > 0) sMessage += " ${result.alreadyExisted} already existed.";
-      if (result.untracked > 0) {
-        sMessage += " Warning: ${result.untracked}"
-            " could not be recorded and must be deleted by hand.";
-      }
+      sMessage = describe(result);
     }
     _showResultSnackBar(sMessage);
   }
 
-  Future<void> _deleteAllContacts() async {
-    if (_isBusy) return;
-    setState(() { _isBusy = true; });
-    unawaited(_saveSettingsNow());
-    final settings = _settings;
+  Future<void> _createAllContacts() => _runContactsAction(
+        name: "_createAllContacts",
+        doing: "creating",
+        action: (settings) =>
+            createFakeContacts(widget.contacts, widget.ledgerStore, settings),
+        describe: createdMessage,
+      );
 
-    log("_deleteAllContacts: about to request permission");
-    final bool bGranted = await widget.contacts.requestPermission();
-
-    DeleteResult? result;
-    String? sError;
-    if (bGranted) {
-      try {
-        result = await deleteFakeContacts(widget.contacts, widget.ledgerStore, settings);
-      } catch (e) {
-        log("_deleteAllContacts: error $e");
-        sError = e.toString();
-      }
-    }
-
-    if (!mounted) return;
-    setState(() { _isBusy = false; });
-    String sMessage;
-    if (!bGranted) {
-      sMessage = "Permission to access contacts was denied.";
-    } else if (sError != null) {
-      sMessage = "Error while deleting contacts: $sError";
-    } else {
-      sMessage = "Deleted ${result!.deleted} fake contact(s).";
-      if (result.skippedMerged > 0) {
-        sMessage += " ${result.skippedMerged}"
-            " were merged with other contacts and were left alone.";
-      }
-      if (result.skippedChanged > 0) {
-        sMessage += " ${result.skippedChanged}"
-            " no longer match what this app created (edited, or the app's records"
-            " came from another phone) and were left alone.";
-      }
-    }
-    _showResultSnackBar(sMessage);
-  }
+  Future<void> _deleteAllContacts() => _runContactsAction(
+        name: "_deleteAllContacts",
+        doing: "deleting",
+        action: (settings) =>
+            deleteFakeContacts(widget.contacts, widget.ledgerStore, settings),
+        describe: deletedMessage,
+      );
 
   InputDecoration _fieldDecoration(String sLabel) {
     return InputDecoration(
