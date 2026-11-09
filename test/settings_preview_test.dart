@@ -25,8 +25,8 @@ void main() {
   test('the defaults: 27 last names x 28 first names, starting with Zoe Zen',
       () {
     final preview = previewSettings(Settings.defaults);
-    expect(preview.lastNames, 27);
-    expect(preview.firstNames, 28);
+    expect(preview.lastNameCount, 27);
+    expect(preview.firstNameCount, 28);
     expect(preview.combinations, 756);
     expect(preview.sample,
         (name: 'Zoe Zen', phone: '+447700900010', email: 'Zoe.Zen@example.com'));
@@ -35,7 +35,7 @@ void main() {
   test('counts each name once, as Create does', () {
     final preview = previewSettings(
         settings(last: ' Zen, Zima,, Zen ,', first: 'Zoe,Zoe, ,Zach'));
-    expect((preview.lastNames, preview.firstNames, preview.combinations),
+    expect((preview.lastNameCount, preview.firstNameCount, preview.combinations),
         (2, 2, 4));
   });
 
@@ -59,8 +59,8 @@ void main() {
       expect(preview.sample, isNull, reason: '"$last" / "$first"');
       expect(preview.combinations, 0);
     }
-    expect(previewSettings(settings(last: '')).firstNames, 2);
-    expect(previewSettings(settings(first: '')).lastNames, 2);
+    expect(previewSettings(settings(last: '')).firstNameCount, 2);
+    expect(previewSettings(settings(first: '')).lastNameCount, 2);
   });
 
   test('long lists', () {

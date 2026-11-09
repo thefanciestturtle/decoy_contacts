@@ -25,32 +25,34 @@ const FakeSample kZoeZen =
 SettingsPreview settingsMake(int lastNames, int firstNames,
         {FakeSample? sample = kZoeZen}) =>
     SettingsPreview(
-      lastNames: lastNames,
-      firstNames: firstNames,
+      lastNameCount: lastNames,
+      firstNameCount: firstNames,
       sample: lastNames * firstNames == 0 ? null : sample,
     );
 
+String _text(SettingsPreview preview) => settingsPreviewText(preview).text;
+
 void main() {
-  group('settingsPreviewMessage', () {
+  group('settingsPreviewText', () {
     test('the count, how it comes about, and an example', () {
-      expect(settingsPreviewMessage(settingsMake(27, 28)),
+      expect(_text(settingsMake(27, 28)),
           '27 last names × 28 first names = 756 fake contacts.\n'
           'For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com');
     });
 
     test('singular forms; with only one contact it is not an example', () {
-      expect(settingsPreviewMessage(settingsMake(1, 1)),
+      expect(_text(settingsMake(1, 1)),
           '1 last name × 1 first name = 1 fake contact:\n'
           'Zoe Zen · +447700900010 · Zoe.Zen@example.com');
-      expect(settingsPreviewMessage(settingsMake(1, 2)),
+      expect(_text(settingsMake(1, 2)),
           '1 last name × 2 first names = 2 fake contacts.\n'
           'For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com');
-      expect(settingsPreviewMessage(settingsMake(3, 1)).split('\n').first,
+      expect(_text(settingsMake(3, 1)).split('\n').first,
           '3 last names × 1 first name = 3 fake contacts.');
     });
 
     test('leaves out a phone number or email the contacts won\'t get', () {
-      String sampleLine(String phone, String email) => settingsPreviewMessage(
+      String sampleLine(String phone, String email) => _text(
               settingsMake(2, 2,
                   sample: (name: 'Zoe Zen', phone: phone, email: email)))
           .split('\n')
@@ -64,18 +66,20 @@ void main() {
 
     test('an example without combinations is a mistake', () {
       expect(
-          () => SettingsPreview(lastNames: 0, firstNames: 2, sample: kZoeZen),
+          () => SettingsPreview(
+              lastNameCount: 0, firstNameCount: 2, sample: kZoeZen),
           throwsAssertionError);
-      expect(() => SettingsPreview(lastNames: 3, firstNames: 2, sample: null),
+      expect(() => SettingsPreview(
+              lastNameCount: 3, firstNameCount: 2, sample: null),
           throwsAssertionError);
     });
 
     test('where the phone number is in the spoken text', () {
       String? spokenPhone(SettingsPreview preview) {
-        final spoken = spokenSettingsPreview(preview);
-        final range = spoken.phoneNumber;
+        final text = settingsPreviewText(preview);
+        final range = text.spokenPhoneNumber;
         if (range == null) return null;
-        return spoken.text.substring(range.$1, range.$2);
+        return text.spoken.substring(range.$1, range.$2);
       }
 
       expect(spokenPhone(settingsMake(27, 28)), '+447700900010');
@@ -92,25 +96,25 @@ void main() {
     });
 
     test('says what is missing when the settings make none', () {
-      expect(settingsPreviewMessage(settingsMake(0, 28)),
+      expect(_text(settingsMake(0, 28)),
           '0 last names × 28 first names = no fake contacts.\n'
           'Enter at least one last name.');
-      expect(settingsPreviewMessage(settingsMake(1, 0)),
+      expect(_text(settingsMake(1, 0)),
           '1 last name × 0 first names = no fake contacts.\n'
           'Enter at least one first name.');
-      expect(settingsPreviewMessage(settingsMake(0, 0)),
+      expect(_text(settingsMake(0, 0)),
           '0 last names × 0 first names = no fake contacts.\n'
           'Enter at least one last name and one first name.');
     });
 
     test('for a screen reader: words instead of signs and dots', () {
-      expect(spokenSettingsPreview(settingsMake(27, 28)).text,
+      expect(settingsPreviewText(settingsMake(27, 28)).spoken,
           '27 last names times 28 first names makes 756 fake contacts.\n'
           'For example: Zoe Zen, +447700900010, Zoe.Zen@example.com');
-      expect(spokenSettingsPreview(settingsMake(1, 1)).text,
+      expect(settingsPreviewText(settingsMake(1, 1)).spoken,
           '1 last name times 1 first name makes 1 fake contact:\n'
           'Zoe Zen, +447700900010, Zoe.Zen@example.com');
-      expect(spokenSettingsPreview(settingsMake(0, 1)).text,
+      expect(settingsPreviewText(settingsMake(0, 1)).spoken,
           '0 last names times 1 first name makes no fake contacts.\n'
           'Enter at least one last name.');
     });

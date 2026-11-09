@@ -48,22 +48,22 @@ typedef FakeSample = ({String name, String phone, String email});
 /// What a set of [Settings] makes, for the preview under the fields.
 class SettingsPreview {
   /// How many different last and first names there are.
-  final int lastNames;
-  final int firstNames;
+  final int lastNameCount;
+  final int firstNameCount;
 
   /// The first fake the settings make, or null if they make none.
   final FakeSample? sample;
 
   /// [sample] is null exactly when there are no combinations.
   const SettingsPreview({
-    required this.lastNames,
-    required this.firstNames,
+    required this.lastNameCount,
+    required this.firstNameCount,
     required this.sample,
-  }) : assert((sample == null) == (lastNames * firstNames == 0));
+  }) : assert((sample == null) == (lastNameCount * firstNameCount == 0));
 
   /// How many fakes the settings make: every last name with every first
   /// name. Create adds those that don't exist yet.
-  int get combinations => lastNames * firstNames;
+  int get combinations => lastNameCount * firstNameCount;
 }
 
 /// Works out what [settings] make, the same way Create does. Reads neither
@@ -74,8 +74,8 @@ SettingsPreview previewSettings(Settings settings) {
   final firstNames = settings.firstNames;
   final first = firstCombination(firstNames, lastNames);
   return SettingsPreview(
-    lastNames: lastNames.length,
-    firstNames: firstNames.length,
+    lastNameCount: lastNames.length,
+    firstNameCount: firstNames.length,
     sample: first == null
         ? null
         : _sampleOf(

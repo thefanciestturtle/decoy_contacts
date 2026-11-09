@@ -1234,6 +1234,40 @@ void main() {
           isNot(isA<EditableText>()));
     });
 
+    testWidgets('with a D-pad too, a field can\'t take the focus while '
+        'Create runs', (tester) async {
+      final slow = _SlowPermission();
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      // Directional navigation, as with a D-pad or on Android TV, where a
+      // disabled TextField can still take the focus.
+      await tester.pumpWidget(MediaQuery(
+          data: const MediaQueryData(navigationMode: NavigationMode.directional),
+          child: MyApp(contacts: slow)));
+      await tester.pumpAndSettle();
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      final email = tester
+          .widget<EditableText>(find.descendant(
+              of: find.byKey(const Key('EmailAddressTemplate')),
+              matching: find.byType(EditableText)))
+          .focusNode;
+
+      await tester.tap(find.text(kCreateButton));
+      await tester.pump();
+      email.requestFocus();
+      await tester.pump();
+      expect(email.hasFocus, isFalse);
+
+      slow.permission.complete(true);
+      await tester.pumpAndSettle();
+      await tester.tap(dialogButton('Create'));
+      await tester.pumpAndSettle();
+      expect(slow.all, hasLength(4));
+      expect(email.hasFocus, isFalse);
+      expect(tester.testTextInput.isVisible, isFalse);
+    });
+
     testWidgets('an error or a refused permission leaves it as it was',
         (tester) async {
       await pumpApp(tester, book);

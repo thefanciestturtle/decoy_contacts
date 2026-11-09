@@ -85,32 +85,40 @@ const String kEnterNamesHint = "Enter at least one last name and one first name.
 ///
 ///     0 last names × 28 first names = no fake contacts.
 ///     Enter at least one last name.
-String settingsPreviewMessage(SettingsPreview preview) =>
-    _settingsPreview(preview, spoken: false).text;
+typedef PreviewText = ({
+  String text,
+  String spoken,
+  (int, int)? spokenPhoneNumber,
+});
 
-/// The preview for a screen reader (see [settingsPreviewMessage]): commas
-/// instead of the dots and words for the signs, and
-/// where the example's phone number is in it, as (start, end), so the
-/// screen reader can be told to read it digit by digit rather than as one
-/// big number. [phoneNumber] is null if the example has none.
-({String text, (int, int)? phoneNumber}) spokenSettingsPreview(
-        SettingsPreview preview) =>
-    _settingsPreview(preview, spoken: true);
+/// The preview's [PreviewText.text]; [PreviewText.spoken], the same for a
+/// screen reader (commas instead of the dots, words for the signs); and
+/// where the example's phone number is in the spoken text, as (start, end),
+/// so the screen reader can be told to read it digit by digit rather than
+/// as one big number (null if the example has none).
+PreviewText settingsPreviewText(SettingsPreview preview) {
+  final spoken = _settingsPreview(preview, spoken: true);
+  return (
+    text: _settingsPreview(preview, spoken: false).text,
+    spoken: spoken.text,
+    spokenPhoneNumber: spoken.phoneNumber,
+  );
+}
 
 ({String text, (int, int)? phoneNumber}) _settingsPreview(
     SettingsPreview preview,
     {required bool spoken}) {
   final n = preview.combinations;
   final sSum = [
-    _count(preview.lastNames, "last name"),
+    _count(preview.lastNameCount, "last name"),
     spoken ? " times " : " × ",
-    _count(preview.firstNames, "first name"),
+    _count(preview.firstNameCount, "first name"),
     spoken ? " makes " : " = ",
     n == 0 ? "no fake contacts" : _fakeContacts(n),
     n == 1 ? ":" : ".",
   ].join();
   if (n == 0) {
-    final bNoLast = preview.lastNames == 0, bNoFirst = preview.firstNames == 0;
+    final bNoLast = preview.lastNameCount == 0, bNoFirst = preview.firstNameCount == 0;
     final sHint = bNoLast && bNoFirst
         ? kEnterNamesHint
         : (bNoLast ? "Enter at least one last name." : "Enter at least one first name.");

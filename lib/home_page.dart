@@ -49,8 +49,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// settings are loaded. Worked out once per change of the settings, also
   /// when code changes the fields, but not when only the cursor or the
   /// selection moves.
-  final ValueNotifier<({String text, String spoken, (int, int)? spellOut})?>
-      _preview = ValueNotifier(null);
+  final ValueNotifier<PreviewText?> _preview = ValueNotifier(null);
   Settings? _previewSettings;
 
   /// Called on any change to a text field, the cursor included.
@@ -59,13 +58,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     final settings = _settings;
     if (settings == _previewSettings) return;
     _previewSettings = settings;
-    final preview = previewSettings(settings);
-    final spoken = spokenSettingsPreview(preview);
-    _preview.value = (
-      text: settingsPreviewMessage(preview),
-      spoken: spoken.text,
-      spellOut: spoken.phoneNumber,
-    );
+    _preview.value = settingsPreviewText(previewSettings(settings));
   }
 
   // The text fields are the single source of truth for the settings. They
@@ -464,45 +457,57 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  TextField(
-                    key: keyLastNames,
-                    controller: lastNamesController,
-                    onChanged: _settingsChanged,
-                    enabled: bCanAct,
-                    minLines: 1,
-                    maxLines: 4,
-                    decoration: _fieldDecoration('Last names'),
-                  ),
-                  const SizedBox(height: 20),
-                  TextField(
-                    key: keyFirstNames,
-                    controller: firstNamesController,
-                    onChanged: _settingsChanged,
-                    enabled: bCanAct,
-                    minLines: 1,
-                    maxLines: 4,
-                    decoration: _fieldDecoration('First names'),
-                  ),
-                  const SizedBox(height: 30),
-                  TextField(
-                    key: keyPhoneNumberTemplate,
-                    controller: phoneNumberTemplateController,
-                    focusNode: _phoneFocus,
-                    onChanged: _settingsChanged,
-                    enabled: bCanAct,
-                    keyboardType: TextInputType.phone,
-                    decoration: _fieldDecoration('Phone number template'),
-                  ),
-                  const SizedBox(height: 20),
-                  TextField(
-                    key: keyEmailAddressTemplate,
-                    controller: emailAddressTemplateController,
-                    focusNode: _emailFocus,
-                    onChanged: _settingsChanged,
-                    enabled: bCanAct,
-                    keyboardType: TextInputType.emailAddress,
-                    autocorrect: false,
-                    decoration: _fieldDecoration('Email address template'),
+                  // Also out of reach of the focus while disabled: with a D-pad
+                  // (directional navigation) a disabled TextField can still
+                  // take the focus, and its keyboard would open by itself when
+                  // the action ends.
+                  ExcludeFocus(
+                    excluding: !bCanAct,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        TextField(
+                          key: keyLastNames,
+                          controller: lastNamesController,
+                          onChanged: _settingsChanged,
+                          enabled: bCanAct,
+                          minLines: 1,
+                          maxLines: 4,
+                          decoration: _fieldDecoration('Last names'),
+                        ),
+                        const SizedBox(height: 20),
+                        TextField(
+                          key: keyFirstNames,
+                          controller: firstNamesController,
+                          onChanged: _settingsChanged,
+                          enabled: bCanAct,
+                          minLines: 1,
+                          maxLines: 4,
+                          decoration: _fieldDecoration('First names'),
+                        ),
+                        const SizedBox(height: 30),
+                        TextField(
+                          key: keyPhoneNumberTemplate,
+                          controller: phoneNumberTemplateController,
+                          focusNode: _phoneFocus,
+                          onChanged: _settingsChanged,
+                          enabled: bCanAct,
+                          keyboardType: TextInputType.phone,
+                          decoration: _fieldDecoration('Phone number template'),
+                        ),
+                        const SizedBox(height: 20),
+                        TextField(
+                          key: keyEmailAddressTemplate,
+                          controller: emailAddressTemplateController,
+                          focusNode: _emailFocus,
+                          onChanged: _settingsChanged,
+                          enabled: bCanAct,
+                          keyboardType: TextInputType.emailAddress,
+                          autocorrect: false,
+                          decoration: _fieldDecoration('Email address template'),
+                        ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 12),
                   // Follows every keystroke. (Not a live region: TalkBack
@@ -518,7 +523,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                               // The phone number digit by digit.
                               attributedLabel: AttributedString(preview.spoken,
                                   attributes: [
-                                    if (preview.spellOut case (final start, final end))
+                                    if (preview.spokenPhoneNumber case (final start, final end))
                                       SpellOutStringAttribute(
                                           range: TextRange(start: start, end: end)),
                                   ]),
