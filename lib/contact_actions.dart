@@ -68,15 +68,14 @@ class SettingsPreview {
 SettingsPreview previewSettings(Settings settings) {
   final lastNames = settings.lastNames;
   final firstNames = settings.firstNames;
-  final combinations = allCombinations(firstNames.take(1).toList(),
-      lastNames.take(1).toList());
   return SettingsPreview(
     lastNames: lastNames.length,
     firstNames: firstNames.length,
-    sample: combinations.isEmpty
+    // The first of allCombinations: first last name, first first name.
+    sample: lastNames.isEmpty || firstNames.isEmpty
         ? null
-        : entryFor(combinations.first, settings.phoneTemplate,
-            settings.emailTemplate),
+        : entryFor(FakeName(firstNames.first, lastNames.first),
+            settings.phoneTemplate, settings.emailTemplate),
   );
 }
 

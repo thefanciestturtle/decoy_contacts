@@ -3,6 +3,7 @@ import 'dart:developer';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import 'contact_actions.dart';
 import 'contacts_gateway.dart';
@@ -67,6 +68,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _phoneFocus.addListener(_scheduleRevealPreview);
+    _emailFocus.addListener(_scheduleRevealPreview);
     _loadSettings();
   }
 
@@ -78,7 +81,15 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     firstNamesController.dispose();
     phoneNumberTemplateController.dispose();
     emailAddressTemplateController.dispose();
+    _phoneFocus.dispose();
+    _emailFocus.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    // The keyboard opened, closed or changed size.
+    _scheduleRevealPreview();
   }
 
   @override
@@ -151,6 +162,13 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       _status = status;
       if (!bFailed) _statusOutdated = false;
     });
+  }
+
+  /// Called on every keystroke in a template field.
+  void _templateChanged(String text) {
+    _settingsChanged(text);
+    // The preview may have grown.
+    _scheduleRevealPreview();
   }
 
   /// Called on every keystroke; saves once typing pauses.
@@ -308,60 +326,63 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       );
 
   // While the phone or email template is edited, the preview under the
-  // fields should stay above the keyboard: it shows what the template
-  // gives. A text field keeps its caret plus its scrollPadding in view, so
-  // their scrollPadding reaches down to the end of the preview, as measured
-  // after layout.
-  final GlobalKey _phoneFieldBox = GlobalKey();
-  final GlobalKey _emailFieldBox = GlobalKey();
+  // fields should stay above the keyboard: it shows what the template gives.
+  final FocusNode _phoneFocus = FocusNode();
+  final FocusNode _emailFocus = FocusNode();
   final GlobalKey _previewBox = GlobalKey();
-  double _previewBelowPhone = 0;
-  double _previewBelowEmail = 0;
-  bool _previewMeasureScheduled = false;
+  bool _revealScheduled = false;
 
-  /// Measures, after this frame, how far below each template field the
-  /// preview ends.
-  void _schedulePreviewMeasure() {
-    if (_previewMeasureScheduled) return;
-    _previewMeasureScheduled = true;
+  /// Calls [_revealPreview] after the next frame, once the preview and the
+  /// keyboard have their new size, if a template field has the focus.
+  void _scheduleRevealPreview() {
+    if (_revealScheduled || !(_phoneFocus.hasFocus || _emailFocus.hasFocus)) {
+      return;
+    }
+    _revealScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _previewMeasureScheduled = false;
-      if (!mounted) return;
-      double bottomOf(GlobalKey key) {
-        final box = key.currentContext?.findRenderObject();
-        if (box is! RenderBox || !box.hasSize || !box.attached) return 0;
-        return box.localToGlobal(Offset(0, box.size.height)).dy;
-      }
-
-      final previewBottom = bottomOf(_previewBox);
-      final phone = math.max(0.0, previewBottom - bottomOf(_phoneFieldBox));
-      final email = math.max(0.0, previewBottom - bottomOf(_emailFieldBox));
-      if (phone != _previewBelowPhone || email != _previewBelowEmail) {
-        setState(() {
-          _previewBelowPhone = phone;
-          _previewBelowEmail = email;
-        });
-      }
+      _revealScheduled = false;
+      _revealPreview();
     });
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
-  /// The scrollPadding for a template field whose bottom is [below] above
-  /// the end of the preview, in a scroll view [viewportHeight] high (less
-  /// while the keyboard is up). If the caret line and the preview don't
-  /// both fit, keeps only as much of the preview in view as does fit: a
-  /// larger padding would scroll the caret itself out of view.
-  EdgeInsets _templateScrollPadding(
-      BuildContext context, double below, double viewportHeight) {
-    const double kDefault = 20; // TextField's default scrollPadding
-    // From the bottom of the caret down to the field's bottom edge.
-    const double kCaretToFieldBottom = 24;
-    // The caret's height: one line of the field's text (16 sp, line height
-    // 1.5), scaled with the font size.
-    final double caret = MediaQuery.textScalerOf(context).scale(24);
-    final double fits = viewportHeight - kDefault - caret - 8;
-    final double wanted = below + kCaretToFieldBottom + kDefault;
-    return EdgeInsets.fromLTRB(kDefault, kDefault, kDefault,
-        math.max(kDefault, math.min(wanted, fits)));
+  /// Scrolls so that the caret of the template field being edited (with
+  /// the 20 dp a text field keeps clear around it) and the preview below
+  /// are in view; if both don't fit, the caret and as much of the preview
+  /// as fits. Jumps rather than animates, so it can't be undone by the
+  /// field's own animated scroll to its caret: whichever runs first, the
+  /// other then finds the caret already in view.
+  void _revealPreview() {
+    if (!mounted) return;
+    final focus = _phoneFocus.hasFocus
+        ? _phoneFocus
+        : (_emailFocus.hasFocus ? _emailFocus : null);
+    final editable =
+        focus?.context?.findAncestorStateOfType<EditableTextState>();
+    final previewContext = _previewBox.currentContext;
+    final preview = previewContext?.findRenderObject();
+    if (editable == null || previewContext == null || preview is! RenderBox) {
+      return;
+    }
+    final selection = editable.textEditingValue.selection;
+    final scrollable = Scrollable.maybeOf(previewContext);
+    final RenderEditable field = editable.renderEditable;
+    if (!selection.isValid || scrollable == null || !field.attached ||
+        !preview.attached) {
+      return;
+    }
+    const double kPadding = 20; // a TextField's default scrollPadding
+    final Rect caret = field.getLocalRectForCaret(selection.extent);
+    final double top = caret.top - kPadding;
+    final double previewBottom = field
+        .globalToLocal(preview.localToGlobal(Offset(0, preview.size.height)))
+        .dy;
+    // Taller than the view, the caret might not be the part shown.
+    final double bottom = math.min(previewBottom + kPadding,
+        top + scrollable.position.viewportDimension);
+    if (bottom <= caret.bottom) return;
+    field.showOnScreen(
+        rect: Rect.fromLTRB(caret.left, top, caret.right, bottom));
   }
 
   InputDecoration _fieldDecoration(String sLabel) {
@@ -385,7 +406,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         title: Text(widget.title),
       ),
       body: SafeArea(
-        child: LayoutBuilder(builder: (context, viewport) => Center(
+        child: Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: ConstrainedBox(
@@ -413,33 +434,25 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     decoration: _fieldDecoration('First names'),
                   ),
                   const SizedBox(height: 30),
-                  KeyedSubtree(
-                    key: _phoneFieldBox,
-                    child: TextField(
-                      key: keyPhoneNumberTemplate,
-                      controller: phoneNumberTemplateController,
-                      onChanged: _settingsChanged,
-                      enabled: _settingsLoaded,
-                      keyboardType: TextInputType.phone,
-                      scrollPadding: _templateScrollPadding(
-                          context, _previewBelowPhone, viewport.maxHeight),
-                      decoration: _fieldDecoration('Phone number template'),
-                    ),
+                  TextField(
+                    key: keyPhoneNumberTemplate,
+                    controller: phoneNumberTemplateController,
+                    focusNode: _phoneFocus,
+                    onChanged: _templateChanged,
+                    enabled: _settingsLoaded,
+                    keyboardType: TextInputType.phone,
+                    decoration: _fieldDecoration('Phone number template'),
                   ),
                   const SizedBox(height: 20),
-                  KeyedSubtree(
-                    key: _emailFieldBox,
-                    child: TextField(
-                      key: keyEmailAddressTemplate,
-                      controller: emailAddressTemplateController,
-                      onChanged: _settingsChanged,
-                      enabled: _settingsLoaded,
-                      keyboardType: TextInputType.emailAddress,
-                      autocorrect: false,
-                      scrollPadding: _templateScrollPadding(
-                          context, _previewBelowEmail, viewport.maxHeight),
-                      decoration: _fieldDecoration('Email address template'),
-                    ),
+                  TextField(
+                    key: keyEmailAddressTemplate,
+                    controller: emailAddressTemplateController,
+                    focusNode: _emailFocus,
+                    onChanged: _templateChanged,
+                    enabled: _settingsLoaded,
+                    keyboardType: TextInputType.emailAddress,
+                    autocorrect: false,
+                    decoration: _fieldDecoration('Email address template'),
                   ),
                   const SizedBox(height: 12),
                   // Follows every keystroke. (Not a live region: TalkBack
@@ -447,8 +460,6 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                   ListenableBuilder(
                     listenable: _fields,
                     builder: (context, _) {
-                      // Its height can change with every keystroke.
-                      _schedulePreviewMeasure();
                       if (!_settingsLoaded) {
                         return SizedBox.shrink(key: _previewBox);
                       }
@@ -507,7 +518,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
               ),
             ),
           ),
-        )),
+        ),
       ),
     );
   }

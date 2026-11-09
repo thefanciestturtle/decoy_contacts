@@ -360,6 +360,14 @@ void main() {
         addTearDown(tester.view.reset);
       }
 
+      // A shorter one (411 x 686 dp): with the keyboard open, the page
+      // can scroll the preview out of view.
+      void shortPhoneScreen(WidgetTester tester) {
+        tester.view.physicalSize = const Size(1080, 1800);
+        tester.view.devicePixelRatio = 2.625;
+        addTearDown(tester.view.reset);
+      }
+
       for (final key in ['EmailAddressTemplate', 'PhoneNumberTemplate']) {
         testWidgets(key, (WidgetTester tester) async {
           phoneScreen(tester);
@@ -385,15 +393,72 @@ void main() {
         });
       }
 
-      testWidgets('but the names are edited as before',
-          (WidgetTester tester) async {
+      testWidgets('also when it grows by several lines, at a larger font '
+          'size', (WidgetTester tester) async {
         phoneScreen(tester);
+        tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        await tester.pumpWidget(const MyApp());
+        await tester.pumpAndSettle();
+        const key = Key('EmailAddressTemplate');
+        await editWithKeyboard(tester, key, 885);
+        final before = tester.getRect(find.byKey(const Key('Preview')));
+
+        await tester.enterText(find.byKey(key),
+            '${List.filled(12, 'FIRST.LAST').join('.')}@example.com');
+        await tester.pumpAndSettle();
+        final after = tester.getRect(find.byKey(const Key('Preview')));
+        expect(after.height, greaterThan(before.height + 60));
+        final visible = visibleArea(tester);
+        expect(contains(visible, after), isTrue,
+            reason: 'preview $after should be within $visible');
+        expect(contains(visible, editableTextOf(tester, key)), isTrue);
+      });
+
+      testWidgets('also when moving to it from another field with the '
+          'keyboard open', (WidgetTester tester) async {
+        shortPhoneScreen(tester);
+        await tester.pumpWidget(const MyApp());
+        await tester.pumpAndSettle();
+        await editWithKeyboard(tester, const Key('FirstNames'), 885);
+
+        // The email field just above the keyboard, the preview under it.
+        const key = Key('EmailAddressTemplate');
+        await Scrollable.ensureVisible(tester.element(find.byKey(key)),
+            alignment: 1.0);
+        await tester.pumpAndSettle();
+        expect(tester.getRect(find.byKey(const Key('Preview'))).top,
+            greaterThan(visibleArea(tester).bottom));
+        await tester.tap(find.byKey(key));
+        await tester.pumpAndSettle();
+
+        final visible = visibleArea(tester);
+        final preview = tester.getRect(find.byKey(const Key('Preview')));
+        expect(contains(visible, preview), isTrue,
+            reason: 'preview $preview should be within $visible');
+      });
+
+      testWidgets('but not while the names are edited',
+          (WidgetTester tester) async {
+        shortPhoneScreen(tester);
         await tester.pumpWidget(const MyApp());
         await tester.pumpAndSettle();
 
         for (final key in ['LastNames', 'FirstNames']) {
-          expect(tester.widget<TextField>(find.byKey(Key(key))).scrollPadding,
-              const TextField().scrollPadding, reason: key);
+          await editWithKeyboard(tester, Key(key), 885);
+          await tester.enterText(find.byKey(Key(key)), 'Zen, Zima, Zhao');
+          await tester.pumpAndSettle();
+
+          final visible = visibleArea(tester);
+          expect(contains(visible, editableTextOf(tester, Key(key))), isTrue,
+              reason: key);
+          // The page only scrolled as far as the field needs.
+          expect(tester.getRect(find.byKey(const Key('Preview'))).top,
+              greaterThan(visible.bottom), reason: key);
+
+          FocusManager.instance.primaryFocus!.unfocus();
+          tester.view.resetViewInsets();
+          await tester.pumpAndSettle();
         }
       });
 

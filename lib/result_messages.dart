@@ -19,8 +19,11 @@ const String kChangedMeanwhileMessage =
 /// label of the button that goes ahead.
 typedef Confirmation = ({String title, String body, String action});
 
+/// "1 [what]" or "[n] [what]s", e.g. "1 fake contact", "2 fake contacts".
+String _count(int n, String what) => n == 1 ? "1 $what" : "$n ${what}s";
+
 /// "1 fake contact" or "[n] fake contacts".
-String _fakeContacts(int n) => n == 1 ? "1 fake contact" : "$n fake contacts";
+String _fakeContacts(int n) => _count(n, "fake contact");
 
 /// Sentences about tracked contacts that Delete leaves alone, in the past
 /// tense if [done], else in the future tense.
@@ -83,12 +86,11 @@ String settingsPreviewMessage(SettingsPreview preview, {bool spoken = false}) {
     if (bNoLast && bNoFirst) return "Enter at least one last name and one first name.";
     return bNoLast ? "Enter at least one last name." : "Enter at least one first name.";
   }
-  String count(int n, String what) => n == 1 ? "1 $what" : "$n ${what}s";
   final n = preview.combinations;
   final sSum = [
-    count(preview.lastNames, "last name"),
+    _count(preview.lastNames, "last name"),
     spoken ? " times " : " × ",
-    count(preview.firstNames, "first name"),
+    _count(preview.firstNames, "first name"),
     spoken ? " makes " : " = ",
     _fakeContacts(n),
     n == 1 ? ":" : ".",
