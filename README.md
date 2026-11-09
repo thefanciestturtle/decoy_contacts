@@ -42,7 +42,9 @@ You could uninstall this app after creating the fake contacts, without causing a
 
 * "Delete" only removes contacts this app created.  When it creates contacts, the app privately records their internal IDs in its own storage (nothing is written into the contacts themselves, so other apps can't use it to filter out the fakes).  Delete removes only those recorded contacts, so a real contact that happens to have the same name as a fake one is never touched.  If Android has merged a fake contact with one of your real contacts, the app leaves that contact alone and tells you how many it skipped; you can remove the fake details by hand.
 
-* If you clear the app's data or uninstall it, or restore your contacts from a backup, the record of what it created is lost and "Delete" can no longer remove those fake contacts.  Delete them by hand in your Contacts app.  (Creating again won't make duplicates: contacts with exactly the same name, phone number and email address are recognised and skipped.)  The same applies to fake contacts made by versions 1.8 and earlier.
+* The record of what the app created stays on this phone.  The app opts out of Android backup and phone-to-phone transfer, because the internal IDs it records are only valid on the phone that created the contacts; on another phone the same IDs can belong to your real contacts.  (So your name lists and templates aren't carried over to a new phone either.)  If you clear the app's data, uninstall it, move to a new phone, or restore your contacts from a backup (which gives them new IDs), "Delete" can no longer remove the fake contacts made before.  Delete them by hand in your Contacts app.  (Creating again won't make duplicates: contacts with exactly the same name, phone number and email address are recognised and skipped.)  The same applies to fake contacts made by versions 1.8 and earlier.
+
+* As a second safeguard, "Delete" checks that each recorded contact still has exactly the name, phone number and email address it was created with.  Any that don't, for example a fake contact you edited, are left alone, and the message tells you how many were skipped.
 
 * Replacements for "n" digits in phone numbers are calculated deterministicly (repeatably) from contact's last name.  So for example if 5 users of this app all just leave everything set at defaults, the same contacts will show up on each of their phones with the same names, phone numbers, and email addresses.  This is good, for data-poisoning purposes.  Further, all fake contacts with same last name will have same phone number (debatable whether this is good or bad).
 
@@ -63,6 +65,7 @@ Added Spanish description to Fastlane per https://github.com/BillDietrich/fake_c
 * Updated to current Flutter, Dart 3 and flutter_contacts; progress spinner and result messages (from https://github.com/BillDietrich/fake_contacts/pull/11).
 * "Delete" now removes only contacts this app created, never real contacts with the same name.
 * "Create" no longer makes duplicates.
+* The app is excluded from Android backup and phone-to-phone transfer, and "Delete" checks each contact's name, phone number and email before removing it, so a record restored onto another phone can't delete real contacts.
 * Default phone template moved from Algeria's +213 to the reserved UK drama range +44 7700 900xxx.
 * Settings load once and save shortly after you stop typing (and when the app is backgrounded); the page scrolls on small screens; name lists wrap; Delete button is readable.
 

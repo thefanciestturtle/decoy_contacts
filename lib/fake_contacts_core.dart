@@ -80,32 +80,99 @@ List<FakeName> allCombinations(List<String> firstNames, List<String> lastNames) 
   ];
 }
 
+/// What the app recorded about one raw contact it created.
+class LedgerEntry {
+  final String name;
+
+  /// The phone number and email address the contact was created with ('' if
+  /// none). Both are null for entries recorded before these were stored.
+  final String? phone;
+  final String? email;
+
+  const LedgerEntry(this.name, this.phone, this.email);
+
+  /// An entry recorded by an older version, which stored only the name.
+  const LedgerEntry.nameOnly(this.name)
+      : phone = null,
+        email = null;
+
+  bool get hasDetails => phone != null && email != null;
+
+  /// Fingerprint the contact must still have to be deleted, or null if the
+  /// details weren't recorded.
+  String? get fingerprint =>
+      hasDetails ? contactFingerprint(name, phone!, email!) : null;
+
+  Object toJson() => {'name': name, 'phone': phone, 'email': email};
+
+  static LedgerEntry? fromJson(Object? json) {
+    if (json is String) return LedgerEntry.nameOnly(json);
+    if (json is Map && json['name'] is String) {
+      final phone = json['phone'], email = json['email'];
+      return LedgerEntry(json['name'] as String, phone is String ? phone : null,
+          email is String ? email : null);
+    }
+    return null;
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is LedgerEntry &&
+      other.name == name &&
+      other.phone == phone &&
+      other.email == email;
+
+  @override
+  int get hashCode => Object.hash(name, phone, email);
+
+  @override
+  String toString() => 'LedgerEntry($name, $phone, $email)';
+}
+
+/// The entry for a fake contact made from [name] with the given templates.
+/// An empty template means the contact gets no phone number or email.
+LedgerEntry entryFor(FakeName name, String phoneTemplate, String emailTemplate) =>
+    LedgerEntry(
+      name.displayName,
+      phoneTemplate.isEmpty ? '' : generatePhoneNumber(phoneTemplate, name.last),
+      emailTemplate.isEmpty
+          ? ''
+          : generateEmailAddress(emailTemplate, name.first, name.last),
+    );
+
 /// Raw contacts this app created, keyed by Android raw contact ID, with the
-/// display name each was created with.
+/// name, phone number and email address each was created with.
 ///
 /// Stored only in the app's private preferences, never in the contacts
 /// themselves, so other apps reading the address book can't use it to filter
-/// out the fakes.
+/// out the fakes. Raw contact IDs are only meaningful on the phone that
+/// assigned them, so the app opts out of Android backup and device transfer
+/// (see AndroidManifest.xml), and Delete also checks that each contact still
+/// matches its entry.
 class Ledger {
-  final Map<String, String> rawIdToName;
+  final Map<String, LedgerEntry> entries;
 
-  Ledger([Map<String, String>? entries]) : rawIdToName = {...?entries};
+  Ledger([Map<String, LedgerEntry>? entries]) : entries = {...?entries};
 
-  bool get isEmpty => rawIdToName.isEmpty;
-  int get length => rawIdToName.length;
+  bool get isEmpty => entries.isEmpty;
+  int get length => entries.length;
 
-  String encode() => jsonEncode(rawIdToName);
+  String encode() =>
+      jsonEncode({for (final e in entries.entries) e.key: e.value.toJson()});
 
+  /// Reads both the current format and the old one, which mapped each raw
+  /// contact ID straight to a name.
   static Ledger decode(String? json) {
     if (json == null || json.isEmpty) return Ledger();
     try {
       final map = jsonDecode(json);
       if (map is! Map) return Ledger();
-      return Ledger({
-        for (final e in map.entries)
-          if (e.key is String && e.value is String)
-            e.key as String: e.value as String,
-      });
+      final entries = <String, LedgerEntry>{};
+      for (final e in map.entries) {
+        final entry = LedgerEntry.fromJson(e.value);
+        if (e.key is String && entry != null) entries[e.key as String] = entry;
+      }
+      return Ledger(entries);
     } on FormatException {
       return Ledger();
     }
@@ -114,8 +181,19 @@ class Ledger {
   /// A copy without entries whose raw contact no longer exists (deleted by
   /// the user, or IDs reassigned after a backup/restore).
   Ledger prunedTo(Set<String> presentRawIds) => Ledger({
-        for (final e in rawIdToName.entries)
+        for (final e in entries.entries)
           if (presentRawIds.contains(e.key)) e.key: e.value,
+      });
+
+  /// A copy in which name-only entries from older versions get the phone and
+  /// email that [expected] says a fake with that name would have (from the
+  /// current settings), so Delete can check them. Entries it returns null for
+  /// stay name-only, and Delete leaves their contacts alone. A wrong guess
+  /// only means the contact is left alone too.
+  Ledger withDetailsForNameOnly(LedgerEntry? Function(String name) expected) =>
+      Ledger({
+        for (final e in entries.entries)
+          e.key: e.value.hasDetails ? e.value : (expected(e.value.name) ?? e.value),
       });
 }
 
@@ -160,8 +238,8 @@ List<FakeName> namesToCreate(
 }) {
   final present = allRawIds(book);
   final existing = {
-    for (final e in ledger.rawIdToName.entries)
-      if (present.contains(e.key)) e.value,
+    for (final e in ledger.entries.entries)
+      if (present.contains(e.key)) e.value.name,
   };
   return [
     for (final n in wanted)
@@ -174,22 +252,22 @@ List<FakeName> namesToCreate(
 
 /// Works out which raw contacts were just created.
 ///
-/// [created] are the names passed to the create call, and [createdContactIds]
-/// the contact IDs it returned, in the same order. Android may have merged a
-/// new raw contact into an existing contact, so only raw IDs that weren't in
-/// [before] are recorded.
-Map<String, String> newlyCreatedRawIds({
-  required List<FakeName> created,
+/// [created] are the entries for the contacts passed to the create call, and
+/// [createdContactIds] the contact IDs it returned, in the same order. Android
+/// may have merged a new raw contact into an existing contact, so only raw IDs
+/// that weren't in [before] are recorded.
+Map<String, LedgerEntry> newlyCreatedRawIds({
+  required List<LedgerEntry> created,
   required List<String> createdContactIds,
   required AddressBook before,
   required AddressBook after,
 }) {
   final old = allRawIds(before);
-  final result = <String, String>{};
+  final result = <String, LedgerEntry>{};
   for (var i = 0; i < created.length && i < createdContactIds.length; i++) {
     for (final raw in after[createdContactIds[i]] ?? const <String>[]) {
       if (!old.contains(raw) && !result.containsKey(raw)) {
-        result[raw] = created[i].displayName;
+        result[raw] = created[i];
       }
     }
   }
@@ -197,7 +275,8 @@ Map<String, String> newlyCreatedRawIds({
 }
 
 class DeletePlan {
-  /// Contacts made up entirely of raw contacts this app created.
+  /// Contacts made up entirely of raw contacts this app created, which still
+  /// have exactly the name, phone number and email they were created with.
   final List<String> contactIdsToDelete;
 
   /// Number of tracked raw contacts deleted along with [contactIdsToDelete].
@@ -207,6 +286,12 @@ class DeletePlan {
   /// contact that also holds data the app didn't create.
   final int skippedMerged;
 
+  /// Tracked raw contacts left alone because their contact no longer matches
+  /// what was recorded: edited since, recorded by an older version that
+  /// stored only the name, or the raw contact ID now belongs to a different
+  /// contact (for example if the ledger came from another phone).
+  final int skippedChanged;
+
   /// Ledger after the deletion: only the skipped entries remain.
   final Ledger remaining;
 
@@ -214,34 +299,56 @@ class DeletePlan {
     required this.contactIdsToDelete,
     required this.rawContactsDeleted,
     required this.skippedMerged,
+    required this.skippedChanged,
     required this.remaining,
   });
 }
 
-/// Plans a deletion that can only remove what this app created. A contact
-/// is deleted only if every one of its raw contacts is in the ledger.
-DeletePlan planDelete(Ledger ledger, AddressBook book) {
+/// Plans a deletion that can only remove what this app created.
+///
+/// A contact is deleted only if every one of its raw contacts is in the
+/// ledger, and its fingerprints (see [fingerprintsOf]), given per contact ID
+/// in [fingerprintsByContact], are exactly the ones recorded for those raw
+/// contacts. So a contact whose name, phone numbers or email addresses differ
+/// in any way from what the app created is never deleted.
+DeletePlan planDelete(Ledger ledger, AddressBook book,
+    Map<String, Set<String>> fingerprintsByContact) {
   final toDelete = <String>[];
-  final remaining = <String, String>{};
+  final remaining = <String, LedgerEntry>{};
   var deleted = 0;
-  var skipped = 0;
+  var skippedMerged = 0;
+  var skippedChanged = 0;
   book.forEach((contactId, raws) {
-    final tracked = raws.where(ledger.rawIdToName.containsKey).toList();
+    final tracked = raws.where(ledger.entries.containsKey).toList();
     if (tracked.isEmpty) return;
-    if (tracked.length == raws.length) {
-      toDelete.add(contactId);
-      deleted += tracked.length;
-    } else {
-      skipped += tracked.length;
+    void keep() {
       for (final r in tracked) {
-        remaining[r] = ledger.rawIdToName[r]!;
+        remaining[r] = ledger.entries[r]!;
       }
     }
+
+    if (tracked.length != raws.length) {
+      skippedMerged += tracked.length;
+      keep();
+      return;
+    }
+    final recorded = {for (final r in tracked) ledger.entries[r]!.fingerprint};
+    final actual = fingerprintsByContact[contactId] ?? const <String>{};
+    if (recorded.contains(null) ||
+        recorded.length != actual.length ||
+        !actual.containsAll(recorded)) {
+      skippedChanged += tracked.length;
+      keep();
+      return;
+    }
+    toDelete.add(contactId);
+    deleted += tracked.length;
   });
   return DeletePlan(
     contactIdsToDelete: toDelete,
     rawContactsDeleted: deleted,
-    skippedMerged: skipped,
+    skippedMerged: skippedMerged,
+    skippedChanged: skippedChanged,
     remaining: Ledger(remaining),
   );
 }
