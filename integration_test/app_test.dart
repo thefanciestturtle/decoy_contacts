@@ -185,7 +185,8 @@ void main() {
             confirm: 'Delete 3 fake contacts?'),
         'Deleted 3 fake contacts. 1 was merged with another contact and '
         'was left alone.');
-    await expectStatus(tester, 'No fake contacts on this phone.');
+    // The linked fake is still there, so it doesn't say there are none.
+    await expectStatus(tester, 'No fake contacts this app can delete.');
 
     final book = await readAddressBook();
     expect(book, hasLength(real.length + 1));
@@ -224,7 +225,7 @@ void main() {
     await prefs.setString(kLedgerPrefsKey, jsonEncode(ledger));
     await launchApp(tester);
     // None of them counts: their contacts no longer match the ledger.
-    await expectStatus(tester, 'No fake contacts on this phone.');
+    await expectStatus(tester, 'No fake contacts this app can delete.');
     // Counting changed nothing, not even the name-only entry.
     expect(await storedLedger(), ledger);
 

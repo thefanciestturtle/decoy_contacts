@@ -185,18 +185,22 @@ Future<_DeleteCheck> _planDelete(
   final fingerprintsByContact = {
     for (final c in everyone) c.id: fingerprintsOfContact(c),
   };
+  final stored = await ledgerStore.load();
   // Entries from older versions hold only a name: expect the phone and
   // email the current settings would give a fake with that name.
-  final current = {
-    for (final n in allCombinations(settings.firstNames, settings.lastNames))
-      n.displayName: entryFor(n, settings.phoneTemplate, settings.emailTemplate),
-  };
-  final stored = await ledgerStore.load();
+  final nameOnly = _nameOnlyEntries(stored);
+  final current = nameOnly == 0
+      ? const <String, LedgerEntry>{}
+      : {
+          for (final n in allCombinations(settings.firstNames, settings.lastNames))
+            n.displayName:
+                entryFor(n, settings.phoneTemplate, settings.emailTemplate),
+        };
   final withDetails = stored.withDetailsForNameOnly((name) => current[name]);
   final plan = planDelete(
       withDetails.prunedTo(allRawIds(book)), book, fingerprintsByContact);
-  return _DeleteCheck(plan, withDetails,
-      _nameOnlyEntries(stored) - _nameOnlyEntries(withDetails));
+  return _DeleteCheck(
+      plan, withDetails, nameOnly == 0 ? 0 : nameOnly - _nameOnlyEntries(withDetails));
 }
 
 /// Works out what [deleteFakeContacts] would do with the same arguments.
@@ -220,15 +224,27 @@ Future<DeletePreview> previewDelete(
   );
 }
 
-/// How many fakes this app created are still in the address book, counting
-/// only those it can confirm: the ones Delete would delete. Not counted are
-/// entries that no longer match what was created, and fakes merged into
-/// another contact, since their details can't be checked and the raw
-/// contact may not be a fake at all (see [planDelete]). Changes nothing,
-/// not even the ledger.
-Future<int> countFakeContacts(
-    ContactsGateway contacts, LedgerStore ledgerStore, Settings settings) async =>
-    (await _planDelete(contacts, ledgerStore, settings)).plan.rawContactsDeleted;
+/// What Delete would find, for the status line: [DeletePreview.toDelete] is
+/// how many fakes are still in the address book, counting only those this
+/// app can confirm. Not counted are entries that no longer match what was
+/// created, and fakes merged into another contact, since their details
+/// can't be checked and the raw contact may not be a fake at all (see
+/// [planDelete]); they are in the skipped counts.
+///
+/// Changes nothing, not even the ledger, and doesn't read the address book
+/// if the ledger is empty.
+Future<DeletePreview> countFakeContacts(
+    ContactsGateway contacts, LedgerStore ledgerStore, Settings settings) async {
+  if ((await ledgerStore.load()).isEmpty) {
+    return const DeletePreview(toDelete: 0, skippedMerged: 0, skippedChanged: 0);
+  }
+  final plan = (await _planDelete(contacts, ledgerStore, settings)).plan;
+  return DeletePreview(
+    toDelete: plan.rawContactsDeleted,
+    skippedMerged: plan.skippedMerged,
+    skippedChanged: plan.skippedChanged,
+  );
+}
 
 /// Deletes the fake contacts this app created and recorded in the ledger.
 ///

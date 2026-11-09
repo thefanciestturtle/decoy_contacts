@@ -68,10 +68,15 @@ Confirmation deleteConfirmation(DeletePreview preview) => (
       action: "Delete",
     );
 
-/// The status line: how many fake contacts are on the phone.
-String statusMessage(int fakeContacts) => fakeContacts == 0
-    ? "No fake contacts on this phone."
-    : "${_fakeContacts(fakeContacts)} on this phone.";
+/// The status line: how many fake contacts are on the phone, counting only
+/// those the app can confirm (see countFakeContacts). If it can confirm
+/// none but tracks some it can't check, it doesn't claim there are none.
+String statusMessage(DeletePreview found) {
+  if (found.toDelete > 0) return "${_fakeContacts(found.toDelete)} on this phone.";
+  return found.skippedMerged + found.skippedChanged > 0
+      ? "No fake contacts this app can delete."
+      : "No fake contacts on this phone.";
+}
 
 /// Shown instead of the dialog when Create has nothing to add.
 String nothingToCreateMessage(CreatePreview preview) {

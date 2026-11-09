@@ -112,8 +112,12 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
 
   /// Updates the status line, if the contacts permission was already
   /// granted. Never asks for the permission. Runs at startup, after each
-  /// Create or Delete tap, and when the app comes back to the foreground.
-  Future<void> _refreshStatus() async {
+  /// Create or Delete tap ([afterAction]), and when the app comes back to
+  /// the foreground.
+  ///
+  /// If counting fails, the last count stays, since it may only be a
+  /// passing problem; but not after an action, which may have changed it.
+  Future<void> _refreshStatus({bool afterAction = false}) async {
     final int request = ++_statusRequest;
     String? status;
     try {
@@ -122,12 +126,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
             widget.contacts, widget.ledgerStore, _settings));
       }
     } catch (e) {
-      // Keep showing the last count; it may only be a passing problem.
       log("_refreshStatus: error $e");
-      return;
+      if (!afterAction) return;
     }
     // A Create or Delete that started meanwhile refreshes it again when done.
-    if (!mounted || request != _statusRequest || _isBusy) return;
+    if (!mounted || request != _statusRequest) return;
     setState(() { _status = status; });
   }
 
@@ -218,7 +221,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         _isConfirming = false;
       });
       if (message != null) _showResultSnackBar(message);
-      unawaited(_refreshStatus());
+      unawaited(_refreshStatus(afterAction: true));
     }
 
     log("$name: about to request permission");
@@ -353,16 +356,13 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                   ),
                   const SizedBox(height: 32),
                   // Always there, empty without a count, so the buttons
-                  // don't move when it appears. TalkBack reads it out when
-                  // it changes.
-                  Semantics(
-                    liveRegion: true,
-                    child: Text(
-                      _status ?? "",
-                      key: keyStatus,
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyLarge,
-                    ),
+                  // don't move when it appears. (Not a live region: TalkBack
+                  // would read it over the result message.)
+                  Text(
+                    _status ?? "",
+                    key: keyStatus,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyLarge,
                   ),
                   const SizedBox(height: 16),
                   Center(

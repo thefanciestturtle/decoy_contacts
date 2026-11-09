@@ -163,6 +163,15 @@ class _SlowFirstRead extends InMemoryContactsGateway {
   }
 }
 
+/// Reading the address book fails once something has been deleted.
+class _FailsAfterDelete extends InMemoryContactsGateway {
+  @override
+  Future<List<StoredContact>> getAll({List<String>? ids}) {
+    if (deleteAllCalls.isNotEmpty) throw Exception('busy syncing');
+    return super.getAll(ids: ids);
+  }
+}
+
 /// Can't find the first new contact when looking them up after creating
 /// them, so its raw contact can't be recorded.
 class _LosesFirstNewContact extends InMemoryContactsGateway {
@@ -912,7 +921,29 @@ void main() {
       });
       await pumpApp(tester, book);
 
+      expect(statusText(tester), 'No fake contacts this app can delete.');
+    });
+
+    testWidgets('with an empty ledger the address book is not read',
+        (tester) async {
+      book.add('Alice Example', phones: ['+1 555 0101']);
+      await pumpApp(tester, book);
+
       expect(statusText(tester), 'No fake contacts on this phone.');
+      expect(book.getAllCalls, 0);
+    });
+
+    testWidgets('a fake merged into a real contact: none to delete, but not '
+        '"none on this phone"', (tester) async {
+      final alice = book.add('Alice Example', phones: ['+1 555 0101']);
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      book.merge(into: alice, from: book.idOf('Zoe Zen'));
+
+      await tapDelete(tester);
+
+      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneMerged');
+      expect(statusText(tester), 'No fake contacts this app can delete.');
     });
 
     testWidgets('a ledger pointing at real contacts counts none (S1)',
@@ -926,7 +957,7 @@ void main() {
       final ledger = await storedLedgerJson();
       await pumpApp(tester, book);
 
-      expect(statusText(tester), 'No fake contacts on this phone.');
+      expect(statusText(tester), 'No fake contacts this app can delete.');
       // Counting changes nothing, not even old name-only entries.
       expect(await storedLedgerJson(), ledger);
     });
@@ -957,6 +988,23 @@ void main() {
       expect(statusText(tester), '3 fake contacts on this phone.');
     });
 
+    testWidgets('a failed update right after an action shows no count',
+        (tester) async {
+      final failing = _FailsAfterDelete();
+      await pumpApp(tester, failing);
+      await tapCreate(tester);
+      expect(statusText(tester), '4 fake contacts on this phone.');
+
+      // One is edited, so it stays in the ledger and the count after Delete
+      // has to read the address book. Delete works; that read fails.
+      failing.setPhones(failing.idOf('Zoe Zen'), ['+1 555 0199']);
+      await tapDelete(tester);
+
+      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneChanged');
+      expect(failing.displayNames, ['Zoe Zen']);
+      expect(statusText(tester), isNull);
+    });
+
     testWidgets('a failed update keeps the last count', (tester) async {
       await pumpApp(tester, book);
       await tapCreate(tester);
@@ -979,6 +1027,7 @@ void main() {
 
     testWidgets('an error while counting shows none, and the app still works',
         (tester) async {
+      setPrefs(ledger: addFakes([('Zoe', 'Zen')])); // so it reads
       book.getAllError = Exception('no provider');
       await pumpApp(tester, book);
       expect(tester.takeException(), isNull);
@@ -992,6 +1041,8 @@ void main() {
     testWidgets('a count that was still running when Create started is not '
         'shown', (tester) async {
       final slow = _SlowFirstRead();
+      book = slow;
+      setPrefs(ledger: addFakes([('Zoe', 'Zen')])); // so it reads
       await pumpApp(tester, slow); // the startup count is waiting
       expect(statusText(tester), isNull);
 
