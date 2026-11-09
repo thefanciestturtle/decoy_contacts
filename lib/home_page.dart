@@ -45,13 +45,18 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   final TextEditingController phoneNumberTemplateController = TextEditingController();
   final TextEditingController emailAddressTemplateController = TextEditingController();
 
-  /// Notifies on any change to the text fields.
+  /// The settings as typed, for the preview. Kept up to date from the text
+  /// fields (also when code changes them), but notifies only when the text
+  /// changes, not when just the cursor or selection moves.
+  late final ValueNotifier<Settings> _typed = ValueNotifier(_settings);
   late final Listenable _fields = Listenable.merge([
     lastNamesController,
     firstNamesController,
     phoneNumberTemplateController,
     emailAddressTemplateController,
   ]);
+
+  void _fieldsChanged() => _typed.value = _settings;
 
   // The text fields are the single source of truth for the settings.
   Settings get _settings => Settings(
@@ -68,6 +73,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _fields.addListener(_fieldsChanged);
     _phoneFocus.addListener(_scheduleRevealPreview);
     _emailFocus.addListener(_scheduleRevealPreview);
     _loadSettings();
@@ -83,13 +89,21 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     emailAddressTemplateController.dispose();
     _phoneFocus.dispose();
     _emailFocus.dispose();
+    _typed.dispose();
     super.dispose();
   }
 
+  double _lastBottomInset = 0;
+
   @override
   void didChangeMetrics() {
-    // The keyboard opened, closed or changed size.
-    _scheduleRevealPreview();
+    // Like a text field does for its caret: only when the keyboard opens or
+    // grows, not when it closes or the screen rotates, so the page doesn't
+    // jump back to the field after the user scrolled away from it.
+    if (!mounted) return;
+    final double inset = View.of(context).viewInsets.bottom;
+    if (inset > _lastBottomInset) _scheduleRevealPreview();
+    _lastBottomInset = inset;
   }
 
   @override
@@ -347,7 +361,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   }
 
   /// Scrolls so that the caret of the template field being edited (with
-  /// the 20 dp a text field keeps clear around it) and the preview below
+  /// the margin the field keeps clear around it) and the preview below
   /// are in view; if both don't fit, the caret and as much of the preview
   /// as fits. Jumps rather than animates, so it can't be undone by the
   /// field's own animated scroll to its caret: whichever runs first, the
@@ -371,14 +385,15 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         !preview.attached) {
       return;
     }
-    const double kPadding = 20; // a TextField's default scrollPadding
+    // The same margins the field keeps around its caret.
+    final EdgeInsets padding = editable.widget.scrollPadding;
     final Rect caret = field.getLocalRectForCaret(selection.extent);
-    final double top = caret.top - kPadding;
+    final double top = caret.top - padding.top;
     final double previewBottom = field
         .globalToLocal(preview.localToGlobal(Offset(0, preview.size.height)))
         .dy;
     // Taller than the view, the caret might not be the part shown.
-    final double bottom = math.min(previewBottom + kPadding,
+    final double bottom = math.min(previewBottom + padding.bottom,
         top + scrollable.position.viewportDimension);
     if (bottom <= caret.bottom) return;
     field.showOnScreen(
@@ -457,25 +472,23 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                   const SizedBox(height: 12),
                   // Follows every keystroke. (Not a live region: TalkBack
                   // would read it out after each one.)
-                  ListenableBuilder(
-                    listenable: _fields,
-                    builder: (context, _) {
-                      if (!_settingsLoaded) {
-                        return SizedBox.shrink(key: _previewBox);
-                      }
-                      final preview = previewSettings(_settings);
-                      return KeyedSubtree(
-                        key: _previewBox,
-                        child: Text(
+                  KeyedSubtree(
+                    key: _previewBox,
+                    child: ValueListenableBuilder<Settings>(
+                      valueListenable: _typed,
+                      builder: (context, settings, _) {
+                        if (!_settingsLoaded) return const SizedBox.shrink();
+                        final preview = previewSettings(settings);
+                        return Text(
                           settingsPreviewMessage(preview),
                           key: keyPreview,
                           semanticsLabel:
                               settingsPreviewMessage(preview, spoken: true),
                           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                               color: Theme.of(context).colorScheme.onSurfaceVariant),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
                   const SizedBox(height: 32),
                   // Always there, empty without a count, so the buttons

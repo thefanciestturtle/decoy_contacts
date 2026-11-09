@@ -50,7 +50,8 @@ Rect visibleArea(WidgetTester tester) {
 Rect editableTextOf(WidgetTester tester, Key key) => tester.getRect(
     find.descendant(of: find.byKey(key), matching: find.byType(EditableText)));
 
-bool contains(Rect outer, Rect inner) =>
+/// Whether [inner] is within [outer] from top to bottom.
+bool containsVertically(Rect outer, Rect inner) =>
     inner.top >= outer.top - 0.01 && inner.bottom <= outer.bottom + 0.01;
 
 /// Scrolls the field with [key] to the bottom of the screen (where the
@@ -305,6 +306,30 @@ void main() {
       await tester.pumpAndSettle(kSaveDelay);
     });
 
+    testWidgets('moving only the cursor doesn\'t rebuild it',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(const MyApp());
+      await tester.pumpAndSettle();
+      final field = find.byKey(const Key('LastNames'));
+      await tester.tap(field);
+      await tester.pump();
+      final before = tester.widget<Text>(find.byKey(const Key('Preview')));
+
+      final controller = tester.widget<TextField>(field).controller!;
+      controller.selection = const TextSelection.collapsed(offset: 3);
+      await tester.pump();
+      controller.selection = const TextSelection(baseOffset: 0, extentOffset: 5);
+      await tester.pump();
+      expect(tester.widget<Text>(find.byKey(const Key('Preview'))),
+          same(before));
+
+      // A change to the text still shows.
+      controller.text = 'Zima';
+      await tester.pump();
+      expect(previewText(tester), startsWith('1 last name × 28 first names'));
+      await tester.pumpAndSettle(kSaveDelay);
+    });
+
     testWidgets('none until the settings are loaded',
         (WidgetTester tester) async {
       final store = _SlowSettingsStore();
@@ -378,9 +403,9 @@ void main() {
 
           final visible = visibleArea(tester);
           final preview = tester.getRect(find.byKey(const Key('Preview')));
-          expect(contains(visible, preview), isTrue,
+          expect(containsVertically(visible, preview), isTrue,
               reason: 'preview $preview should be within $visible');
-          expect(contains(visible, editableTextOf(tester, Key(key))), isTrue);
+          expect(containsVertically(visible, editableTextOf(tester, Key(key))), isTrue);
 
           // Still when the preview gets longer while typing.
           await tester.enterText(find.byKey(Key(key)),
@@ -388,8 +413,9 @@ void main() {
           await tester.pumpAndSettle();
           final longer = tester.getRect(find.byKey(const Key('Preview')));
           expect(longer.height, greaterThan(preview.height));
-          expect(contains(visibleArea(tester), longer), isTrue,
-              reason: 'preview $longer should be within $visible');
+          final visibleNow = visibleArea(tester);
+          expect(containsVertically(visibleNow, longer), isTrue,
+              reason: 'preview $longer should be within $visibleNow');
         });
       }
 
@@ -410,9 +436,9 @@ void main() {
         final after = tester.getRect(find.byKey(const Key('Preview')));
         expect(after.height, greaterThan(before.height + 60));
         final visible = visibleArea(tester);
-        expect(contains(visible, after), isTrue,
+        expect(containsVertically(visible, after), isTrue,
             reason: 'preview $after should be within $visible');
-        expect(contains(visible, editableTextOf(tester, key)), isTrue);
+        expect(containsVertically(visible, editableTextOf(tester, key)), isTrue);
       });
 
       testWidgets('also when moving to it from another field with the '
@@ -434,8 +460,43 @@ void main() {
 
         final visible = visibleArea(tester);
         final preview = tester.getRect(find.byKey(const Key('Preview')));
-        expect(contains(visible, preview), isTrue,
+        expect(containsVertically(visible, preview), isTrue,
             reason: 'preview $preview should be within $visible');
+      });
+
+      testWidgets('closing the keyboard doesn\'t scroll back to the field',
+          (WidgetTester tester) async {
+        // A small screen at a large font size: the page is much taller than
+        // the screen.
+        tester.view.physicalSize = const Size(640, 1136);
+        tester.view.devicePixelRatio = 2.0;
+        tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+        addTearDown(tester.view.reset);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        await tester.pumpWidget(const MyApp());
+        await tester.pumpAndSettle();
+        const key = Key('EmailAddressTemplate');
+        await editWithKeyboard(tester, key, 570);
+
+        // Scroll down to the buttons, then close the keyboard; the field
+        // keeps the focus.
+        final scrollable = find.byType(SingleChildScrollView).first;
+        await tester.drag(scrollable, const Offset(0, -5000));
+        await tester.pumpAndSettle();
+        tester.view.resetViewInsets();
+        await tester.pumpAndSettle();
+
+        expect(tester.binding.focusManager.primaryFocus?.hasPrimaryFocus,
+            isTrue);
+        final position = tester
+            .state<ScrollableState>(find
+                .descendant(of: scrollable, matching: find.byType(Scrollable))
+                .first)
+            .position;
+        expect(position.pixels, position.maxScrollExtent,
+            reason: 'still scrolled to the end');
+        expect(tester.getRect(find.byKey(key)).bottom,
+            lessThan(visibleArea(tester).top));
       });
 
       testWidgets('but not while the names are edited',
@@ -450,7 +511,7 @@ void main() {
           await tester.pumpAndSettle();
 
           final visible = visibleArea(tester);
-          expect(contains(visible, editableTextOf(tester, Key(key))), isTrue,
+          expect(containsVertically(visible, editableTextOf(tester, Key(key))), isTrue,
               reason: key);
           // The page only scrolled as far as the field needs.
           expect(tester.getRect(find.byKey(const Key('Preview'))).top,
@@ -479,7 +540,7 @@ void main() {
 
           final visible = visibleArea(tester);
           final field = editableTextOf(tester, Key(key));
-          expect(contains(visible, field), isTrue,
+          expect(containsVertically(visible, field), isTrue,
               reason: '$key $field should be within $visible');
           // The preview doesn't fit as well, so as much as fits is shown.
           final preview = tester.getRect(find.byKey(const Key('Preview')));
@@ -515,7 +576,7 @@ void main() {
         await tester.pumpAndSettle();
         final visible = visibleArea(tester);
         final field = editableTextOf(tester, key);
-        expect(contains(visible, field), isTrue,
+        expect(containsVertically(visible, field), isTrue,
             reason: 'field $field should be within $visible');
       });
     });

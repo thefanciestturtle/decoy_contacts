@@ -95,7 +95,7 @@ String settingsPreviewMessage(SettingsPreview preview, {bool spoken = false}) {
     _fakeContacts(n),
     n == 1 ? ":" : ".",
   ].join();
-  final sSample = [sample.name, sample.phone!, sample.email!]
+  final sSample = [sample.name, sample.phone, sample.email]
       .where((s) => s.isNotEmpty)
       .join(spoken ? ", " : " · ");
   return "$sSum\n${n == 1 ? "" : "For example: "}$sSample";

@@ -1,5 +1,4 @@
 import 'package:fake_contacts/contact_actions.dart';
-import 'package:fake_contacts/fake_contacts_core.dart';
 import 'package:fake_contacts/result_messages.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -20,11 +19,11 @@ const String kChanged = "no longer match what this app created (edited, or "
 const String kOneChanged = "no longer matches what this app created (edited, "
     "or the app's records came from another phone)";
 
-const LedgerEntry kZoeZen =
-    LedgerEntry('Zoe Zen', '+447700900010', 'Zoe.Zen@example.com');
+const FakeSample kZoeZen =
+    (name: 'Zoe Zen', phone: '+447700900010', email: 'Zoe.Zen@example.com');
 
 SettingsPreview settingsMake(int lastNames, int firstNames,
-        {LedgerEntry? sample = kZoeZen}) =>
+        {FakeSample? sample = kZoeZen}) =>
     SettingsPreview(
       lastNames: lastNames,
       firstNames: firstNames,
@@ -52,7 +51,8 @@ void main() {
 
     test('leaves out a phone number or email the contacts won\'t get', () {
       String sampleLine(String phone, String email) => settingsPreviewMessage(
-              settingsMake(2, 2, sample: LedgerEntry('Zoe Zen', phone, email)))
+              settingsMake(2, 2,
+                  sample: (name: 'Zoe Zen', phone: phone, email: email)))
           .split('\n')
           .last;
       expect(sampleLine('', 'Zoe.Zen@example.com'),

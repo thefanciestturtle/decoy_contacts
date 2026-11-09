@@ -41,15 +41,18 @@ AddressBook addressBookOf(List<StoredContact> contacts) => {
 Set<String> fingerprintsOfContact(StoredContact c) =>
     fingerprintsOf(c.displayName, c.phones, c.emails).toSet();
 
+/// One fake contact as Create would make it: its name, phone number and
+/// email address ('' if it gets none).
+typedef FakeSample = ({String name, String phone, String email});
+
 /// What a set of [Settings] makes, for the preview under the fields.
 class SettingsPreview {
   /// How many different last and first names there are.
   final int lastNames;
   final int firstNames;
 
-  /// The first fake the settings make, with its phone number and email
-  /// address ('' if none), or null if they make none.
-  final LedgerEntry? sample;
+  /// The first fake the settings make, or null if they make none.
+  final FakeSample? sample;
 
   const SettingsPreview({
     required this.lastNames,
@@ -74,10 +77,14 @@ SettingsPreview previewSettings(Settings settings) {
     // The first of allCombinations: first last name, first first name.
     sample: lastNames.isEmpty || firstNames.isEmpty
         ? null
-        : entryFor(FakeName(firstNames.first, lastNames.first),
-            settings.phoneTemplate, settings.emailTemplate),
+        : _sampleOf(entryFor(FakeName(firstNames.first, lastNames.first),
+            settings.phoneTemplate, settings.emailTemplate)),
   );
 }
+
+/// [entryFor] always fills in the phone number and email address.
+FakeSample _sampleOf(LedgerEntry entry) =>
+    (name: entry.name, phone: entry.phone!, email: entry.email!);
 
 /// What Create would do right now, worked out without changing anything.
 class CreatePreview {

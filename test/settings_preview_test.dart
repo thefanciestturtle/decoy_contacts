@@ -29,7 +29,7 @@ void main() {
     expect(preview.firstNames, 28);
     expect(preview.combinations, 756);
     expect(preview.sample,
-        const LedgerEntry('Zoe Zen', '+447700900010', 'Zoe.Zen@example.com'));
+        (name: 'Zoe Zen', phone: '+447700900010', email: 'Zoe.Zen@example.com'));
   });
 
   test('counts each name once, as Create does', () {
@@ -42,15 +42,15 @@ void main() {
   test('the example is the first last name with the first first name', () {
     expect(previewSettings(settings(last: 'Zima, Zen', first: 'Zach, Zoe'))
             .sample,
-        const LedgerEntry('Zach Zima', '+447700900059', 'Zach.Zima@example.com'));
+        (name: 'Zach Zima', phone: '+447700900059', email: 'Zach.Zima@example.com'));
   });
 
   test('templates are trimmed; an empty one means no phone or email', () {
     expect(
         previewSettings(settings(phone: '  +447700900nnn ', email: ' ')).sample,
-        const LedgerEntry('Zoe Zen', '+447700900010', ''));
+        (name: 'Zoe Zen', phone: '+447700900010', email: ''));
     expect(previewSettings(settings(phone: '', email: 'LAST@example.org')).sample,
-        const LedgerEntry('Zoe Zen', '', 'Zen@example.org'));
+        (name: 'Zoe Zen', phone: '', email: 'Zen@example.org'));
   });
 
   test('no example when either name list is empty', () {
@@ -89,7 +89,11 @@ void main() {
         final sample = previewSettings(s).sample!;
         final first = book.createAllCalls.single.first;
         expect(
-            LedgerEntry('${first.first} ${first.last}', first.phone, first.email),
+            (
+              name: '${first.first} ${first.last}',
+              phone: first.phone,
+              email: first.email
+            ),
             sample);
       });
     }
