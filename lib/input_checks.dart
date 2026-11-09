@@ -17,10 +17,12 @@ final RegExp _whitespace = RegExp(r'\s');
 
 /// Non-ASCII letters and their accents ("é", "ß", "ж"), which may be part
 /// of an address, and a zero-width joiner or non-joiner between two of
-/// them, as Persian and Indic names use. Other non-ASCII characters (a
-/// curly apostrophe, an emoji, a zero-width space) may not.
+/// them, as Persian and Indic names use (not between ASCII letters, where
+/// it only hides). Other non-ASCII characters (a curly apostrophe, an
+/// emoji, a zero-width space) may not.
 final RegExp _nonAsciiLetter = RegExp(
-    r'(?![\x00-\x7F])[\p{L}\p{M}]|(?<=[\p{L}\p{M}])[\u200C\u200D](?=[\p{L}\p{M}])',
+    r'(?![\x00-\x7F])[\p{L}\p{M}]'
+    r'|(?<=(?![\x00-\x7F])[\p{L}\p{M}])[\u200C\u200D](?=(?![\x00-\x7F])[\p{L}\p{M}])',
     unicode: true);
 
 /// A code point that can't be seen: a space other than " ", a control, or
@@ -58,17 +60,10 @@ String? phoneTemplateWarning(String template) {
   ]);
 }
 
-/// A warning about the email address template (already trimmed), or null.
-/// An empty template is fine: the fakes get no email address. See
-/// [EmailTemplateCheck].
-String? emailTemplateWarning(String template,
-        {required List<String> firstNames, required List<String> lastNames}) =>
-    EmailTemplateCheck(template)
-        .warning(firstNames: firstNames, lastNames: lastNames);
-
-/// Checks names against one email template (already trimmed), and
-/// remembers each name's result: with a long name list, an edit then only
-/// checks the names that are new.
+/// Gives the warning about an email address template (already trimmed), or
+/// null; an empty template is fine (the fakes get no email address). Checks
+/// names against that one template, and remembers each name's result: with
+/// a long name list, an edit then only checks the names that are new.
 ///
 /// Names are only checked if the template uses them (FIRST for the first
 /// names, LAST for the last names): each in turn, with a plain "a" for the
@@ -145,7 +140,7 @@ class EmailTemplateCheck {
     if (firstNames.isEmpty || lastNames.isEmpty) return null;
     String longest(List<String> names, int Function(String) size) =>
         names.reduce((a, b) => size(b) > size(a) ? b : a);
-    for (final int Function(String) size in [_octets, (s) => s.length]) {
+    for (final int Function(String) size in [_octets, _codePoints]) {
       final first = longest(firstNames, size), last = longest(lastNames, size);
       if (!_withinLimits(_fill(first: first, last: last))) {
         return "${_quoted(first)} with ${_quoted(last)} makes an email"
@@ -174,15 +169,17 @@ bool _looksLikeAnAddress(String address) {
 }
 
 /// Within the length limits, which count bytes (UTF-8): 254 in all and 64
-/// before the last @; and 63 characters per label after it. (A non-ASCII
-/// label's real limit applies to its punycode form; this only counts its
-/// characters.)
+/// before the last @; and 63 characters (code points) per label after it.
+/// (A non-ASCII label's real limit applies to its punycode form; this only
+/// counts its characters.)
 bool _withinLimits(String address) {
   final at = address.lastIndexOf('@');
   return _octets(address) <= 254 &&
       _octets(address.substring(0, at < 0 ? 0 : at)) <= 64 &&
-      address.substring(at + 1).split('.').every((l) => l.length <= 63);
+      address.substring(at + 1).split('.').every((l) => _codePoints(l) <= 63);
 }
+
+int _codePoints(String s) => s.runes.length;
 
 /// The length of [s] in UTF-8 bytes, without encoding it.
 int _octets(String s) {
@@ -210,12 +207,6 @@ String _orList(List<String> items) {
 /// sequence, a Persian name) stays as it is.
 String _quoted(String text) {
   final runes = text.runes.toList();
-  bool visible(int i) {
-    if (i < 0 || i >= runes.length) return false;
-    final s = String.fromCharCode(runes[i]);
-    return s != ' ' && !_hidden.hasMatch(s) && !_mark.hasMatch(s);
-  }
-
   final out = StringBuffer('“');
   for (var i = 0; i < runes.length; i++) {
     final r = runes[i];
@@ -223,8 +214,8 @@ String _quoted(String text) {
     final bool bJoiner = r == 0x200C || r == 0x200D;
     final bool bShowCode = (s != ' ' &&
             _hidden.hasMatch(s) &&
-            !(bJoiner && visible(i - 1) && visible(i + 1))) ||
-        (_mark.hasMatch(s) && !_onVisible(runes, i));
+            !(bJoiner && _joinsNonAscii(runes, i))) ||
+        (_mark.hasMatch(s) && !_isVisible(runes, _baseBefore(runes, i)));
     out.write(bShowCode
         ? '<U+${r.toRadixString(16).toUpperCase().padLeft(4, '0')}>'
         : s);
@@ -233,16 +224,33 @@ String _quoted(String text) {
   return out.toString();
 }
 
-/// Whether the accent at [i] sits on a visible character (possibly after
-/// other accents).
-bool _onVisible(List<int> runes, int i) {
+/// Whether the code point at [i] is a visible character on its own: not a
+/// space, nothing hidden, not an accent.
+bool _isVisible(List<int> runes, int i) {
+  if (i < 0 || i >= runes.length) return false;
+  final s = String.fromCharCode(runes[i]);
+  return s != ' ' && !_hidden.hasMatch(s) && !_mark.hasMatch(s);
+}
+
+/// The code point before [i], past any accents or variation selectors on
+/// it (as in "क्" or "🏳️"); -1 if none.
+int _baseBefore(List<int> runes, int i) {
   var j = i - 1;
   while (j >= 0 && _mark.hasMatch(String.fromCharCode(runes[j]))) {
     j--;
   }
-  if (j < 0) return false;
-  final s = String.fromCharCode(runes[j]);
-  return s != ' ' && !_hidden.hasMatch(s);
+  return j;
+}
+
+/// Whether the joiner at [i] sits between two visible non-ASCII characters
+/// (an emoji sequence, a Persian or Indic name), where it does something;
+/// between ASCII letters it only hides.
+bool _joinsNonAscii(List<int> runes, int i) {
+  final before = _baseBefore(runes, i);
+  return _isVisible(runes, before) &&
+      _isVisible(runes, i + 1) &&
+      runes[before] > 0x7F &&
+      runes[i + 1] > 0x7F;
 }
 
 String? _lines(List<String> lines) => lines.isEmpty ? null : lines.join('\n');

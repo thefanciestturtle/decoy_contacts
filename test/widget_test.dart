@@ -464,8 +464,6 @@ void main() {
         final after = tester.getRect(find.byKey(const Key('Preview')));
         expect(after.height, greaterThan(before.height + 60));
         final visible = visibleArea(tester);
-        // ignore: avoid_print
-        print('DEBUG visible $visible preview $after field ${editableTextOf(tester, key)} emailbox ${tester.getRect(find.byKey(key))}');
         expect(containsVertically(visible, after), isTrue,
             reason: 'preview $after should be within $visible');
         expect(containsVertically(visible, editableTextOf(tester, key)), isTrue);

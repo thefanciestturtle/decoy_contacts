@@ -9,7 +9,7 @@ const String kNotAnAddress =
 
 String? email(String template,
         {List<String> first = const ['Zoe'], List<String> last = const ['Zen']}) =>
-    emailTemplateWarning(template, firstNames: first, lastNames: last);
+    EmailTemplateCheck(template).warning(firstNames: first, lastNames: last);
 
 void main() {
   group('phoneTemplateWarning', () {
@@ -54,6 +54,17 @@ void main() {
           'A phone number can\'t contain “a”, “b”, “c”, “d”, “e” or 3 more.');
     });
 
+    test('a joiner after a variation selector or a virama is shown as typed',
+        () {
+      // 🏳️‍🌈: white flag, variation selector, joiner, rainbow.
+      expect(phoneTemplateWarning('+44 \u{1F3F3}\uFE0F\u200D\u{1F308} nnn'),
+          'A phone number can\'t contain “\u{1F3F3}\uFE0F\u200D\u{1F308}”.');
+      // क्‍ष, flagged here for the space before it.
+      expect(email(kDefaultEmailTemplate, first: ['A \u0915\u094D\u200D\u0937']),
+          '“A \u0915\u094D\u200D\u0937” can\'t be part of an email address, '
+          'so those addresses won\'t work.');
+    });
+
     test('a straight quote and an emoji sequence are shown as typed', () {
       expect(phoneTemplateWarning('+44 "7700" nnn'),
           'A phone number can\'t contain “"”.');
@@ -87,7 +98,7 @@ void main() {
     });
   });
 
-  group('emailTemplateWarning', () {
+  group('EmailTemplateCheck.warning', () {
     test('none for the default, an empty template or other addresses', () {
       for (final t in [
         kDefaultEmailTemplate,
@@ -221,7 +232,11 @@ void main() {
     test('joiners between letters are fine (Persian, Indic names)', () {
       expect(email(kDefaultEmailTemplate, first: ['علی\u200Cرضا']), isNull);
       expect(email(kDefaultEmailTemplate, first: ['क्\u200Dष']), isNull);
-      // Not at the end of a name, where it only hides.
+      // Not between ASCII letters, nor at the end of a name, where it only
+      // hides.
+      expect(email(kDefaultEmailTemplate, first: ['Zo\u200Ce']),
+          '“Zo<U+200C>e” can\'t be part of an email address, so those '
+          'addresses won\'t work.');
       expect(email(kDefaultEmailTemplate, first: ['Zoe\u200D']),
           '“Zoe<U+200D>” can\'t be part of an email address, so those '
           'addresses won\'t work.');
@@ -235,6 +250,12 @@ void main() {
           '“Mary Ann” can\'t be part of an email address, so those addresses '
           'won\'t work.\n“$first” with “$last” makes an email address '
           'that\'s too long to work.');
+    });
+
+    test('a character outside the BMP counts once in a domain label', () {
+      // 40 Gothic letters: 80 UTF-16 code units, but 40 characters.
+      final gothic = '\u{10330}' * 40;
+      expect(email('FIRST@LAST.example', last: [gothic]), isNull);
     });
 
     test('a domain label too long by characters, though not the longest '
@@ -270,8 +291,7 @@ void main() {
     // Adding one name: the same answer as a fresh check.
     final more = [...names, 'Mary Ann'];
     expect(check.warning(firstNames: more, lastNames: ['Zen']),
-        emailTemplateWarning(kDefaultEmailTemplate,
-            firstNames: more, lastNames: ['Zen']));
+        email(kDefaultEmailTemplate, first: more, last: ['Zen']));
     // Only the new name was checked.
     expect(check.namesChecked, 3000 + 1 + 1);
   });
@@ -290,8 +310,7 @@ void main() {
     const s = Settings.defaults;
     expect(phoneTemplateWarning(s.phoneTemplate), isNull);
     expect(
-        emailTemplateWarning(s.emailTemplate,
-            firstNames: s.firstNames, lastNames: s.lastNames),
+        email(s.emailTemplate, first: s.firstNames, last: s.lastNames),
         isNull);
   });
 }

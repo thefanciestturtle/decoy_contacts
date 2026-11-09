@@ -49,8 +49,14 @@ String generatePhoneNumber(String template, String lastName) {
   return out.toString();
 }
 
+final RegExp _emailPlaceholder = RegExp('FIRST|LAST');
+
+/// Replaces each FIRST in [template] with [firstName] and each LAST with
+/// [lastName], in one pass, so a name that itself contains FIRST or LAST
+/// (say "BLAST") is left as it is.
 String generateEmailAddress(String template, String firstName, String lastName) {
-  return template.replaceAll('FIRST', firstName).replaceAll('LAST', lastName);
+  return template.replaceAllMapped(
+      _emailPlaceholder, (m) => m[0] == 'FIRST' ? firstName : lastName);
 }
 
 class FakeName {

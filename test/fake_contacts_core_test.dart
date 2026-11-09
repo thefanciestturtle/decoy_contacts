@@ -36,6 +36,15 @@ void main() {
     });
   });
 
+  test('generateEmailAddress leaves FIRST or LAST inside a name alone', () {
+    expect(generateEmailAddress(kDefaultEmailTemplate, 'BLAST', 'Zen'),
+        'BLAST.Zen@example.com');
+    expect(generateEmailAddress('LAST.FIRST@example.com', 'Zoe', 'FIRSTON'),
+        'FIRSTON.Zoe@example.com');
+    expect(generateEmailAddress('FIRSTLAST@example.com', 'Zoe', 'Zen'),
+        'ZoeZen@example.com');
+  });
+
   test('generateEmailAddress fills FIRST and LAST', () {
     expect(generateEmailAddress(kDefaultEmailTemplate, 'Zoe', 'Zen'),
         'Zoe.Zen@example.com');
