@@ -31,17 +31,23 @@ jobs:
 
       # The Gradle distribution and the Kotlin compiler are downloaded from
       # GitHub releases, which sometimes time out (HTTP 504). Restoring them
-      # from the cache avoids that, and speeds up the build. Each job has its
-      # own cache. A change to the Gradle files, the Flutter version or
-      # pubspec.lock makes a new entry, saved at the end of the job.
-      - name: Restore Gradle cache
+      # from the cache avoids that, and speeds up the build. Both jobs share
+      # one cache, which only the on-device job saves, and only on master:
+      # it is about 2 GB, the repo gets 10 GB, and a cache saved by a PR can
+      # only be used by that PR. A change to the Gradle files, the Flutter
+      # version or pubspec.lock makes a new entry.
+      - &restore-gradle-cache
+        name: Restore Gradle cache
         id: gradle-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.GRADLE_CACHE_PATHS }}
-          key: gradle-${{ github.job }}-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
+          key: gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
+          # The last line falls back to the per-job cache used before this
+          # shared one, until that has been deleted (then it matches nothing).
           restore-keys: |
-            gradle-${{ github.job }}-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
+            gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
+            gradle-integration-test-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
@@ -62,25 +68,7 @@ jobs:
         run: flutter test
 
       - name: Build debug APK
-        id: build-apk
         run: flutter build apk --debug
-
-      # Save the Gradle cache whenever the build worked, even if a later step
-      # failed. Stop Gradle first, so nothing is written to the cache while
-      # it is being saved, and drop its lock files.
-      - name: Stop Gradle
-        if: ${{ !cancelled() && steps.build-apk.outcome == 'success' && steps.gradle-cache.outputs.cache-hit != 'true' }}
-        run: |
-          if [ -x android/gradlew ]; then (cd android && ./gradlew --stop); fi
-          find ~/.gradle/caches -name '*.lock' -delete
-          rm -f ~/.gradle/caches/*/gc.properties
-
-      - name: Save Gradle cache
-        if: ${{ !cancelled() && steps.build-apk.outcome == 'success' && steps.gradle-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.GRADLE_CACHE_PATHS }}
-          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
   # Create and Delete against the real Android contacts provider, on an
   # emulator. API 36 matches the app's target SDK and the local test AVD.
@@ -97,19 +85,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # The Gradle distribution and the Kotlin compiler are downloaded from
-      # GitHub releases, which sometimes time out (HTTP 504). Restoring them
-      # from the cache avoids that, and speeds up the build. Each job has its
-      # own cache. A change to the Gradle files, the Flutter version or
-      # pubspec.lock makes a new entry, saved at the end of the job.
-      - name: Restore Gradle cache
-        id: gradle-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.GRADLE_CACHE_PATHS }}
-          key: gradle-${{ github.job }}-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
-          restore-keys: |
-            gradle-${{ github.job }}-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
+      # Same step as in the build job (a YAML alias), so the key can't drift.
+      - *restore-gradle-cache
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
@@ -126,7 +103,6 @@ jobs:
       # Build before the emulator starts, so the two don't compete for the
       # CPU. The test script's own build is then mostly up to date.
       - name: Build debug APK
-        id: build-apk
         run: flutter build apk --debug
 
       # For the release smoke test, built before the emulator starts like the
@@ -135,6 +111,24 @@ jobs:
       # same way for every ABI.
       - name: Build release APK (x86_64)
         run: flutter build apk --release --target-platform android-x64
+
+      # On master only (see "Restore Gradle cache"), save the Gradle cache
+      # once both builds have worked, before the emulator starts. Stop Gradle
+      # first, so nothing is written to the cache while it is being saved,
+      # and drop its lock files.
+      - name: Stop Gradle
+        if: github.event_name == 'push' && steps.gradle-cache.outputs.cache-hit != 'true'
+        run: |
+          if [ -x android/gradlew ]; then (cd android && ./gradlew --stop); fi
+          find ~/.gradle/caches -name '*.lock' -delete
+          rm -f ~/.gradle/caches/*/gc.properties
+
+      - name: Save Gradle cache
+        if: github.event_name == 'push' && steps.gradle-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
       - name: Enable KVM
         run: |
@@ -153,20 +147,3 @@ jobs:
           script: |
             tool/integration_test.sh --wipe-contacts
             tool/release_smoke_test.sh
-
-      # Save the Gradle cache whenever the build worked, even if a later step
-      # failed. Stop Gradle first, so nothing is written to the cache while
-      # it is being saved, and drop its lock files.
-      - name: Stop Gradle
-        if: ${{ !cancelled() && steps.build-apk.outcome == 'success' && steps.gradle-cache.outputs.cache-hit != 'true' }}
-        run: |
-          if [ -x android/gradlew ]; then (cd android && ./gradlew --stop); fi
-          find ~/.gradle/caches -name '*.lock' -delete
-          rm -f ~/.gradle/caches/*/gc.properties
-
-      - name: Save Gradle cache
-        if: ${{ !cancelled() && steps.build-apk.outcome == 'success' && steps.gradle-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ env.GRADLE_CACHE_PATHS }}
-          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
