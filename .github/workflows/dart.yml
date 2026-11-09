@@ -129,13 +129,18 @@ jobs:
         id: build-apk
         run: flutter build apk --debug
 
+      # For the release smoke test. Only for the emulator's ABI: R8, which is
+      # what can break release builds, runs the same way for every ABI.
+      - name: Build release APK (x86_64)
+        run: flutter build apk --release --target-platform android-x64
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Run on-device tests
+      - name: Run on-device tests and release smoke test
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 36
@@ -143,7 +148,9 @@ jobs:
           arch: x86_64
           profile: pixel_7
           disable-animations: true
-          script: tool/integration_test.sh --wipe-contacts
+          script: |
+            tool/integration_test.sh --wipe-contacts
+            tool/release_smoke_test.sh
 
       # Save the Gradle cache whenever the build worked, even if a later step
       # failed. Stop Gradle first, so nothing is written to the cache while

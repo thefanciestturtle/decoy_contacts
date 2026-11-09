@@ -84,7 +84,9 @@ Added Spanish description to Fastlane per https://github.com/BillDietrich/fake_c
 
 ### Tests
 * `flutter test` runs the unit and widget tests.
-* `tool/integration_test.sh --wipe-contacts` runs the on-device tests in `integration_test/`, which create and delete contacts through the app. The script only runs on an Android emulator, and `--wipe-contacts` empties the emulator's address book first. CI runs both.
+* `tool/integration_test.sh --wipe-contacts` runs the on-device tests in `integration_test/`, which create and delete contacts through the app. The script only runs on an Android emulator, and `--wipe-contacts` empties the emulator's address book first.
+* `tool/release_smoke_test.sh` installs a release build (`flutter build apk --release`) on an emulator, starts it, and checks it doesn't crash and can read and write its settings. Release builds go through R8, which the other tests don't, and which can break plugins. It needs an emulator image without Play Store (for `adb root`).
+* CI runs all three.
 
 ### Development Environment
 I'm no expert on this stuff, this is my first phone app, maybe I'm doing some things stupidly.
