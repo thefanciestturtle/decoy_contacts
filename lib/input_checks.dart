@@ -15,6 +15,9 @@ final RegExp _phoneTemplateCharacter = RegExp(r'^[0-9n+ \-().\/*#,;]$');
 
 final RegExp _whitespace = RegExp(r'\s');
 
+/// A name of ASCII letters and digits only.
+final RegExp _plainName = RegExp(r'^[A-Za-z0-9]+$');
+
 /// Non-ASCII letters and their accents ("é", "ß", "ж"), which may be part
 /// of an address, and a zero-width joiner or non-joiner between two of
 /// them, as Persian and Indic names use (not between ASCII letters, where
@@ -82,8 +85,17 @@ class EmailTemplateCheck {
   /// How many names were checked, not remembered (for tests).
   int namesChecked = 0;
 
-  bool _check(String address) {
+  /// Whether [name] gives a usable address in place of FIRST
+  /// ([bFirst]) or LAST. Only called once the template itself, with "a"
+  /// for both, looks like an address.
+  bool _check(String name, {required bool bFirst}) {
     namesChecked++;
+    final address = bFirst ? _fill(first: name) : _fill(last: name);
+    // Letters and digits in place of the "a" change none of what makes an
+    // address (no dots, @ or hyphens come in, and a label still starts and
+    // ends with one), so only the length can break it. Most names are like
+    // that, and this is much quicker than the full check.
+    if (_plainName.hasMatch(name)) return _withinLimits(address);
     return _looksLikeAnAddress(address);
   }
 
@@ -111,10 +123,10 @@ class EmailTemplateCheck {
     final unusable = {
       if (bFirst)
         ...firstNames.where(
-            (n) => !_firstOk.putIfAbsent(n, () => _check(_fill(first: n)))),
+            (n) => !_firstOk.putIfAbsent(n, () => _check(n, bFirst: true))),
       if (bLast)
         ...lastNames.where(
-            (n) => !_lastOk.putIfAbsent(n, () => _check(_fill(last: n)))),
+            (n) => !_lastOk.putIfAbsent(n, () => _check(n, bFirst: false))),
     }.toList();
     final others = unusable.length - 1;
     return _lines([

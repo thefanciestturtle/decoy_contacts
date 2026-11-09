@@ -133,8 +133,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     _preview.addListener(_scheduleRevealPreview);
     _phoneFocus.addListener(_scheduleRevealPreview);
     _emailFocus.addListener(_scheduleRevealPreview);
-    // A warning is a live region only while its field has the focus.
-    _phoneFocus.addListener(_focusChanged);
+    // The email warning is a live region only while its field has the focus.
     _emailFocus.addListener(_focusChanged);
     _loadSettings();
   }
@@ -473,20 +472,21 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   }
 
   /// [warning], if any, is shown under the field like a helper text, but
-  /// never cut off. While the field has the focus ([bFocused]) TalkBack
-  /// reads it out when it appears or changes (a live region, as Flutter
-  /// gives error texts; helper texts have none). Not otherwise: the email
-  /// warning names the name being typed in another field, and would be read
-  /// out on every keystroke there.
+  /// never cut off. With [bLive], TalkBack reads it out when it appears or
+  /// changes (a live region, as Flutter gives error texts; helper texts
+  /// have none). The email warning is live only while its field has the
+  /// focus: it names the name being typed in a name field, and would be
+  /// read out on every keystroke there. (Becoming live as the field gets
+  /// the focus may read it once more then.)
   InputDecoration _fieldDecoration(String sLabel,
-      {String? warning, bool enabled = true, bool bFocused = false}) {
+      {String? warning, bool enabled = true, bool bLive = false}) {
     final theme = Theme.of(context);
     return InputDecoration(
       labelText: sLabel,
       helper: warning == null
           ? null
           : Semantics(
-              liveRegion: bFocused,
+              liveRegion: bLive,
               // Material 3's helper text style, which a helper widget
               // doesn't get by itself.
               child: Text(
@@ -568,10 +568,12 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                           keyboardType: TextInputType.text,
                           autocorrect: false,
                           enableSuggestions: false,
+                          // Always read out as it changes: only typing in
+                          // this field changes it.
                           decoration: _fieldDecoration('Phone number template',
                               warning: _checks.phoneWarning,
                               enabled: bCanAct,
-                              bFocused: _phoneFocus.hasFocus),
+                              bLive: true),
                         ),
                         const SizedBox(height: 20),
                         TextField(
@@ -587,7 +589,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                           decoration: _fieldDecoration('Email address template',
                               warning: _checks.emailWarning,
                               enabled: bCanAct,
-                              bFocused: _emailFocus.hasFocus),
+                              bLive: _emailFocus.hasFocus),
                         ),
                       ],
                     ),
