@@ -62,11 +62,15 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   ({String? createBlocked, String? phoneWarning, String? emailWarning})
       _checks = (createBlocked: null, phoneWarning: null, emailWarning: null);
 
-  /// Called on any change to a text field, the cursor included.
   /// The email check for the current template. It remembers each name's
   /// result, so with a long name list a keystroke only checks new names.
   EmailTemplateCheck? _emailCheck;
 
+  /// The texts the email warning in [_checks] was worked out from, so a
+  /// keystroke in another field doesn't redo it.
+  (String, String, String)? _emailCheckedFor;
+
+  /// Called on any change to a text field, the cursor included.
   void _fieldsChanged() {
     if (!_settingsLoaded) return;
     final settings = _settings;
@@ -77,12 +81,18 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     if (_emailCheck?.template != settings.emailTemplate) {
       _emailCheck = EmailTemplateCheck(settings.emailTemplate);
     }
+    final emailInputs = (settings.emailTemplateText, settings.firstNamesText,
+        settings.lastNamesText);
+    final String? emailWarning = emailInputs == _emailCheckedFor
+        ? _checks.emailWarning
+        : _emailCheck!.warning(
+            firstNames: settings.firstNames, lastNames: settings.lastNames);
+    _emailCheckedFor = emailInputs;
     final checks = (
       createBlocked:
           preview.combinations > 0 ? null : enterNamesHint(preview),
       phoneWarning: phoneTemplateWarning(settings.phoneTemplate),
-      emailWarning: _emailCheck!.warning(
-          firstNames: settings.firstNames, lastNames: settings.lastNames),
+      emailWarning: emailWarning,
     );
     if (checks != _checks) {
       setState(() => _checks = checks);
@@ -123,6 +133,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     _preview.addListener(_scheduleRevealPreview);
     _phoneFocus.addListener(_scheduleRevealPreview);
     _emailFocus.addListener(_scheduleRevealPreview);
+    // A warning is a live region only while its field has the focus.
+    _phoneFocus.addListener(_focusChanged);
+    _emailFocus.addListener(_focusChanged);
     _loadSettings();
   }
 
@@ -455,18 +468,25 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         rect: Rect.fromLTRB(caret.left, top, caret.right, bottom));
   }
 
+  void _focusChanged() {
+    if (mounted) setState(() {});
+  }
+
   /// [warning], if any, is shown under the field like a helper text, but
-  /// never cut off, and read out by TalkBack when it appears or changes (a
-  /// live region, as Flutter gives error texts; helper texts have none).
+  /// never cut off. While the field has the focus ([bFocused]) TalkBack
+  /// reads it out when it appears or changes (a live region, as Flutter
+  /// gives error texts; helper texts have none). Not otherwise: the email
+  /// warning names the name being typed in another field, and would be read
+  /// out on every keystroke there.
   InputDecoration _fieldDecoration(String sLabel,
-      {String? warning, bool enabled = true}) {
+      {String? warning, bool enabled = true, bool bFocused = false}) {
     final theme = Theme.of(context);
     return InputDecoration(
       labelText: sLabel,
       helper: warning == null
           ? null
           : Semantics(
-              liveRegion: true,
+              liveRegion: bFocused,
               // Material 3's helper text style, which a helper widget
               // doesn't get by itself.
               child: Text(
@@ -549,7 +569,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                           autocorrect: false,
                           enableSuggestions: false,
                           decoration: _fieldDecoration('Phone number template',
-                              warning: _checks.phoneWarning, enabled: bCanAct),
+                              warning: _checks.phoneWarning,
+                              enabled: bCanAct,
+                              bFocused: _phoneFocus.hasFocus),
                         ),
                         const SizedBox(height: 20),
                         TextField(
@@ -563,7 +585,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                           // Suggestions stay on: without them Android gets a
                           // keyboard with no @ key.
                           decoration: _fieldDecoration('Email address template',
-                              warning: _checks.emailWarning, enabled: bCanAct),
+                              warning: _checks.emailWarning,
+                              enabled: bCanAct,
+                              bFocused: _emailFocus.hasFocus),
                         ),
                       ],
                     ),

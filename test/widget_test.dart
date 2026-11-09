@@ -752,6 +752,26 @@ void main() {
       await tester.pumpAndSettle(kSaveDelay);
     });
 
+    testWidgets('a warning is read out as it changes only while its field '
+        'has the focus', (WidgetTester tester) async {
+      final semantics = tester.ensureSemantics();
+      await pumpMyApp(tester);
+      await tester.pumpAndSettle();
+      // Typing a name with a space in First names changes the warning under
+      // the email template on every keystroke there: not read out.
+      await type(tester, 'FirstNames', 'Zoe, Mary Ann');
+      final warning = warningUnder(tester, 'EmailAddressTemplate')!;
+      expect(tester.getSemantics(find.text(warning)).flagsCollection.isLiveRegion,
+          isFalse);
+
+      await tester.tap(find.byKey(const Key('EmailAddressTemplate')));
+      await tester.pump();
+      expect(tester.getSemantics(find.text(warning)).flagsCollection.isLiveRegion,
+          isTrue);
+      semantics.dispose();
+      await tester.pumpAndSettle(kSaveDelay);
+    });
+
     testWidgets('the phone template gets a keyboard with letters, so n can be '
         'typed', (WidgetTester tester) async {
       await pumpMyApp(tester);

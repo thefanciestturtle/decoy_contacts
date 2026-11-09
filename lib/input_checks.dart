@@ -92,9 +92,9 @@ class EmailTemplateCheck {
     return _looksLikeAnAddress(address);
   }
 
-  /// Names remembered before the memory is cleared; typing a name letter
-  /// by letter adds every prefix.
-  static const int _kRememberAtMost = 100000;
+  /// Names remembered beyond those in the lists before the memory is
+  /// cleared: typing a name letter by letter adds every prefix.
+  static const int _kRememberExtra = 10000;
 
   String _fill({String first = 'a', String last = 'a'}) =>
       generateEmailAddress(template, first, last);
@@ -109,10 +109,10 @@ class EmailTemplateCheck {
     if (!bFirst && !bLast) {
       return "There is no FIRST or LAST, so every contact gets the same address.";
     }
-    if (_firstOk.length + _lastOk.length > _kRememberAtMost) {
-      _firstOk.clear();
-      _lastOk.clear();
-    }
+    // Bounded by the lists' own size, so a long list doesn't clear it on
+    // every call.
+    if (_firstOk.length > firstNames.length + _kRememberExtra) _firstOk.clear();
+    if (_lastOk.length > lastNames.length + _kRememberExtra) _lastOk.clear();
     final unusable = {
       if (bFirst)
         ...firstNames.where(
@@ -131,24 +131,28 @@ class EmailTemplateCheck {
             " ${others == 1 ? "name" : "names"} can't be part of an email"
             " address, so those addresses won't work.",
       if (bFirst && bLast)
-        ...[
-          ?_tooLong([for (final n in firstNames) if (_firstOk[n]!) n],
-              [for (final n in lastNames) if (_lastOk[n]!) n]),
-        ],
+        ?_tooLong([for (final n in firstNames) if (_firstOk[n]!) n],
+            [for (final n in lastNames) if (_lastOk[n]!) n]),
     ]);
   }
 
   /// Names that each fit with a short one for the other placeholder may not
-  /// fit together: the longest of both are checked. (Names that don't work
-  /// on their own are already named, so they are left out here.)
+  /// fit together: the longest of both are checked, by bytes (the limits
+  /// before the @ and in all) and by characters (the limit per domain
+  /// label). Names that don't work on their own are already named, so they
+  /// are left out here.
   String? _tooLong(List<String> firstNames, List<String> lastNames) {
     if (firstNames.isEmpty || lastNames.isEmpty) return null;
-    String longest(List<String> names) =>
-        names.reduce((a, b) => _octets(b) > _octets(a) ? b : a);
-    final first = longest(firstNames), last = longest(lastNames);
-    if (_withinLimits(_fill(first: first, last: last))) return null;
-    return "${_quoted(first)} with ${_quoted(last)} makes an email address"
-        " that's too long to work.";
+    String longest(List<String> names, int Function(String) size) =>
+        names.reduce((a, b) => size(b) > size(a) ? b : a);
+    for (final int Function(String) size in [_octets, (s) => s.length]) {
+      final first = longest(firstNames, size), last = longest(lastNames, size);
+      if (!_withinLimits(_fill(first: first, last: last))) {
+        return "${_quoted(first)} with ${_quoted(last)} makes an email"
+            " address that's too long to work.";
+      }
+    }
+    return null;
   }
 }
 

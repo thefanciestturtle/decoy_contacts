@@ -237,6 +237,16 @@ void main() {
           'that\'s too long to work.');
     });
 
+    test('a domain label too long by characters, though not the longest '
+        'names by bytes', () {
+      // "é" is 2 bytes: by bytes the longest last name is the 20 é's, which
+      // fit; by characters it is the 30 c's, which don't (35 + 30 > 63).
+      final first = 'b' * 35, e = 'é' * 20, c = 'c' * 30;
+      expect(email('x@FIRSTLAST.example', first: [first], last: [e, c]),
+          '“$first” with “$c” makes an email address that\'s too long to '
+          'work.');
+    });
+
     test('the longest names together may be too long', () {
       final first = 'F' * 40, last = 'L' * 40;
       expect(email('FIRSTLAST@example.com', first: [first, 'Zoe'], last: [last]),
@@ -264,6 +274,16 @@ void main() {
             firstNames: more, lastNames: ['Zen']));
     // Only the new name was checked.
     expect(check.namesChecked, 3000 + 1 + 1);
+  });
+
+  test('with more than 100000 names, the memory isn\'t cleared on every call',
+      () {
+    final check = EmailTemplateCheck(kDefaultEmailTemplate);
+    final names = [for (var i = 0; i < 101000; i++) 'Z$i'];
+    check.warning(firstNames: names, lastNames: ['Zen']);
+    final checked = check.namesChecked;
+    check.warning(firstNames: [...names, 'Zoe'], lastNames: ['Zen']);
+    expect(check.namesChecked, checked + 1);
   });
 
   test('the defaults give no warnings at all', () {
