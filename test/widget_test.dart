@@ -12,7 +12,7 @@ void main() {
 
   testWidgets('Home screen shows the settings fields and action buttons',
       (WidgetTester tester) async {
-    await tester.pumpWidget(MyApp());
+    await tester.pumpWidget(const MyApp());
     await tester.pumpAndSettle();
 
     expect(find.text('Last names'), findsOneWidget);
@@ -27,7 +27,7 @@ void main() {
 
   testWidgets('First launch fills in the default settings',
       (WidgetTester tester) async {
-    await tester.pumpWidget(MyApp());
+    await tester.pumpWidget(const MyApp());
     await tester.pumpAndSettle();
 
     expect(find.textContaining('FIRST.LAST@example.com'), findsOneWidget);
@@ -46,7 +46,7 @@ void main() {
       'sPhoneNumberTemplate': kLegacyDefaultPhoneTemplate,
       'sEmailAddressTemplate': kDefaultEmailTemplate,
     });
-    await tester.pumpWidget(MyApp());
+    await tester.pumpWidget(const MyApp());
     await tester.pumpAndSettle();
 
     expect(find.text(kDefaultPhoneTemplate), findsOneWidget);
@@ -62,7 +62,7 @@ void main() {
       'sPhoneNumberTemplate': '+15555550nnn',
       'sEmailAddressTemplate': kDefaultEmailTemplate,
     });
-    await tester.pumpWidget(MyApp());
+    await tester.pumpWidget(const MyApp());
     await tester.pumpAndSettle();
 
     expect(find.text('+15555550nnn'), findsOneWidget);
@@ -70,7 +70,7 @@ void main() {
 
   testWidgets('Edits are saved once typing pauses, not on every keystroke',
       (WidgetTester tester) async {
-    await tester.pumpWidget(MyApp());
+    await tester.pumpWidget(const MyApp());
     await tester.pumpAndSettle();
     final prefs = await SharedPreferences.getInstance();
 
@@ -86,7 +86,7 @@ void main() {
 
   testWidgets('An edit survives a rebuild (settings are not reloaded)',
       (WidgetTester tester) async {
-    await tester.pumpWidget(MyApp());
+    await tester.pumpWidget(const MyApp());
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byKey(const Key('FirstNames')), 'Zelda');
@@ -104,7 +104,7 @@ void main() {
     tester.view.devicePixelRatio = 2.0;
     addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(MyApp());
+    await tester.pumpWidget(const MyApp());
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 
@@ -116,7 +116,7 @@ void main() {
 
   testWidgets('Delete button text is readable and it greys out when disabled',
       (WidgetTester tester) async {
-    await tester.pumpWidget(MyApp());
+    await tester.pumpWidget(const MyApp());
     await tester.pumpAndSettle();
 
     final button = tester.widget<FilledButton>(find.byType(FilledButton));

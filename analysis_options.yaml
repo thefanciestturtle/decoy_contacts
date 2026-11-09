@@ -1,0 +1,12 @@
+# Static analysis for `flutter analyze` and the IDE.
+# flutter_lints is the recommended Dart set (package:lints/recommended.yaml)
+# plus Flutter-specific rules. https://dart.dev/tools/linter-rules
+include: package:flutter_lints/flutter.yaml
+
+linter:
+  rules:
+    # Not in flutter_lints 6, but const widgets and literals avoid needless
+    # rebuilds and allocations.
+    - prefer_const_constructors
+    - prefer_const_declarations
+    - prefer_const_literals_to_create_immutables

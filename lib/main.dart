@@ -8,10 +8,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'fake_contacts_core.dart';
 
 void main() {
-  runApp(MyApp());
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
@@ -21,18 +23,18 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
       ),
-      home: MyHomePage(title: 'Fake Contacts'),
+      home: const MyHomePage(title: 'Fake Contacts'),
     );
   }
 }
 
 class MyHomePage extends StatefulWidget {
-  MyHomePage({Key? key, required this.title}) : super(key: key);
+  const MyHomePage({super.key, required this.title});
 
   final String title;
 
   @override
-  _MyHomePageState createState() => _MyHomePageState();
+  State<MyHomePage> createState() => _MyHomePageState();
 }
 
 
@@ -45,10 +47,10 @@ const Duration kSaveDelay = Duration(milliseconds: 500);
 
 class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
 
-  Key keyLastNames = Key("LastNames");
-  Key keyFirstNames = Key("FirstNames");
-  Key keyPhoneNumberTemplate = Key("PhoneNumberTemplate");
-  Key keyEmailAddressTemplate = Key("EmailAddressTemplate");
+  static const Key keyLastNames = Key("LastNames");
+  static const Key keyFirstNames = Key("FirstNames");
+  static const Key keyPhoneNumberTemplate = Key("PhoneNumberTemplate");
+  static const Key keyEmailAddressTemplate = Key("EmailAddressTemplate");
 
   final TextEditingController lastNamesController = TextEditingController();
   final TextEditingController firstNamesController = TextEditingController();
@@ -204,7 +206,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     int nUntracked = 0;
     String? sError;
     if (permission != PermissionStatus.granted) {
-      log("_createAllContacts: no permission, status " + permission.toString());
+      log("_createAllContacts: no permission, status $permission");
     } else {
       try {
         final everyone = await _getAllWithDetails();
@@ -234,7 +236,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     if (entries[i].email!.isNotEmpty) Email(address: entries[i].email!)
                   ]),
           ];
-          log("_createAllContacts: about to call FlutterContacts.createAll for " + newContacts.length.toString() + " contact(s)");
+          log("_createAllContacts: about to call FlutterContacts.createAll for ${newContacts.length} contact(s)");
           final ids = await FlutterContacts.createAll(newContacts);
           final after = await _snapshotAddressBook(onlyContactIds: ids);
           final created = newlyCreatedRawIds(
@@ -245,11 +247,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         }
         await _saveLedger(ledger);
       } catch (e) {
-        log("_createAllContacts: error " + e.toString());
+        log("_createAllContacts: error $e");
         sError = e.toString();
       }
     }
-    log("_createAllContacts: about to return, nCreated " + nCreated.toString());
+    log("_createAllContacts: about to return, nCreated $nCreated");
 
     if (!mounted) return;
     setState(() { _isBusy = false; });
@@ -257,12 +259,12 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     if (permission != PermissionStatus.granted) {
       sMessage = "Permission to access contacts was denied.";
     } else if (sError != null) {
-      sMessage = "Error while creating contacts: " + sError;
+      sMessage = "Error while creating contacts: $sError";
     } else {
-      sMessage = "Created " + nCreated.toString() + " fake contact(s).";
-      if (nAlreadyExisted > 0) sMessage += " " + nAlreadyExisted.toString() + " already existed.";
+      sMessage = "Created $nCreated fake contact(s).";
+      if (nAlreadyExisted > 0) sMessage += " $nAlreadyExisted already existed.";
       if (nUntracked > 0) {
-        sMessage += " Warning: " + nUntracked.toString() +
+        sMessage += " Warning: $nUntracked"
             " could not be recorded and must be deleted by hand.";
       }
     }
@@ -282,7 +284,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     int nSkippedChanged = 0;
     String? sError;
     if (permission != PermissionStatus.granted) {
-      log("_deleteAllContacts: no permission, status " + permission.toString());
+      log("_deleteAllContacts: no permission, status $permission");
     } else {
       try {
         // Only contacts recorded in the ledger at creation time are deleted, never
@@ -305,18 +307,18 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
             .prunedTo(allRawIds(book))
             .withDetailsForNameOnly((name) => current[name]);
         final plan = planDelete(ledger, book, fingerprintsByContact);
-        log("_deleteAllContacts: about to call FlutterContacts.deleteAll for " + plan.contactIdsToDelete.length.toString() + " contact(s)");
+        log("_deleteAllContacts: about to call FlutterContacts.deleteAll for ${plan.contactIdsToDelete.length} contact(s)");
         await FlutterContacts.deleteAll(plan.contactIdsToDelete);
         await _saveLedger(plan.remaining);
         nDeleted = plan.rawContactsDeleted;
         nSkippedMerged = plan.skippedMerged;
         nSkippedChanged = plan.skippedChanged;
       } catch (e) {
-        log("_deleteAllContacts: error " + e.toString());
+        log("_deleteAllContacts: error $e");
         sError = e.toString();
       }
     }
-    log("_deleteAllContacts: about to return, nDeleted " + nDeleted.toString());
+    log("_deleteAllContacts: about to return, nDeleted $nDeleted");
 
     if (!mounted) return;
     setState(() { _isBusy = false; });
@@ -324,15 +326,15 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     if (permission != PermissionStatus.granted) {
       sMessage = "Permission to access contacts was denied.";
     } else if (sError != null) {
-      sMessage = "Error while deleting contacts: " + sError;
+      sMessage = "Error while deleting contacts: $sError";
     } else {
-      sMessage = "Deleted " + nDeleted.toString() + " fake contact(s).";
+      sMessage = "Deleted $nDeleted fake contact(s).";
       if (nSkippedMerged > 0) {
-        sMessage += " " + nSkippedMerged.toString() +
+        sMessage += " $nSkippedMerged"
             " were merged with other contacts and were left alone.";
       }
       if (nSkippedChanged > 0) {
-        sMessage += " " + nSkippedChanged.toString() +
+        sMessage += " $nSkippedChanged"
             " no longer match what this app created (edited, or the app's records"
             " came from another phone) and were left alone.";
       }
@@ -343,10 +345,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   InputDecoration _fieldDecoration(String sLabel) {
     return InputDecoration(
       labelText: sLabel,
-      focusedBorder: OutlineInputBorder(
+      focusedBorder: const OutlineInputBorder(
         borderSide: BorderSide(color: Colors.red, width: 5.0),
       ),
-      enabledBorder: OutlineInputBorder(
+      enabledBorder: const OutlineInputBorder(
         borderSide: BorderSide(color: Colors.greenAccent, width: 5.0),
       ),
     );
@@ -411,7 +413,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                   Center(
                     child: ElevatedButton(
                       onPressed: bCanAct ? () => _createAllContacts() : null,
-                      child: Text("Create Fake Contacts"),
+                      child: const Text("Create Fake Contacts"),
                     ),
                   ),
                   const SizedBox(height: 30),
@@ -422,7 +424,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                         backgroundColor: Colors.pink,
                         foregroundColor: Colors.white,
                       ),
-                      child: Text("Delete Fake Contacts"),
+                      child: const Text("Delete Fake Contacts"),
                     ),
                   ),
                   // Always reserve the spinner's space so the layout doesn't jump.
