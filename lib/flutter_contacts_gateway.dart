@@ -19,6 +19,11 @@ class FlutterContactsGateway implements ContactsGateway {
   }
 
   @override
+  Future<bool> hasPermission() async =>
+      await FlutterContacts.permissions.check(PermissionType.readWrite) ==
+      PermissionStatus.granted;
+
+  @override
   Future<List<StoredContact>> getAll({List<String>? ids}) async {
     final contacts = await FlutterContacts.getAll(
       properties: {

@@ -43,6 +43,10 @@ abstract interface class ContactsGateway {
   /// Asks for read/write access to the contacts. True if it was granted.
   Future<bool> requestPermission();
 
+  /// True if read/write access to the contacts was already granted. Never
+  /// asks the user.
+  Future<bool> hasPermission();
+
   /// Every contact, or only those with the given contact IDs.
   Future<List<StoredContact>> getAll({List<String>? ids});
 

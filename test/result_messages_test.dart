@@ -24,6 +24,18 @@ void main() {
     expect(kPermissionDeniedMessage, 'Permission to access contacts was denied.');
   });
 
+  test('status line', () {
+    expect(statusMessage(toDelete(0)), 'No fake contacts on this phone.');
+    expect(statusMessage(toDelete(1)), '1 fake contact on this phone.');
+    expect(statusMessage(toDelete(756, merged: 1, changed: 2)),
+        '756 fake contacts on this phone.');
+    // Doesn't claim there are none while it tracks some it can't check.
+    expect(statusMessage(toDelete(0, merged: 1)),
+        'No fake contacts this app can delete.');
+    expect(statusMessage(toDelete(0, changed: 3)),
+        'No fake contacts this app can delete.');
+  });
+
   test('the address book changed while the dialog was open', () {
     expect(kChangedMeanwhileMessage,
         'Your contacts changed meanwhile, so nothing was done. Try again.');

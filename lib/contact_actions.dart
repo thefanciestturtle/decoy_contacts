@@ -178,26 +178,35 @@ class _DeleteCheck {
 int _nameOnlyEntries(Ledger ledger) =>
     ledger.entries.values.where((e) => !e.hasDetails).length;
 
+/// Plans a Delete against the [stored] ledger. Old name-only entries get
+/// the details the current [settings] would give a fake with that name; with
+/// no [settings] they stay name-only, so they are never deleted or counted.
 Future<_DeleteCheck> _planDelete(
-    ContactsGateway contacts, LedgerStore ledgerStore, Settings settings) async {
+    ContactsGateway contacts, Ledger stored, Settings? settings) async {
   final everyone = await contacts.getAll();
   final book = addressBookOf(everyone);
   final fingerprintsByContact = {
     for (final c in everyone) c.id: fingerprintsOfContact(c),
   };
-  // Entries from older versions hold only a name: expect the phone and
-  // email the current settings would give a fake with that name.
-  final current = {
-    for (final n in allCombinations(settings.firstNames, settings.lastNames))
-      n.displayName: entryFor(n, settings.phoneTemplate, settings.emailTemplate),
-  };
-  final stored = await ledgerStore.load();
+  final nameOnly = _nameOnlyEntries(stored);
+  final current = (nameOnly == 0 || settings == null)
+      ? const <String, LedgerEntry>{}
+      : {
+          for (final n in allCombinations(settings.firstNames, settings.lastNames))
+            n.displayName:
+                entryFor(n, settings.phoneTemplate, settings.emailTemplate),
+        };
   final withDetails = stored.withDetailsForNameOnly((name) => current[name]);
   final plan = planDelete(
       withDetails.prunedTo(allRawIds(book)), book, fingerprintsByContact);
-  return _DeleteCheck(plan, withDetails,
-      _nameOnlyEntries(stored) - _nameOnlyEntries(withDetails));
+  return _DeleteCheck(plan, withDetails, nameOnly - _nameOnlyEntries(withDetails));
 }
+
+DeletePreview _previewOf(DeletePlan plan) => DeletePreview(
+      toDelete: plan.rawContactsDeleted,
+      skippedMerged: plan.skippedMerged,
+      skippedChanged: plan.skippedChanged,
+    );
 
 /// Works out what [deleteFakeContacts] would do with the same arguments.
 ///
@@ -210,14 +219,28 @@ Future<_DeleteCheck> _planDelete(
 /// wrong guess only means that contact is always left alone.
 Future<DeletePreview> previewDelete(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings) async {
-  final check = await _planDelete(contacts, ledgerStore, settings);
+  final check = await _planDelete(contacts, await ledgerStore.load(), settings);
   if (check.detailsFilledIn > 0) await ledgerStore.save(check.withDetails);
-  final plan = check.plan;
-  return DeletePreview(
-    toDelete: plan.rawContactsDeleted,
-    skippedMerged: plan.skippedMerged,
-    skippedChanged: plan.skippedChanged,
-  );
+  return _previewOf(check.plan);
+}
+
+/// What Delete would find, for the status line: [DeletePreview.toDelete] is
+/// how many fakes are still in the address book, counting only those this
+/// app can confirm. Not counted, but in the skipped counts: entries that no
+/// longer match what was created, fakes merged into another contact (their
+/// details can't be checked, and the raw contact may not be a fake at all;
+/// see [planDelete]), and old name-only entries (no guessing from the
+/// settings here, so the count doesn't depend on what is being typed).
+///
+/// Changes nothing, not even the ledger, and doesn't read the address book
+/// if the ledger is empty.
+Future<DeletePreview> countFakeContacts(
+    ContactsGateway contacts, LedgerStore ledgerStore) async {
+  final stored = await ledgerStore.load();
+  if (stored.isEmpty) {
+    return const DeletePreview(toDelete: 0, skippedMerged: 0, skippedChanged: 0);
+  }
+  return _previewOf((await _planDelete(contacts, stored, null)).plan);
 }
 
 /// Deletes the fake contacts this app created and recorded in the ledger.
@@ -234,7 +257,8 @@ Future<DeletePreview> previewDelete(
 Future<DeleteResult?> deleteFakeContacts(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings,
     {int? atMost}) async {
-  final plan = (await _planDelete(contacts, ledgerStore, settings)).plan;
+  final plan =
+      (await _planDelete(contacts, await ledgerStore.load(), settings)).plan;
   if (atMost != null && plan.rawContactsDeleted > atMost) {
     log("deleteFakeContacts: ${plan.rawContactsDeleted} to delete, more than $atMost");
     return null;

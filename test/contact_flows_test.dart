@@ -113,6 +113,27 @@ Future<String?> storedLedgerJson() async =>
 
 Future<Ledger> storedLedger() async => Ledger.decode(await storedLedgerJson());
 
+/// The status line's text, or null if it is empty.
+String? statusText(WidgetTester tester) {
+  final text = tester.widget<Text>(find.byKey(const Key('Status'))).data!;
+  return text.isEmpty ? null : text;
+}
+
+/// The app goes to the background and comes back.
+Future<void> leaveAndReturn(WidgetTester tester) async {
+  for (final state in [
+    AppLifecycleState.inactive,
+    AppLifecycleState.hidden,
+    AppLifecycleState.paused,
+    AppLifecycleState.hidden,
+    AppLifecycleState.inactive,
+    AppLifecycleState.resumed,
+  ]) {
+    tester.binding.handleAppLifecycleStateChanged(state);
+  }
+  await tester.pumpAndSettle();
+}
+
 bool buttonsEnabled(WidgetTester tester) =>
     tester.widget<ElevatedButton>(find.byType(ElevatedButton)).enabled &&
     tester.widget<FilledButton>(find.byType(FilledButton)).enabled;
@@ -125,6 +146,45 @@ class _SlowPermission extends InMemoryContactsGateway {
   Future<bool> requestPermission() {
     permissionRequests++;
     return permission.future;
+  }
+}
+
+/// The first time the address book is read, the answer waits until
+/// [firstRead] is completed; later reads answer at once.
+class _SlowFirstRead extends InMemoryContactsGateway {
+  final Completer<void> firstRead = Completer();
+  var _reads = 0;
+
+  @override
+  Future<List<StoredContact>> getAll({List<String>? ids}) async {
+    final found = await super.getAll(ids: ids); // as it was when asked
+    if (_reads++ == 0) await firstRead.future;
+    return found;
+  }
+}
+
+/// Reading the address book fails once something has been deleted.
+class _FailsAfterDelete extends InMemoryContactsGateway {
+  @override
+  Future<List<StoredContact>> getAll({List<String>? ids}) {
+    if (deleteAllCalls.isNotEmpty) throw Exception('busy syncing');
+    return super.getAll(ids: ids);
+  }
+}
+
+/// The first read of the address book after something was deleted waits
+/// until [held] is completed.
+class _HoldsReadAfterDelete extends InMemoryContactsGateway {
+  final Completer<void> held = Completer();
+  var _holding = false;
+
+  @override
+  Future<List<StoredContact>> getAll({List<String>? ids}) async {
+    if (deleteAllCalls.isEmpty || _holding) return super.getAll(ids: ids);
+    _holding = true;
+    final found = await super.getAll(ids: ids);
+    await held.future;
+    return found;
   }
 }
 
@@ -772,6 +832,278 @@ void main() {
 
       expect(snackBarText(tester), 'No fake contacts to delete.$kOneMerged');
       expect(book.deleteAllCalls, hasLength(3)); // only the ones above
+    });
+  });
+
+  group('status line (U3)', () {
+    /// Adds fakes made by this app (as [fakeEntry] gives them) and returns
+    /// a ledger that records them.
+    Map<String, Object> addFakes(List<(String, String)> names) => {
+          for (final (first, last) in names)
+            book.rawIdsOf(book.add('$first $last',
+                    phones: [fakeEntry(first, last).phone!],
+                    emails: [fakeEntry(first, last).email!])).single:
+                fakeEntry(first, last).toJson(),
+        };
+
+    testWidgets('shows the count at startup without asking for permission',
+        (tester) async {
+      book.add('Alice Example', phones: ['+1 555 0101']);
+      setPrefs(ledger: addFakes([('Zoe', 'Zen'), ('Zach', 'Zima')]));
+      final ledger = await storedLedgerJson();
+      await pumpApp(tester, book);
+
+      expect(statusText(tester), '2 fake contacts on this phone.');
+      expect(book.permissionChecks, greaterThan(0));
+      expect(book.permissionRequests, 0);
+      expect(await storedLedgerJson(), ledger);
+    });
+
+    testWidgets('one, and none', (tester) async {
+      setPrefs(ledger: addFakes([('Zoe', 'Zen')]));
+      await pumpApp(tester, book);
+      expect(statusText(tester), '1 fake contact on this phone.');
+
+      await tapDelete(tester);
+
+      expect(statusText(tester), 'No fake contacts on this phone.');
+    });
+
+    testWidgets('without the permission there is none, and it is not asked '
+        'for', (tester) async {
+      book.alreadyGranted = false;
+      await pumpApp(tester, book);
+
+      expect(statusText(tester), isNull);
+      expect(book.permissionRequests, 0);
+      expect(book.getAllCalls, 0);
+
+      // Granted when the user taps Create.
+      await tapCreate(tester);
+      expect(statusText(tester), '4 fake contacts on this phone.');
+    });
+
+    testWidgets('follows Create, Cancel and Delete', (tester) async {
+      await pumpApp(tester, book);
+      expect(statusText(tester), 'No fake contacts on this phone.');
+
+      await tapCreate(tester);
+      expect(statusText(tester), '4 fake contacts on this phone.');
+
+      // One is deleted by hand while the dialog is open; Cancel still
+      // updates the count.
+      await tapAndOpenDialog(tester, kDeleteButton);
+      await book.deleteAll([book.idOf('Zoe Zen')]);
+      await tester.tap(dialogButton('Cancel'));
+      await tester.pumpAndSettle();
+      expect(statusText(tester), '3 fake contacts on this phone.');
+
+      await tapDelete(tester);
+      expect(statusText(tester), 'No fake contacts on this phone.');
+    });
+
+    testWidgets('the buttons stay put when it appears', (tester) async {
+      book.alreadyGranted = false;
+      await pumpApp(tester, book);
+      final before = tester.getCenter(find.text(kDeleteButton));
+
+      await tapCreate(tester);
+      expect(statusText(tester), '4 fake contacts on this phone.');
+
+      expect(tester.getCenter(find.text(kDeleteButton)), before);
+    });
+
+    testWidgets('counts neither fakes merged into other contacts nor ones '
+        'that no longer match', (tester) async {
+      final alice = book.add('Alice Example', phones: ['+1 555 0101']);
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      book.merge(into: alice, from: book.idOf('Zach Zen'));
+      book.setPhones(book.idOf('Zoe Zen'), ['+1 555 0199']);
+
+      await leaveAndReturn(tester);
+
+      expect(statusText(tester), '2 fake contacts on this phone.');
+    });
+
+    testWidgets('a ledger entry landing on part of a real contact is not '
+        'counted (S1)', (tester) async {
+      // A real contact made of two raw contacts (e.g. two accounts); a
+      // ledger from another phone names one of them.
+      final bob = book.add('Bob Example', phones: ['+1 555 0102']);
+      book.merge(into: bob, from: book.add('Bob Example'));
+      setPrefs(ledger: {
+        book.rawIdsOf(bob).first: fakeEntry('Zoe', 'Zen').toJson(),
+      });
+      await pumpApp(tester, book);
+
+      expect(statusText(tester), 'No fake contacts this app can delete.');
+    });
+
+    testWidgets('with an empty ledger the address book is not read',
+        (tester) async {
+      book.add('Alice Example', phones: ['+1 555 0101']);
+      await pumpApp(tester, book);
+
+      expect(statusText(tester), 'No fake contacts on this phone.');
+      expect(book.getAllCalls, 0);
+    });
+
+    testWidgets('a fake merged into a real contact: none to delete, but not '
+        '"none on this phone"', (tester) async {
+      final alice = book.add('Alice Example', phones: ['+1 555 0101']);
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      book.merge(into: alice, from: book.idOf('Zoe Zen'));
+
+      await tapDelete(tester);
+
+      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneMerged');
+      expect(statusText(tester), 'No fake contacts this app can delete.');
+    });
+
+    testWidgets('a ledger pointing at real contacts counts none (S1)',
+        (tester) async {
+      final alice = book.add('Alice Example', phones: ['+1 555 0101']);
+      final zoe = book.add('Zoe Zen', phones: ['+1 555 0100']);
+      setPrefs(ledger: {
+        book.rawIdsOf(alice).single: fakeEntry('Zoe', 'Zen').toJson(),
+        book.rawIdsOf(zoe).single: 'Zoe Zen',
+      });
+      final ledger = await storedLedgerJson();
+      await pumpApp(tester, book);
+
+      expect(statusText(tester), 'No fake contacts this app can delete.');
+      // Counting changes nothing, not even old name-only entries.
+      expect(await storedLedgerJson(), ledger);
+    });
+
+    testWidgets('updates when the app comes back to the foreground',
+        (tester) async {
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      await book.deleteAll([book.idOf('Zoe Zen')]); // by hand, in another app
+
+      await leaveAndReturn(tester);
+
+      expect(statusText(tester), '3 fake contacts on this phone.');
+    });
+
+    testWidgets('only after the app was in the background, not after the '
+        'notification shade', (tester) async {
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      await book.deleteAll([book.idOf('Zoe Zen')]);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(statusText(tester), '4 fake contacts on this phone.');
+
+      await leaveAndReturn(tester);
+      expect(statusText(tester), '3 fake contacts on this phone.');
+    });
+
+    testWidgets('a failed update right after an action shows no count',
+        (tester) async {
+      final failing = _FailsAfterDelete();
+      await pumpApp(tester, failing);
+      await tapCreate(tester);
+      expect(statusText(tester), '4 fake contacts on this phone.');
+
+      // One is edited, so it stays in the ledger and the count after Delete
+      // has to read the address book. Delete works; that read fails.
+      failing.setPhones(failing.idOf('Zoe Zen'), ['+1 555 0199']);
+      await tapDelete(tester);
+
+      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneChanged');
+      expect(failing.displayNames, ['Zoe Zen']);
+      expect(statusText(tester), isNull);
+    });
+
+    testWidgets('a failed update that overtakes the one after an action '
+        'shows no count either', (tester) async {
+      final holding = _HoldsReadAfterDelete();
+      await pumpApp(tester, holding);
+      await tapCreate(tester);
+      holding.setPhones(holding.idOf('Zoe Zen'), ['+1 555 0199']);
+      await tapDelete(tester); // its count afterwards is now waiting
+      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneChanged');
+      expect(statusText(tester), '4 fake contacts on this phone.');
+
+      // The user leaves and comes back; that count fails.
+      holding.getAllError = Exception('busy syncing');
+      await leaveAndReturn(tester);
+      expect(statusText(tester), isNull);
+
+      // The count from after Delete arrives last and is out of date.
+      holding.held.complete();
+      await tester.pumpAndSettle();
+      expect(statusText(tester), isNull);
+    });
+
+    testWidgets('old name-only entries are not counted, whatever the '
+        'templates say', (tester) async {
+      // A fake from an older version, which recorded only the name. Its
+      // details match the current settings, so Delete would delete it.
+      final e = fakeEntry('Zoe', 'Zen');
+      final zoe = book.add('Zoe Zen', phones: [e.phone!], emails: [e.email!]);
+      setPrefs(ledger: {book.rawIdsOf(zoe).single: 'Zoe Zen'});
+      await pumpApp(tester, book);
+
+      expect(statusText(tester), 'No fake contacts this app can delete.');
+      await tapAndOpenDialog(tester, kDeleteButton);
+      expect(dialogText(tester).title, 'Delete 1 fake contact?');
+    });
+
+    testWidgets('a failed update keeps the last count', (tester) async {
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+
+      book.getAllError = Exception('busy syncing');
+      await leaveAndReturn(tester);
+
+      expect(statusText(tester), '4 fake contacts on this phone.');
+    });
+
+    testWidgets('disappears if the permission is taken away', (tester) async {
+      await pumpApp(tester, book);
+      expect(statusText(tester), isNotNull);
+
+      book.alreadyGranted = false; // in the system settings
+      await leaveAndReturn(tester);
+
+      expect(statusText(tester), isNull);
+    });
+
+    testWidgets('an error while counting shows none, and the app still works',
+        (tester) async {
+      setPrefs(ledger: addFakes([('Zoe', 'Zen')])); // so it reads
+      book.getAllError = Exception('no provider');
+      await pumpApp(tester, book);
+      expect(tester.takeException(), isNull);
+      expect(statusText(tester), isNull);
+
+      book.getAllError = null;
+      await tapCreate(tester);
+      expect(statusText(tester), '4 fake contacts on this phone.');
+    });
+
+    testWidgets('a count that was still running when Create started is not '
+        'shown', (tester) async {
+      final slow = _SlowFirstRead();
+      book = slow;
+      setPrefs(ledger: addFakes([('Zoe', 'Zen')])); // so it reads
+      await pumpApp(tester, slow); // the startup count is waiting
+      expect(statusText(tester), isNull);
+
+      await tapCreate(tester);
+      expect(statusText(tester), '4 fake contacts on this phone.');
+
+      // The startup count answers last, from before Create.
+      slow.firstRead.complete();
+      await tester.pumpAndSettle();
+      expect(statusText(tester), '4 fake contacts on this phone.');
     });
   });
 }
