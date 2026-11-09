@@ -13,6 +13,9 @@ permissions:
 
 env:
   FLUTTER_VERSION: 3.47.9
+  GRADLE_CACHE_PATHS: |
+    ~/.gradle/caches
+    ~/.gradle/wrapper
 
 jobs:
   build:
@@ -30,13 +33,12 @@ jobs:
       # GitHub releases, which sometimes time out (HTTP 504). Restoring them
       # from the cache avoids that, and speeds up the build. Only a change to
       # the Gradle files, the Flutter version or pubspec.lock makes a new
-      # cache entry.
-      - name: Cache Gradle
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # cache entry (saved after "Build debug APK").
+      - name: Restore Gradle cache
+        id: gradle-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
+          path: ${{ env.GRADLE_CACHE_PATHS }}
           key: gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
           restore-keys: |
             gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
@@ -63,6 +65,14 @@ jobs:
       - name: Build debug APK
         run: flutter build apk --debug
 
+      # Saved as soon as the build has worked, even if a later step fails.
+      - name: Save Gradle cache
+        if: steps.gradle-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
+
   # Create and Delete against the real Android contacts provider, on an
   # emulator. API 36 matches the app's target SDK and the local test AVD.
   integration-test:
@@ -82,13 +92,12 @@ jobs:
       # GitHub releases, which sometimes time out (HTTP 504). Restoring them
       # from the cache avoids that, and speeds up the build. Only a change to
       # the Gradle files, the Flutter version or pubspec.lock makes a new
-      # cache entry.
-      - name: Cache Gradle
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # cache entry (saved after "Build debug APK").
+      - name: Restore Gradle cache
+        id: gradle-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
+          path: ${{ env.GRADLE_CACHE_PATHS }}
           key: gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
           restore-keys: |
             gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
@@ -110,6 +119,14 @@ jobs:
       # CPU. The test script's own build is then mostly up to date.
       - name: Build debug APK
         run: flutter build apk --debug
+
+      # Saved as soon as the build has worked, even if a later step fails.
+      - name: Save Gradle cache
+        if: steps.gradle-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.GRADLE_CACHE_PATHS }}
+          key: ${{ steps.gradle-cache.outputs.cache-primary-key }}
 
       - name: Enable KVM
         run: |
