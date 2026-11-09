@@ -129,8 +129,10 @@ jobs:
         id: build-apk
         run: flutter build apk --debug
 
-      # For the release smoke test. Only for the emulator's ABI: R8, which is
-      # what can break release builds, runs the same way for every ABI.
+      # For the release smoke test, built before the emulator starts like the
+      # debug APK (the test's own build is then up to date). Only for the
+      # emulator's ABI: R8, which is what can break release builds, runs the
+      # same way for every ABI.
       - name: Build release APK (x86_64)
         run: flutter build apk --release --target-platform android-x64
 
