@@ -34,7 +34,7 @@ const String kOneChanged =
 String someChanged(int n) =>
     " $n no longer match what this app created (edited, or the app's records"
     " came from another phone) and were left alone.";
-const String kCreateBody = 'You can remove them later with Delete Fake Contacts.';
+const String kCreateBody = 'They are added to the contacts on this phone.';
 const String kDeleteBody = 'Only contacts this app created are deleted.';
 
 /// The entry a fake with this name gets under [kSettings].
@@ -495,18 +495,12 @@ void main() {
 
         expect(snackBarText(tester), 'No fake contacts to delete.');
         expect(book.all.map((c) => c.id), [alice]);
-        expect((await storedLedger()).isEmpty, isTrue);
-      });
-
-      testWidgets('they are dropped even if the user cancels', (tester) async {
-        final gone = book.unusedRawId();
-        setPrefs(ledger: {gone: fakeEntry('Zoe', 'Zen').toJson()});
-        await pumpApp(tester, book);
-
+        // Only a Create or Delete that runs drops it; asking doesn't.
+        expect((await storedLedger()).entries.keys, [gone]);
         await tapAndAnswer(tester, kCreateButton, 'Cancel');
-
-        expect(book.createAllCalls, isEmpty);
-        expect((await storedLedger()).isEmpty, isTrue);
+        expect((await storedLedger()).entries.keys, [gone]);
+        await tapCreate(tester);
+        expect((await storedLedger()).entries.keys, isNot(contains(gone)));
       });
     });
 
@@ -702,6 +696,50 @@ void main() {
 
       expect(snackBarText(tester), 'Created 3 fake contacts. 1 already existed.');
       expect(book.displayNames.where((n) => n == 'Zoe Zen'), hasLength(1));
+    });
+
+    testWidgets('Create does no more than the dialog said', (tester) async {
+      // Identical to a fake, so Create asks about only 3.
+      final e = fakeEntry('Zoe', 'Zen');
+      final copy = book.add('Zoe Zen', phones: [e.phone!], emails: [e.email!]);
+      await pumpApp(tester, book);
+      await tapAndOpenDialog(tester, kCreateButton);
+      expect(dialogText(tester).title, 'Create 3 fake contacts?');
+
+      // Meanwhile it goes away, so there would now be 4 to create.
+      await book.deleteAll([copy]);
+      await tester.tap(dialogButton('Create'));
+      await tester.pumpAndSettle();
+
+      expect(snackBarText(tester),
+          'Your contacts changed meanwhile, so nothing was done. Try again.');
+      expect(book.createAllCalls, isEmpty);
+      expect(await storedLedgerJson(), isNull);
+      expect(buttonsEnabled(tester), isTrue);
+      // Asking again gives the new count.
+      await tapAndOpenDialog(tester, kCreateButton);
+      expect(dialogText(tester).title, 'Create 4 fake contacts?');
+    });
+
+    testWidgets('Delete does no more than the dialog said', (tester) async {
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      final zoe = book.idOf('Zoe Zen');
+      final phone = book.all.firstWhere((c) => c.id == zoe).phones;
+      book.setPhones(zoe, ['+1 555 0199']);
+      await tapAndOpenDialog(tester, kDeleteButton);
+      expect(dialogText(tester).title, 'Delete 3 fake contacts?');
+
+      // Meanwhile the edit is undone, so all 4 would now be deleted.
+      book.setPhones(zoe, phone);
+      await tester.tap(dialogButton('Delete'));
+      await tester.pumpAndSettle();
+
+      expect(snackBarText(tester),
+          'Your contacts changed meanwhile, so nothing was done. Try again.');
+      expect(book.deleteAllCalls, isEmpty);
+      expect(book.all, hasLength(4));
+      expect((await storedLedger()).length, 4);
     });
 
     testWidgets('an error while deleting after confirming is shown',

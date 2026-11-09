@@ -24,6 +24,11 @@ void main() {
     expect(kPermissionDeniedMessage, 'Permission to access contacts was denied.');
   });
 
+  test('the address book changed while the dialog was open', () {
+    expect(kChangedMeanwhileMessage,
+        'Your contacts changed meanwhile, so nothing was done. Try again.');
+  });
+
   test('errors', () {
     expect(errorMessage('creating', Exception('disk full')),
         'Error while creating contacts: Exception: disk full');
@@ -90,7 +95,7 @@ void main() {
     test('the count, and that they can be removed', () {
       expect(createConfirmation(toCreate(756)), (
         title: 'Create 756 fake contacts?',
-        body: 'You can remove them later with Delete Fake Contacts.',
+        body: 'They are added to the contacts on this phone.',
         action: 'Create',
       ));
     });
@@ -98,18 +103,18 @@ void main() {
     test('one contact', () {
       expect(createConfirmation(toCreate(1)), (
         title: 'Create 1 fake contact?',
-        body: 'You can remove it later with Delete Fake Contacts.',
+        body: 'It is added to the contacts on this phone.',
         action: 'Create',
       ));
     });
 
     test('mentions the ones that already exist', () {
       expect(createConfirmation(toCreate(2, alreadyExisted: 754)).body,
-          '754 already exist and will be skipped. You can remove them later '
-          'with Delete Fake Contacts.');
+          '754 already exist and will be skipped. They are added to the '
+          'contacts on this phone.');
       expect(createConfirmation(toCreate(755, alreadyExisted: 1)).body,
-          '1 already exists and will be skipped. You can remove them later '
-          'with Delete Fake Contacts.');
+          '1 already exists and will be skipped. They are added to the '
+          'contacts on this phone.');
     });
   });
 

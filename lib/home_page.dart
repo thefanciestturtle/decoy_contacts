@@ -150,15 +150,16 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// [nothingToDo] gives the message to show instead of the dialog when the
   /// preview finds nothing to do, else null. [action] works everything out
   /// again rather than trusting the preview, since the address book can
-  /// change while the dialog is open. [name] is used in the log, [doing] in
-  /// the error message.
+  /// change while the dialog is open; it gets the preview so it can refuse
+  /// (by returning null) to do more than the user agreed to. [name] is used
+  /// in the log, [doing] in the message for an error in [action].
   Future<void> _runContactsAction<P, R>({
     required String name,
     required String doing,
     required Future<P> Function(Settings settings) preview,
     required String? Function(P preview) nothingToDo,
     required Confirmation Function(P preview) confirmation,
-    required Future<R> Function(Settings settings) action,
+    required Future<R?> Function(Settings settings, P preview) action,
     required String Function(R result) describe,
   }) async {
     if (_isBusy) return;
@@ -202,14 +203,14 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     if (!mounted) return;
     setState(() { _isConfirming = false; });
 
-    final R result;
+    final R? result;
     try {
-      result = await action(settings);
+      result = await action(settings, planned);
     } catch (e) {
       log("$name: error $e");
       return finish(errorMessage(doing, e));
     }
-    finish(describe(result));
+    finish(result == null ? kChangedMeanwhileMessage : describe(result));
   }
 
   Future<void> _createAllContacts() => _runContactsAction(
@@ -220,8 +221,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         nothingToDo: (preview) =>
             preview.toCreate == 0 ? nothingToCreateMessage(preview) : null,
         confirmation: createConfirmation,
-        action: (settings) =>
-            createFakeContacts(widget.contacts, widget.ledgerStore, settings),
+        action: (settings, preview) => createFakeContacts(
+            widget.contacts, widget.ledgerStore, settings,
+            atMost: preview.toCreate),
         describe: createdMessage,
       );
 
@@ -233,8 +235,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         nothingToDo: (preview) =>
             preview.toDelete == 0 ? nothingToDeleteMessage(preview) : null,
         confirmation: deleteConfirmation,
-        action: (settings) =>
-            deleteFakeContacts(widget.contacts, widget.ledgerStore, settings),
+        action: (settings, preview) => deleteFakeContacts(
+            widget.contacts, widget.ledgerStore, settings,
+            atMost: preview.toDelete),
         describe: deletedMessage,
       );
 

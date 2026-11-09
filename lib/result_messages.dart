@@ -10,6 +10,11 @@ const String kPermissionDeniedMessage =
 String errorMessage(String doing, Object error) =>
     "Error while $doing contacts: $error";
 
+/// Shown when, after the user said yes, Create or Delete would do more than
+/// the dialog said, because the address book changed while it was open.
+const String kChangedMeanwhileMessage =
+    "Your contacts changed meanwhile, so nothing was done. Try again.";
+
 /// What a dialog that asks before Create or Delete says. [action] is the
 /// label of the button that goes ahead.
 typedef Confirmation = ({String title, String body, String action});
@@ -47,7 +52,9 @@ Confirmation createConfirmation(CreatePreview preview) {
         existed == 1
             ? "1 already exists and will be skipped."
             : "$existed already exist and will be skipped.",
-      "You can remove ${n == 1 ? "it" : "them"} later with Delete Fake Contacts.",
+      n == 1
+          ? "It is added to the contacts on this phone."
+          : "They are added to the contacts on this phone.",
     ].join(" "),
     action: "Create",
   );
