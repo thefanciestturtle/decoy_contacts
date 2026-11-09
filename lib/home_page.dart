@@ -65,7 +65,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   // are disabled while Create or Delete runs, so the preview always shows
   // what the action is using. (Disabled, not just read-only: a read-only
   // field can still take the focus, and its keyboard would then open by
-  // itself when the action ends; and TalkBack says a disabled field is.)
+  // itself when the action ends; and TalkBack announces a disabled field
+  // as disabled, while a read-only one silently ignores typing.)
   Settings get _settings => Settings(
         lastNamesText: lastNamesController.text,
         firstNamesText: firstNamesController.text,
@@ -263,7 +264,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     required String name,
     required String doing,
     required Future<P> Function(Settings settings) preview,
-    required String? Function(P preview) nothingToDo,
+    required String? Function(Settings settings, P preview) nothingToDo,
     required Confirmation Function(P preview) confirmation,
     required Future<R?> Function(Settings settings, P preview) action,
     required String Function(R result) describe,
@@ -272,8 +273,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     // If a text field has the focus, close the keyboard, so the dialog, the
     // spinner and the result can be seen. (Otherwise the field gets the
     // focus back after the dialog, the keyboard opens again and the page
-    // scrolls back up to the field.) A focused button keeps the focus, for
-    // people using a keyboard, D-pad or Switch Access.
+    // scrolls back up to the field.) Anything else keeps the focus; a
+    // focused button still loses it, as it is disabled while busy (see
+    // ROADMAP U7).
     final focus = FocusManager.instance.primaryFocus;
     if (_editableOf(focus) != null) focus!.unfocus();
     _statusRequest++; // a status count still running is out of date
@@ -307,7 +309,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       // Nothing was changed yet, so don't say "creating" or "deleting".
       return finish(errorMessage("reading", e));
     }
-    final sNothingToDo = nothingToDo(planned);
+    final sNothingToDo = nothingToDo(settings, planned);
     if (sNothingToDo != null) return finish(sNothingToDo);
 
     if (!mounted) return;
@@ -334,8 +336,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         doing: "creating",
         preview: (settings) =>
             previewCreate(widget.contacts, widget.ledgerStore, settings),
-        nothingToDo: (preview) =>
-            preview.toCreate == 0 ? nothingToCreateMessage(preview) : null,
+        nothingToDo: (settings, preview) => preview.toCreate == 0
+            ? nothingToCreateMessage(preview, previewSettings(settings))
+            : null,
         confirmation: createConfirmation,
         action: (settings, preview) => createFakeContacts(
             widget.contacts, widget.ledgerStore, settings,
@@ -348,7 +351,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         doing: "deleting",
         preview: (settings) =>
             previewDelete(widget.contacts, widget.ledgerStore, settings),
-        nothingToDo: (preview) =>
+        nothingToDo: (_, preview) =>
             preview.toDelete == 0 ? nothingToDeleteMessage(preview) : null,
         confirmation: deleteConfirmation,
         action: (settings, preview) => deleteFakeContacts(

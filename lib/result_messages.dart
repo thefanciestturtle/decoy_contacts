@@ -71,8 +71,13 @@ Confirmation deleteConfirmation(DeletePreview preview) => (
       action: "Delete",
     );
 
-/// What to do when there are no names to combine.
-const String kEnterNamesHint = "Enter at least one last name and one first name.";
+/// What to do when [preview] has no names to combine: which list to fill
+/// in.
+String _enterNamesHint(SettingsPreview preview) {
+  final bNoLast = preview.lastNameCount == 0, bNoFirst = preview.firstNameCount == 0;
+  if (bNoLast && bNoFirst) return "Enter at least one last name and one first name.";
+  return bNoLast ? "Enter at least one last name." : "Enter at least one first name.";
+}
 
 /// The preview under the fields: how many fakes the settings make, and the
 /// first of them, e.g.
@@ -117,13 +122,7 @@ PreviewText settingsPreviewText(SettingsPreview preview) {
     n == 0 ? "no fake contacts" : _fakeContacts(n),
     n == 1 ? ":" : ".",
   ].join();
-  if (n == 0) {
-    final bNoLast = preview.lastNameCount == 0, bNoFirst = preview.firstNameCount == 0;
-    final sHint = bNoLast && bNoFirst
-        ? kEnterNamesHint
-        : (bNoLast ? "Enter at least one last name." : "Enter at least one first name.");
-    return (text: "$sSum\n$sHint", phoneNumber: null);
-  }
+  if (n == 0) return (text: "$sSum\n${_enterNamesHint(preview)}", phoneNumber: null);
   final sample = preview.sample!;
   final out = StringBuffer("$sSum\n${n == 1 ? "" : "For example: "}");
   (int, int)? phoneNumber;
@@ -152,11 +151,13 @@ String statusMessage(DeletePreview found) {
       : "No fake contacts on this phone.";
 }
 
-/// Shown instead of the dialog when Create has nothing to add.
-String nothingToCreateMessage(CreatePreview preview) {
+/// Shown instead of the dialog when Create has nothing to add. [settings]
+/// is what the settings Create used make (see previewSettings), to say
+/// which name list is empty, as the preview does.
+String nothingToCreateMessage(CreatePreview preview, SettingsPreview settings) {
   final existed = preview.alreadyExisted;
   if (existed == 0) {
-    return "Nothing to create. $kEnterNamesHint";
+    return "Nothing to create. ${_enterNamesHint(settings)}";
   }
   return "Nothing to create. ${_fakeContacts(existed)}"
       " ${existed == 1 ? "already exists" : "already exist"}.";

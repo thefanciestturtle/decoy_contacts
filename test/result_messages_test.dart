@@ -254,15 +254,21 @@ void main() {
 
   group('nothingToCreateMessage', () {
     test('all of them already exist', () {
-      expect(nothingToCreateMessage(toCreate(0, alreadyExisted: 756)),
+      expect(nothingToCreateMessage(toCreate(0, alreadyExisted: 756),
+              settingsMake(27, 28)),
           'Nothing to create. 756 fake contacts already exist.');
-      expect(nothingToCreateMessage(toCreate(0, alreadyExisted: 1)),
+      expect(nothingToCreateMessage(toCreate(0, alreadyExisted: 1),
+              settingsMake(1, 1)),
           'Nothing to create. 1 fake contact already exists.');
     });
 
-    test('no names', () {
-      expect(nothingToCreateMessage(toCreate(0)),
+    test('no names: says which list is empty, as the preview does', () {
+      expect(nothingToCreateMessage(toCreate(0), settingsMake(0, 0)),
           'Nothing to create. Enter at least one last name and one first name.');
+      expect(nothingToCreateMessage(toCreate(0), settingsMake(0, 28)),
+          'Nothing to create. Enter at least one last name.');
+      expect(nothingToCreateMessage(toCreate(0), settingsMake(27, 0)),
+          'Nothing to create. Enter at least one first name.');
     });
   });
 

@@ -691,8 +691,10 @@ void main() {
 
       await tapExpectingNoDialog(tester, kCreateButton);
 
-      expect(snackBarText(tester),
-          'Nothing to create. Enter at least one last name and one first name.');
+      // The same hint as the preview gives.
+      expect(snackBarText(tester), 'Nothing to create. Enter at least one last name.');
+      expect(tester.widget<Text>(find.byKey(const Key('Preview'))).data,
+          endsWith('\nEnter at least one last name.'));
       expect(book.createAllCalls, isEmpty);
       expect(await storedLedgerJson(), isNull);
     });
