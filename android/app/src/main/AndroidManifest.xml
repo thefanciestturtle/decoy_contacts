@@ -1,7 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+   <!-- No backup or device transfer: the app's record of the contacts it
+        created is only valid on this phone (see data_extraction_rules.xml). -->
    <application
         android:label="Fake Contacts"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -168,6 +168,21 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     };
   }
 
+  /// Every name/phone/email fingerprint of [c] (see [fingerprintsOf]).
+  Set<String> _fingerprintsOfContact(Contact c) => fingerprintsOf(
+          c.displayName ?? "",
+          [for (final p in c.phones) p.number],
+          [for (final e in c.emails) e.address])
+      .toSet();
+
+  /// The whole address book with the properties needed to fingerprint it.
+  Future<List<Contact>> _getAllWithDetails() => FlutterContacts.getAll(properties: {
+        ContactProperty.identifiers,
+        ContactProperty.name,
+        ContactProperty.phone,
+        ContactProperty.email,
+      });
+
   bool _isBusy = false;
 
   void _showResultSnackBar(String message) {
@@ -192,50 +207,39 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       log("_createAllContacts: no permission, status " + permission.toString());
     } else {
       try {
-        final everyone = await FlutterContacts.getAll(properties: {
-          ContactProperty.identifiers,
-          ContactProperty.name,
-          ContactProperty.phone,
-          ContactProperty.email,
-        });
+        final everyone = await _getAllWithDetails();
         final before = _toAddressBook(everyone);
         final existingFingerprints = {
-          for (final c in everyone)
-            ...fingerprintsOf(
-                c.displayName ?? "",
-                [for (final p in c.phones) p.number],
-                [for (final e in c.emails) e.address]),
+          for (final c in everyone) ..._fingerprintsOfContact(c),
         };
         final ledger = (await _loadLedger()).prunedTo(allRawIds(before));
         final wanted = allCombinations(firstNames, lastNames);
+        LedgerEntry entry(FakeName n) =>
+            entryFor(n, sPhoneNumberTemplate, sEmailAddressTemplate);
         final toCreate = namesToCreate(wanted, ledger, before,
             existingFingerprints: existingFingerprints,
-            fingerprintOf: (n) => contactFingerprint(
-                n.displayName,
-                sPhoneNumberTemplate.isEmpty ? "" : generatePhoneNumber(sPhoneNumberTemplate, n.last),
-                sEmailAddressTemplate.isEmpty ? "" : generateEmailAddress(sEmailAddressTemplate, n.first, n.last)));
+            fingerprintOf: (n) => entry(n).fingerprint!);
         nAlreadyExisted = wanted.length - toCreate.length;
 
         if (toCreate.isNotEmpty) {
+          final entries = [for (final n in toCreate) entry(n)];
           final newContacts = [
-            for (final n in toCreate)
+            for (var i = 0; i < toCreate.length; i++)
               Contact(
-                  name: Name(first: n.first, last: n.last),
+                  name: Name(first: toCreate[i].first, last: toCreate[i].last),
                   phones: [
-                    if (sPhoneNumberTemplate.isNotEmpty)
-                      Phone(number: generatePhoneNumber(sPhoneNumberTemplate, n.last))
+                    if (entries[i].phone!.isNotEmpty) Phone(number: entries[i].phone!)
                   ],
                   emails: [
-                    if (sEmailAddressTemplate.isNotEmpty)
-                      Email(address: generateEmailAddress(sEmailAddressTemplate, n.first, n.last))
+                    if (entries[i].email!.isNotEmpty) Email(address: entries[i].email!)
                   ]),
           ];
           log("_createAllContacts: about to call FlutterContacts.createAll for " + newContacts.length.toString() + " contact(s)");
           final ids = await FlutterContacts.createAll(newContacts);
           final after = await _snapshotAddressBook(onlyContactIds: ids);
           final created = newlyCreatedRawIds(
-              created: toCreate, createdContactIds: ids, before: before, after: after);
-          ledger.rawIdToName.addAll(created);
+              created: entries, createdContactIds: ids, before: before, after: after);
+          ledger.entries.addAll(created);
           nCreated = ids.length;
           nUntracked = nCreated - created.length;
         }
@@ -275,6 +279,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
 
     int nDeleted = 0;
     int nSkippedMerged = 0;
+    int nSkippedChanged = 0;
     String? sError;
     if (permission != PermissionStatus.granted) {
       log("_deleteAllContacts: no permission, status " + permission.toString());
@@ -282,14 +287,30 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       try {
         // Only contacts recorded in the ledger at creation time are deleted, never
         // anything matched by name, so real contacts with the same name are safe.
-        final book = await _snapshotAddressBook();
-        final ledger = (await _loadLedger()).prunedTo(allRawIds(book));
-        final plan = planDelete(ledger, book);
+        // Each must also still have exactly the recorded name, phone and email,
+        // in case its raw contact ID now belongs to someone else.
+        final everyone = await _getAllWithDetails();
+        final book = _toAddressBook(everyone);
+        final fingerprintsByContact = {
+          for (final c in everyone)
+            if (c.id != null) c.id!: _fingerprintsOfContact(c),
+        };
+        // Entries from older versions hold only a name: expect the phone and
+        // email the current settings would give a fake with that name.
+        final current = {
+          for (final n in allCombinations(firstNames, lastNames))
+            n.displayName: entryFor(n, sPhoneNumberTemplate, sEmailAddressTemplate),
+        };
+        final ledger = (await _loadLedger())
+            .prunedTo(allRawIds(book))
+            .withDetailsForNameOnly((name) => current[name]);
+        final plan = planDelete(ledger, book, fingerprintsByContact);
         log("_deleteAllContacts: about to call FlutterContacts.deleteAll for " + plan.contactIdsToDelete.length.toString() + " contact(s)");
         await FlutterContacts.deleteAll(plan.contactIdsToDelete);
         await _saveLedger(plan.remaining);
         nDeleted = plan.rawContactsDeleted;
         nSkippedMerged = plan.skippedMerged;
+        nSkippedChanged = plan.skippedChanged;
       } catch (e) {
         log("_deleteAllContacts: error " + e.toString());
         sError = e.toString();
@@ -309,6 +330,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       if (nSkippedMerged > 0) {
         sMessage += " " + nSkippedMerged.toString() +
             " were merged with other contacts and were left alone.";
+      }
+      if (nSkippedChanged > 0) {
+        sMessage += " " + nSkippedChanged.toString() +
+            " no longer match what this app created (edited, or the app's records"
+            " came from another phone) and were left alone.";
       }
     }
     _showResultSnackBar(sMessage);
