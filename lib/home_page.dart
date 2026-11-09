@@ -63,28 +63,26 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       _checks = (createBlocked: null, phoneWarning: null, emailWarning: null);
 
   /// Called on any change to a text field, the cursor included.
+  /// The email check for the current template. It remembers each name's
+  /// result, so with a long name list a keystroke only checks new names.
+  EmailTemplateCheck? _emailCheck;
+
   void _fieldsChanged() {
     if (!_settingsLoaded) return;
     final settings = _settings;
-    final before = _previewSettings;
-    if (settings == before) return;
+    if (settings == _previewSettings) return;
     _previewSettings = settings;
     final preview = previewSettings(settings);
     _preview.value = settingsPreviewText(preview);
-    // The email check goes through every name, so only when the template or
-    // a name list changed.
-    final bool bEmailUnchanged = before != null &&
-        before.emailTemplateText == settings.emailTemplateText &&
-        before.firstNamesText == settings.firstNamesText &&
-        before.lastNamesText == settings.lastNamesText;
+    if (_emailCheck?.template != settings.emailTemplate) {
+      _emailCheck = EmailTemplateCheck(settings.emailTemplate);
+    }
     final checks = (
       createBlocked:
           preview.combinations > 0 ? null : enterNamesHint(preview),
       phoneWarning: phoneTemplateWarning(settings.phoneTemplate),
-      emailWarning: bEmailUnchanged
-          ? _checks.emailWarning
-          : emailTemplateWarning(settings.emailTemplate,
-              firstNames: settings.firstNames, lastNames: settings.lastNames),
+      emailWarning: _emailCheck!.warning(
+          firstNames: settings.firstNames, lastNames: settings.lastNames),
     );
     if (checks != _checks) {
       setState(() => _checks = checks);
@@ -457,14 +455,28 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         rect: Rect.fromLTRB(caret.left, top, caret.right, bottom));
   }
 
-  /// [warning], if any, is shown under the field.
-  InputDecoration _fieldDecoration(String sLabel, {String? warning}) {
+  /// [warning], if any, is shown under the field like a helper text, but
+  /// never cut off, and read out by TalkBack when it appears or changes (a
+  /// live region, as Flutter gives error texts; helper texts have none).
+  InputDecoration _fieldDecoration(String sLabel,
+      {String? warning, bool enabled = true}) {
+    final theme = Theme.of(context);
     return InputDecoration(
       labelText: sLabel,
-      helperText: warning,
-      // Never cut off (null would mean one line): at a large font size on a
-      // small screen, a two-sentence warning takes about eight lines.
-      helperMaxLines: 20,
+      helper: warning == null
+          ? null
+          : Semantics(
+              liveRegion: true,
+              // Material 3's helper text style, which a helper widget
+              // doesn't get by itself.
+              child: Text(
+                warning,
+                style: theme.textTheme.bodySmall?.copyWith(
+                    color: enabled
+                        ? theme.colorScheme.onSurfaceVariant
+                        : theme.colorScheme.onSurface.withValues(alpha: 0.38)),
+              ),
+            ),
       focusedBorder: const OutlineInputBorder(
         borderSide: BorderSide(color: Colors.red, width: 5.0),
       ),
@@ -537,7 +549,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                           autocorrect: false,
                           enableSuggestions: false,
                           decoration: _fieldDecoration('Phone number template',
-                              warning: _checks.phoneWarning),
+                              warning: _checks.phoneWarning, enabled: bCanAct),
                         ),
                         const SizedBox(height: 20),
                         TextField(
@@ -551,7 +563,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                           // Suggestions stay on: without them Android gets a
                           // keyboard with no @ key.
                           decoration: _fieldDecoration('Email address template',
-                              warning: _checks.emailWarning),
+                              warning: _checks.emailWarning, enabled: bCanAct),
                         ),
                       ],
                     ),

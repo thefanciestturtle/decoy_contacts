@@ -464,6 +464,8 @@ void main() {
         final after = tester.getRect(find.byKey(const Key('Preview')));
         expect(after.height, greaterThan(before.height + 60));
         final visible = visibleArea(tester);
+        // ignore: avoid_print
+        print('DEBUG visible $visible preview $after field ${editableTextOf(tester, key)} emailbox ${tester.getRect(find.byKey(key))}');
         expect(containsVertically(visible, after), isTrue,
             reason: 'preview $after should be within $visible');
         expect(containsVertically(visible, editableTextOf(tester, key)), isTrue);
@@ -638,8 +640,11 @@ void main() {
     }
 
     /// The warning under the field with [key], or null.
-    String? warningUnder(WidgetTester tester, String key) =>
-        tester.widget<TextField>(find.byKey(Key(key))).decoration!.helperText;
+    String? warningUnder(WidgetTester tester, String key) {
+      final helper =
+          tester.widget<TextField>(find.byKey(Key(key))).decoration!.helper;
+      return helper == null ? null : ((helper as Semantics).child! as Text).data;
+    }
 
     testWidgets('no warnings with the defaults', (WidgetTester tester) async {
       await pumpMyApp(tester);
@@ -659,7 +664,7 @@ void main() {
       expect(find.text(kNoN), findsOneWidget);
       await type(tester, 'PhoneNumberTemplate', '+447700900NNN');
       expect(warningUnder(tester, 'PhoneNumberTemplate'),
-          'A phone number can\'t contain "N".\n$kNoN');
+          'A phone number can\'t contain “N”.\n$kNoN');
       await type(tester, 'PhoneNumberTemplate', '+447700900nnn');
       expect(warningUnder(tester, 'PhoneNumberTemplate'), isNull);
 
@@ -672,7 +677,7 @@ void main() {
       // A name with a space shows up under the email template that uses it.
       await type(tester, 'FirstNames', 'Zoe, Mary Ann');
       expect(warningUnder(tester, 'EmailAddressTemplate'),
-          '"Mary Ann" can\'t be part of an email address, so those addresses '
+          '“Mary Ann” can\'t be part of an email address, so those addresses '
           'won\'t work.');
       await type(tester, 'EmailAddressTemplate', 'LAST@example.com');
       expect(warningUnder(tester, 'EmailAddressTemplate'), isNull);
@@ -691,9 +696,11 @@ void main() {
       await tester.pumpAndSettle();
       await type(tester, 'PhoneNumberTemplate', '+447700900123');
 
-      // A part of the field's own node, so it is read with the field.
+      // A part of the field's own node, so it is read with the field, and a
+      // live region, so TalkBack reads it out when it appears.
       final warning = tester.getSemantics(find.text(kNoN));
       expect(warning.label, kNoN);
+      expect(warning.flagsCollection.isLiveRegion, isTrue);
       expect(warning.parent!.label, 'Phone number template');
       expect(warning.parent!.flagsCollection.isTextField, isTrue);
       semantics.dispose();

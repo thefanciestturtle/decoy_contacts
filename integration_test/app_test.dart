@@ -123,7 +123,7 @@ void main() {
     // U4: these settings give no warnings, and without last names Create
     // is disabled (the preview says why).
     for (final key in ['PhoneNumberTemplate', 'EmailAddressTemplate']) {
-      expect(tester.widget<TextField>(find.byKey(Key(key))).decoration!.helperText,
+      expect(tester.widget<TextField>(find.byKey(Key(key))).decoration!.helper,
           isNull, reason: key);
     }
     await tester.enterText(find.byKey(const Key('LastNames')), '');
