@@ -1169,6 +1169,34 @@ void main() {
       expect(previewText(tester), before);
     });
 
+    testWidgets('Create and Delete close the keyboard, and the field '
+        'doesn\'t take the focus back after the dialog', (tester) async {
+      await pumpApp(tester, book);
+      bool fieldFocused() => tester
+          .widgetList<EditableText>(find.byType(EditableText))
+          .any((e) => e.focusNode.hasFocus);
+
+      for (final (button, answer) in [
+        (kCreateButton, 'Cancel'),
+        (kCreateButton, 'Create'),
+        (kDeleteButton, 'Delete'),
+      ]) {
+        await tester.tap(find.byKey(const Key('EmailAddressTemplate')));
+        await tester.pump();
+        expect(fieldFocused(), isTrue);
+        expect(tester.testTextInput.isVisible, isTrue);
+
+        await tapAndOpenDialog(tester, button);
+        await tester.tap(dialogButton(answer));
+        await tester.pumpAndSettle();
+        expect(fieldFocused(), isFalse, reason: '$button, $answer');
+        expect(tester.testTextInput.isVisible, isFalse,
+            reason: '$button, $answer');
+        await tester.pumpAndSettle(const Duration(seconds: 5));
+      }
+      expect(book.all, isEmpty);
+    });
+
     testWidgets('an error or a refused permission leaves it as it was',
         (tester) async {
       await pumpApp(tester, book);

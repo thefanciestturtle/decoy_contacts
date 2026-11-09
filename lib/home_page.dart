@@ -98,8 +98,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   @override
   void didChangeMetrics() {
     // Like a text field does for its caret: only when the keyboard opens or
-    // grows, not when it closes or the screen rotates, so the page doesn't
-    // jump back to the field after the user scrolled away from it.
+    // grows (which can include a rotation), not when it closes, so the page
+    // doesn't jump back to the field after the user scrolled away from it.
     if (!mounted) return;
     final double inset = View.of(context).viewInsets.bottom;
     if (inset > _lastBottomInset) _scheduleRevealPreview();
@@ -258,6 +258,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     required String Function(R result) describe,
   }) async {
     if (_isBusy) return;
+    // Close the keyboard, so the dialog, the spinner and the result can be
+    // seen. (Otherwise the field gets the focus back after the dialog, the
+    // keyboard opens again and the page scrolls back up to the field.)
+    FocusManager.instance.primaryFocus?.unfocus();
     _statusRequest++; // a status count still running is out of date
     _statusOutdated = true;
     setState(() { _isBusy = true; });

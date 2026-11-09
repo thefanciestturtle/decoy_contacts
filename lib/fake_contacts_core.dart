@@ -72,7 +72,15 @@ class FakeName {
   String toString() => displayName;
 }
 
-/// Every first-name/last-name combination, grouped by last name.
+/// The first of [allCombinations], without building them all: the first
+/// first name with the first last name. Null if either list is empty.
+FakeName? firstCombination(List<String> firstNames, List<String> lastNames) =>
+    firstNames.isEmpty || lastNames.isEmpty
+        ? null
+        : FakeName(firstNames.first, lastNames.first);
+
+/// Every first-name/last-name combination, grouped by last name. Starts
+/// with [firstCombination].
 List<FakeName> allCombinations(List<String> firstNames, List<String> lastNames) {
   return [
     for (final last in lastNames)

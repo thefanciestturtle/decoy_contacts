@@ -80,13 +80,13 @@ Confirmation deleteConfirmation(DeletePreview preview) => (
 /// With [spoken], the same for a screen reader: commas instead of the dots,
 /// and words for the signs.
 String settingsPreviewMessage(SettingsPreview preview, {bool spoken = false}) {
-  final sample = preview.sample;
-  if (sample == null) {
+  final n = preview.combinations;
+  if (n == 0) {
     final bNoLast = preview.lastNames == 0, bNoFirst = preview.firstNames == 0;
     if (bNoLast && bNoFirst) return "Enter at least one last name and one first name.";
     return bNoLast ? "Enter at least one last name." : "Enter at least one first name.";
   }
-  final n = preview.combinations;
+  final sample = preview.sample!;
   final sSum = [
     _count(preview.lastNames, "last name"),
     spoken ? " times " : " × ",

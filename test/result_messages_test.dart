@@ -62,6 +62,14 @@ void main() {
       expect(sampleLine('', ''), 'For example: Zoe Zen');
     });
 
+    test('an example without combinations is a mistake', () {
+      expect(
+          () => SettingsPreview(lastNames: 0, firstNames: 2, sample: kZoeZen),
+          throwsAssertionError);
+      expect(() => SettingsPreview(lastNames: 3, firstNames: 2, sample: null),
+          throwsAssertionError);
+    });
+
     test('says what is missing when the settings make none', () {
       expect(settingsPreviewMessage(settingsMake(0, 28)),
           'Enter at least one last name.');

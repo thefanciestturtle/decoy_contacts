@@ -54,11 +54,12 @@ class SettingsPreview {
   /// The first fake the settings make, or null if they make none.
   final FakeSample? sample;
 
+  /// [sample] is null exactly when there are no combinations.
   const SettingsPreview({
     required this.lastNames,
     required this.firstNames,
     required this.sample,
-  });
+  }) : assert((sample == null) == (lastNames * firstNames == 0));
 
   /// How many fakes the settings make: every last name with every first
   /// name. Create adds those that don't exist yet.
@@ -71,14 +72,14 @@ class SettingsPreview {
 SettingsPreview previewSettings(Settings settings) {
   final lastNames = settings.lastNames;
   final firstNames = settings.firstNames;
+  final first = firstCombination(firstNames, lastNames);
   return SettingsPreview(
     lastNames: lastNames.length,
     firstNames: firstNames.length,
-    // The first of allCombinations: first last name, first first name.
-    sample: lastNames.isEmpty || firstNames.isEmpty
+    sample: first == null
         ? null
-        : _sampleOf(entryFor(FakeName(firstNames.first, lastNames.first),
-            settings.phoneTemplate, settings.emailTemplate)),
+        : _sampleOf(
+            entryFor(first, settings.phoneTemplate, settings.emailTemplate)),
   );
 }
 
