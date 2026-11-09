@@ -86,7 +86,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
           : emailTemplateWarning(settings.emailTemplate,
               firstNames: settings.firstNames, lastNames: settings.lastNames),
     );
-    if (checks != _checks) setState(() => _checks = checks);
+    if (checks != _checks) {
+      setState(() => _checks = checks);
+      // A warning under a template field moves the preview down.
+      _scheduleRevealPreview();
+    }
   }
 
   // The text fields are the single source of truth for the settings. They

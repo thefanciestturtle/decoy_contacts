@@ -17,6 +17,18 @@ const String kDefaultPreview =
     '27 last names × 28 first names = 756 fake contacts.\n'
     'For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com';
 
+/// Shows [app] (by default the app without a contacts plugin), and unmounts
+/// it again while the test still runs: an edit that wasn't saved yet (say,
+/// the test failed) is saved on dispose, and must not land in the next
+/// test's settings.
+Future<void> pumpMyApp(WidgetTester tester, [Widget app = const MyApp()]) async {
+  addTearDown(() async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+  await tester.pumpWidget(app);
+}
+
 /// The preview under the fields, or null if there is none.
 String? previewText(WidgetTester tester) {
   final found = find.byKey(const Key('Preview'));
@@ -78,7 +90,7 @@ void main() {
 
   testWidgets('Home screen shows the settings fields and action buttons',
       (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
+    await pumpMyApp(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('Last names'), findsOneWidget);
@@ -97,7 +109,7 @@ void main() {
 
   testWidgets('First launch fills in the default settings',
       (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
+    await pumpMyApp(tester);
     await tester.pumpAndSettle();
 
     expect(find.textContaining('FIRST.LAST@example.com'), findsOneWidget);
@@ -116,7 +128,7 @@ void main() {
       'sPhoneNumberTemplate': kLegacyDefaultPhoneTemplate,
       'sEmailAddressTemplate': kDefaultEmailTemplate,
     });
-    await tester.pumpWidget(const MyApp());
+    await pumpMyApp(tester);
     await tester.pumpAndSettle();
 
     expect(find.text(kDefaultPhoneTemplate), findsOneWidget);
@@ -132,7 +144,7 @@ void main() {
       'sPhoneNumberTemplate': '+15555550nnn',
       'sEmailAddressTemplate': kDefaultEmailTemplate,
     });
-    await tester.pumpWidget(const MyApp());
+    await pumpMyApp(tester);
     await tester.pumpAndSettle();
 
     expect(find.text('+15555550nnn'), findsOneWidget);
@@ -140,7 +152,7 @@ void main() {
 
   testWidgets('Edits are saved once typing pauses, not on every keystroke',
       (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
+    await pumpMyApp(tester);
     await tester.pumpAndSettle();
     final prefs = await SharedPreferences.getInstance();
 
@@ -156,7 +168,7 @@ void main() {
 
   testWidgets('An edit survives a rebuild (settings are not reloaded)',
       (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
+    await pumpMyApp(tester);
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byKey(const Key('FirstNames')), 'Zelda');
@@ -174,7 +186,7 @@ void main() {
     tester.view.devicePixelRatio = 2.0;
     addTearDown(tester.view.reset);
 
-    await tester.pumpWidget(const MyApp());
+    await pumpMyApp(tester);
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
 
@@ -186,7 +198,7 @@ void main() {
 
   testWidgets('Delete button text is readable and it greys out when disabled',
       (WidgetTester tester) async {
-    await tester.pumpWidget(const MyApp());
+    await pumpMyApp(tester);
     await tester.pumpAndSettle();
 
     final button = tester.widget<FilledButton>(find.byType(FilledButton));
@@ -213,7 +225,7 @@ void main() {
     });
     final book = InMemoryContactsGateway();
     final alice = book.add('Alice Example');
-    await tester.pumpWidget(MyApp(contacts: book));
+    await pumpMyApp(tester, MyApp(contacts: book));
     await tester.pumpAndSettle();
     final scrollable = find.byType(Scrollable).first;
 
@@ -258,7 +270,7 @@ void main() {
   group('preview under the fields (U2)', () {
     testWidgets('shows what the settings make, with an example',
         (WidgetTester tester) async {
-      await tester.pumpWidget(const MyApp());
+      await pumpMyApp(tester);
       await tester.pumpAndSettle();
 
       expect(previewText(tester), kDefaultPreview);
@@ -278,7 +290,7 @@ void main() {
 
     testWidgets('follows every edit at once, before it is saved',
         (WidgetTester tester) async {
-      await tester.pumpWidget(const MyApp());
+      await pumpMyApp(tester);
       await tester.pumpAndSettle();
       final prefs = await SharedPreferences.getInstance();
 
@@ -324,7 +336,7 @@ void main() {
 
     testWidgets('moving only the cursor doesn\'t rebuild it',
         (WidgetTester tester) async {
-      await tester.pumpWidget(const MyApp());
+      await pumpMyApp(tester);
       await tester.pumpAndSettle();
       final field = find.byKey(const Key('LastNames'));
       await tester.tap(field);
@@ -373,7 +385,7 @@ void main() {
         kLedgerPrefsKey: '{"1": "Zoe Zen"}',
       });
       final book = InMemoryContactsGateway()..add('Zoe Zen');
-      await tester.pumpWidget(MyApp(contacts: book));
+      await pumpMyApp(tester, MyApp(contacts: book));
       await tester.pumpAndSettle();
       final reads = book.getAllCalls;
       expect(reads, greaterThan(0));
@@ -412,7 +424,7 @@ void main() {
       for (final key in ['EmailAddressTemplate', 'PhoneNumberTemplate']) {
         testWidgets(key, (WidgetTester tester) async {
           phoneScreen(tester);
-          await tester.pumpWidget(const MyApp());
+          await pumpMyApp(tester);
           await tester.pumpAndSettle();
 
           await editWithKeyboard(tester, Key(key), 885);
@@ -440,7 +452,7 @@ void main() {
         phoneScreen(tester);
         tester.platformDispatcher.textScaleFactorTestValue = 1.3;
         addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-        await tester.pumpWidget(const MyApp());
+        await pumpMyApp(tester);
         await tester.pumpAndSettle();
         const key = Key('EmailAddressTemplate');
         await editWithKeyboard(tester, key, 885);
@@ -460,7 +472,7 @@ void main() {
       testWidgets('also when moving to it from another field with the '
           'keyboard open', (WidgetTester tester) async {
         shortPhoneScreen(tester);
-        await tester.pumpWidget(const MyApp());
+        await pumpMyApp(tester);
         await tester.pumpAndSettle();
         await editWithKeyboard(tester, const Key('FirstNames'), 885);
 
@@ -483,7 +495,7 @@ void main() {
       testWidgets('also when code changes the template',
           (WidgetTester tester) async {
         phoneScreen(tester);
-        await tester.pumpWidget(const MyApp());
+        await pumpMyApp(tester);
         await tester.pumpAndSettle();
         const key = Key('EmailAddressTemplate');
         await editWithKeyboard(tester, key, 885);
@@ -507,7 +519,7 @@ void main() {
         tester.platformDispatcher.textScaleFactorTestValue = 2.0;
         addTearDown(tester.view.reset);
         addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-        await tester.pumpWidget(const MyApp());
+        await pumpMyApp(tester);
         await tester.pumpAndSettle();
         const key = Key('EmailAddressTemplate');
         await editWithKeyboard(tester, key, 570);
@@ -536,7 +548,7 @@ void main() {
       testWidgets('but not while the names are edited',
           (WidgetTester tester) async {
         shortPhoneScreen(tester);
-        await tester.pumpWidget(const MyApp());
+        await pumpMyApp(tester);
         await tester.pumpAndSettle();
 
         for (final key in ['LastNames', 'FirstNames']) {
@@ -566,7 +578,7 @@ void main() {
         tester.platformDispatcher.textScaleFactorTestValue = 2.0;
         addTearDown(tester.view.reset);
         addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-        await tester.pumpWidget(const MyApp());
+        await pumpMyApp(tester);
         await tester.pumpAndSettle();
 
         for (final key in ['EmailAddressTemplate', 'PhoneNumberTemplate']) {
@@ -594,7 +606,7 @@ void main() {
         tester.platformDispatcher.textScaleFactorTestValue = 2.0;
         addTearDown(tester.view.reset);
         addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-        await tester.pumpWidget(const MyApp());
+        await pumpMyApp(tester);
         await tester.pumpAndSettle();
         const key = Key('EmailAddressTemplate');
         await editWithKeyboard(tester, key, 570);
@@ -630,7 +642,7 @@ void main() {
         tester.widget<TextField>(find.byKey(Key(key))).decoration!.helperText;
 
     testWidgets('no warnings with the defaults', (WidgetTester tester) async {
-      await tester.pumpWidget(const MyApp());
+      await pumpMyApp(tester);
       await tester.pumpAndSettle();
       for (final key in ['PhoneNumberTemplate', 'EmailAddressTemplate']) {
         expect(warningUnder(tester, key), isNull, reason: key);
@@ -639,7 +651,7 @@ void main() {
 
     testWidgets('warnings follow the typing, under the field they concern',
         (WidgetTester tester) async {
-      await tester.pumpWidget(const MyApp());
+      await pumpMyApp(tester);
       await tester.pumpAndSettle();
 
       await type(tester, 'PhoneNumberTemplate', '+447700900123');
@@ -675,7 +687,7 @@ void main() {
 
     testWidgets('a warning is read out with its field', (WidgetTester tester) async {
       final semantics = tester.ensureSemantics();
-      await tester.pumpWidget(const MyApp());
+      await pumpMyApp(tester);
       await tester.pumpAndSettle();
       await type(tester, 'PhoneNumberTemplate', '+447700900123');
 
@@ -688,9 +700,36 @@ void main() {
       await tester.pumpAndSettle(kSaveDelay);
     });
 
+    testWidgets('a new warning doesn\'t push the preview under the keyboard',
+        (WidgetTester tester) async {
+      // A short phone (411 x 686 dp), the keyboard 337 dp high.
+      tester.view.physicalSize = const Size(1080, 1800);
+      tester.view.devicePixelRatio = 2.625;
+      addTearDown(tester.view.reset);
+      await pumpMyApp(tester);
+      await tester.pumpAndSettle();
+      // With no names the preview is only the hint, which no template
+      // changes: only the warning can move it.
+      await type(tester, 'LastNames', '');
+      await type(tester, 'FirstNames', '');
+      const key = Key('EmailAddressTemplate');
+      await editWithKeyboard(tester, key, 885);
+      final before = previewText(tester);
+
+      await tester.enterText(find.byKey(key), 'FIRST.LAST');
+      await tester.pumpAndSettle();
+      expect(previewText(tester), before);
+      expect(warningUnder(tester, 'EmailAddressTemplate'), isNotNull);
+      final visible = visibleArea(tester);
+      final preview = tester.getRect(find.byKey(const Key('Preview')));
+      expect(containsVertically(visible, preview), isTrue,
+          reason: 'preview $preview should be within $visible');
+      await tester.pumpAndSettle(kSaveDelay);
+    });
+
     testWidgets('a disabled Create tells TalkBack why', (WidgetTester tester) async {
       final semantics = tester.ensureSemantics();
-      await tester.pumpWidget(const MyApp());
+      await pumpMyApp(tester);
       await tester.pumpAndSettle();
       SemanticsNode create() =>
           tester.getSemantics(find.widgetWithText(ElevatedButton, 'Create Fake Contacts'));
@@ -708,7 +747,7 @@ void main() {
 
     testWidgets('the phone template gets a keyboard with letters, so n can be '
         'typed', (WidgetTester tester) async {
-      await tester.pumpWidget(const MyApp());
+      await pumpMyApp(tester);
       await tester.pumpAndSettle();
       final field =
           tester.widget<TextField>(find.byKey(const Key('PhoneNumberTemplate')));
@@ -724,7 +763,7 @@ void main() {
       tester.platformDispatcher.textScaleFactorTestValue = 2.0;
       addTearDown(tester.view.reset);
       addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-      await tester.pumpWidget(const MyApp());
+      await pumpMyApp(tester);
       await tester.pumpAndSettle();
 
       // The longest warnings: two sentences under the phone template, and

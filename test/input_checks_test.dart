@@ -54,6 +54,17 @@ void main() {
           'A phone number can\'t contain "a", "b", "c", "d", "e" or 3 more.');
     });
 
+    test('an emoji with a skin tone, and a letter with an accent, are named '
+        'whole', () {
+      expect(phoneTemplateWarning('+44 \u{1F44D}\u{1F3FD} nnn'),
+          'A phone number can\'t contain "\u{1F44D}\u{1F3FD}".');
+      expect(phoneTemplateWarning('+44 7700 900nn\u0301'),
+          'A phone number can\'t contain "n\u0301".');
+      // A lone accent can't be seen on its own.
+      expect(phoneTemplateWarning('\u0301+44 7700 900nnn'),
+          'A phone number can\'t contain U+0301.');
+    });
+
     test('characters that can\'t be seen are named by their code', () {
       expect(phoneTemplateWarning('+44\u200B7700\u00A0900nnn'),
           'A phone number can\'t contain U+200B or U+00A0.');
@@ -142,9 +153,10 @@ void main() {
       // A curly apostrophe (as autocorrect types it) in a domain.
       expect(email('FIRST@LAST.com', last: ['O\u2019Brien']),
           one('O\u2019Brien'));
-      // A zero-width space, which isn't white space.
+      // A zero-width space, which isn't white space, and is named so it
+      // can be seen.
       expect(email(kDefaultEmailTemplate, first: ['Zo\u200Be']),
-          one('Zo\u200Be'));
+          one('Zo<U+200B>e'));
       expect(email(kDefaultEmailTemplate, first: ['Zoe\u{1F600}']),
           one('Zoe\u{1F600}'));
       expect(email('FIRST@LAST.com', last: ['Müller', 'Жуков']), isNull);
@@ -166,6 +178,19 @@ void main() {
           email(kDefaultEmailTemplate, first: ['Lee Ann'], last: ['Lee Ann']),
           '"Lee Ann" can\'t be part of an email address, so those addresses '
           'won\'t work.');
+    });
+
+    test('length limits: 64 before the @, 63 per domain label, 254 in all',
+        () {
+      expect(email('${'x' * 63}FIRST@example.com', first: ['']), isNull);
+      expect(email('${'x' * 64}FIRST@example.com'), kNotAnAddress);
+      expect(email('FIRST@${'x' * 63}.example'), isNull);
+      expect(email('FIRST@${'x' * 64}.example'), kNotAnAddress);
+      final long = List.filled(5, 'x' * 60).join('.');
+      expect(email('FIRST@$long.com'), kNotAnAddress);
+      expect(email(kDefaultEmailTemplate, first: ['Z' * 70]),
+          '"${'Z' * 70}" can\'t be part of an email address, so those '
+          'addresses won\'t work.');
     });
 
     test('a template that isn\'t an address says only that', () {
