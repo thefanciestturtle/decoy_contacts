@@ -17,7 +17,6 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-readonly APP_ID=me.billdietrich.fake_contacts
 readonly APK=build/app/outputs/flutter-apk/app-debug.apk
 
 wipe=false
@@ -26,15 +25,7 @@ if [[ "${1:-}" == --wipe-contacts ]]; then
   shift
 fi
 
-serial="${ANDROID_SERIAL:-$(adb get-serialno)}"
-adb_() { adb -s "$serial" "$@"; }
-
-if [[ "$(adb_ shell getprop ro.boot.qemu | tr -d '\r')" != 1 &&
-      "$(adb_ shell getprop ro.kernel.qemu | tr -d '\r')" != 1 ]]; then
-  echo "error: $serial is not an emulator. These tests change the address" \
-       "book, so they only run on an emulator." >&2
-  exit 1
-fi
+source tool/emulator_lib.sh
 
 echo "== Installing the app and granting the contacts permission"
 flutter build apk --debug
