@@ -49,8 +49,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// settings are loaded. Worked out once per change of the settings, also
   /// when code changes the fields, but not when only the cursor or the
   /// selection moves.
-  final ValueNotifier<({String text, String spoken})?> _preview =
-      ValueNotifier(null);
+  final ValueNotifier<({String text, String spoken, (int, int)? spellOut})?>
+      _preview = ValueNotifier(null);
   Settings? _previewSettings;
 
   /// Called on any change to a text field, the cursor included.
@@ -63,6 +63,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     _preview.value = (
       text: settingsPreviewMessage(preview),
       spoken: settingsPreviewMessage(preview, spoken: true),
+      spellOut: spokenPhoneNumberRange(preview),
     );
   }
 
@@ -276,9 +277,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     // scrolls back up to the field.) A focused button keeps the focus, for
     // people using a keyboard, D-pad or Switch Access.
     final focus = FocusManager.instance.primaryFocus;
-    if (focus?.context?.findAncestorStateOfType<EditableTextState>() != null) {
-      focus!.unfocus();
-    }
+    if (_editableOf(focus) != null) focus!.unfocus();
     _statusRequest++; // a status count still running is out of date
     _statusOutdated = true;
     setState(() { _isBusy = true; });
@@ -367,6 +366,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   final GlobalKey _previewBox = GlobalKey();
   bool _revealScheduled = false;
 
+  /// The text field that [focus] belongs to, if any.
+  static EditableTextState? _editableOf(FocusNode? focus) =>
+      focus?.context?.findAncestorStateOfType<EditableTextState>();
+
   /// Calls [_revealPreview] after the next frame, once the preview and the
   /// keyboard have their new size, if a template field has the focus.
   void _scheduleRevealPreview() {
@@ -392,8 +395,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     final focus = _phoneFocus.hasFocus
         ? _phoneFocus
         : (_emailFocus.hasFocus ? _emailFocus : null);
-    final editable =
-        focus?.context?.findAncestorStateOfType<EditableTextState>();
+    final editable = _editableOf(focus);
     final previewContext = _previewBox.currentContext;
     final preview = previewContext?.findRenderObject();
     if (editable == null || previewContext == null || preview is! RenderBox) {
@@ -499,12 +501,23 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                       valueListenable: _preview,
                       builder: (context, preview, _) => preview == null
                           ? const SizedBox.shrink()
-                          : Text(
-                              preview.text,
-                              key: keyPreview,
-                              semanticsLabel: preview.spoken,
-                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                  color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          : Semantics(
+                              container: true,
+                              // The phone number digit by digit.
+                              attributedLabel: AttributedString(preview.spoken,
+                                  attributes: [
+                                    if (preview.spellOut case (final start, final end))
+                                      SpellOutStringAttribute(
+                                          range: TextRange(start: start, end: end)),
+                                  ]),
+                              child: ExcludeSemantics(
+                                child: Text(
+                                  preview.text,
+                                  key: keyPreview,
+                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                      color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                ),
+                              ),
                             ),
                     ),
                   ),

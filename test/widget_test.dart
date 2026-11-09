@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -260,9 +261,18 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(previewText(tester), kDefaultPreview);
-      expect(tester.widget<Text>(find.byKey(const Key('Preview'))).semanticsLabel,
+
+      // What TalkBack reads: words instead of signs, and the phone number
+      // digit by digit.
+      final semantics = tester.ensureSemantics();
+      final label =
+          tester.getSemantics(find.byKey(const Key('Preview'))).attributedLabel;
+      expect(label.string,
           '27 last names times 28 first names makes 756 fake contacts.\n'
           'For example: Zoe Zen, +447700900010, Zoe.Zen@example.com');
+      final spellOut = label.attributes.single as SpellOutStringAttribute;
+      expect(spellOut.range.textInside(label.string), '+447700900010');
+      semantics.dispose();
     });
 
     testWidgets('follows every edit at once, before it is saved',

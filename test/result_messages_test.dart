@@ -70,6 +70,27 @@ void main() {
           throwsAssertionError);
     });
 
+    test('where the phone number is in the spoken text', () {
+      String? spokenPhone(SettingsPreview preview) {
+        final range = spokenPhoneNumberRange(preview);
+        if (range == null) return null;
+        return settingsPreviewMessage(preview, spoken: true)
+            .substring(range.$1, range.$2);
+      }
+
+      expect(spokenPhone(settingsMake(27, 28)), '+447700900010');
+      expect(spokenPhone(settingsMake(1, 1)), '+447700900010');
+      expect(
+          spokenPhone(settingsMake(2, 3,
+              sample: (name: 'Zoe Zen', phone: '+1 555 0105', email: ''))),
+          '+1 555 0105');
+      expect(
+          spokenPhone(settingsMake(2, 3,
+              sample: (name: 'Zoe Zen', phone: '', email: 'z@example.org'))),
+          isNull);
+      expect(spokenPhone(settingsMake(0, 3)), isNull);
+    });
+
     test('says what is missing when the settings make none', () {
       expect(settingsPreviewMessage(settingsMake(0, 28)),
           '0 last names × 28 first names = no fake contacts.\n'

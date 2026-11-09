@@ -90,14 +90,7 @@ const String kEnterNamesHint = "Enter at least one last name and one first name.
 ///     Enter at least one last name.
 String settingsPreviewMessage(SettingsPreview preview, {bool spoken = false}) {
   final n = preview.combinations;
-  final sSum = [
-    _count(preview.lastNames, "last name"),
-    spoken ? " times " : " × ",
-    _count(preview.firstNames, "first name"),
-    spoken ? " makes " : " = ",
-    n == 0 ? "no fake contacts" : _fakeContacts(n),
-    n == 1 ? ":" : ".",
-  ].join();
+  final sSum = _previewSum(preview, spoken: spoken);
   if (n == 0) {
     final bNoLast = preview.lastNames == 0, bNoFirst = preview.firstNames == 0;
     final sHint = bNoLast && bNoFirst
@@ -108,8 +101,42 @@ String settingsPreviewMessage(SettingsPreview preview, {bool spoken = false}) {
   final sample = preview.sample!;
   final sSample = [sample.name, sample.phone, sample.email]
       .where((s) => s.isNotEmpty)
-      .join(spoken ? ", " : " · ");
-  return "$sSum\n${n == 1 ? "" : "For example: "}$sSample";
+      .join(spoken ? _kSpokenSeparator : " · ");
+  return "$sSum\n${_exampleIntro(n)}$sSample";
+}
+
+const String _kSpokenSeparator = ", ";
+
+String _exampleIntro(int combinations) =>
+    combinations == 1 ? "" : "For example: ";
+
+/// The first line of the preview, e.g. "27 last names × 28 first names =
+/// 756 fake contacts."
+String _previewSum(SettingsPreview preview, {required bool spoken}) {
+  final n = preview.combinations;
+  return [
+    _count(preview.lastNames, "last name"),
+    spoken ? " times " : " × ",
+    _count(preview.firstNames, "first name"),
+    spoken ? " makes " : " = ",
+    n == 0 ? "no fake contacts" : _fakeContacts(n),
+    n == 1 ? ":" : ".",
+  ].join();
+}
+
+/// Where the example's phone number is in the spoken preview (see
+/// [settingsPreviewMessage]), as (start, end), so a screen reader can be
+/// told to read it digit by digit rather than as one big number. Null if
+/// the example has no phone number.
+(int, int)? spokenPhoneNumberRange(SettingsPreview preview) {
+  final sample = preview.sample;
+  if (sample == null || sample.phone.isEmpty) return null;
+  final start = _previewSum(preview, spoken: true).length +
+      "\n".length +
+      _exampleIntro(preview.combinations).length +
+      sample.name.length +
+      _kSpokenSeparator.length;
+  return (start, start + sample.phone.length);
 }
 
 /// The status line: how many fake contacts are on the phone, counting only
