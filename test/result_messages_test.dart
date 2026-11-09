@@ -73,7 +73,6 @@ void main() {
     test('where the phone number is in the spoken text', () {
       String? spokenPhone(SettingsPreview preview) {
         final spoken = spokenSettingsPreview(preview);
-        expect(spoken.text, settingsPreviewMessage(preview, spoken: true));
         final range = spoken.phoneNumber;
         if (range == null) return null;
         return spoken.text.substring(range.$1, range.$2);
@@ -105,13 +104,13 @@ void main() {
     });
 
     test('for a screen reader: words instead of signs and dots', () {
-      expect(settingsPreviewMessage(settingsMake(27, 28), spoken: true),
+      expect(spokenSettingsPreview(settingsMake(27, 28)).text,
           '27 last names times 28 first names makes 756 fake contacts.\n'
           'For example: Zoe Zen, +447700900010, Zoe.Zen@example.com');
-      expect(settingsPreviewMessage(settingsMake(1, 1), spoken: true),
+      expect(spokenSettingsPreview(settingsMake(1, 1)).text,
           '1 last name times 1 first name makes 1 fake contact:\n'
           'Zoe Zen, +447700900010, Zoe.Zen@example.com');
-      expect(settingsPreviewMessage(settingsMake(0, 1), spoken: true),
+      expect(spokenSettingsPreview(settingsMake(0, 1)).text,
           '0 last names times 1 first name makes no fake contacts.\n'
           'Enter at least one last name.');
     });

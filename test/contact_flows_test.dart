@@ -1197,30 +1197,41 @@ void main() {
       expect(book.all, isEmpty);
     });
 
-    testWidgets('the fields can\'t be edited while Create runs, so it '
-        'always shows what Create is using', (tester) async {
+    testWidgets('the fields are disabled while Create runs, so it always '
+        'shows what Create is using', (tester) async {
       final slow = _SlowPermission();
       await pumpApp(tester, slow);
       const keys = ['LastNames', 'FirstNames', 'PhoneNumberTemplate',
           'EmailAddressTemplate'];
-      List<bool> readOnly() => [
+      List<bool> enabled() => [
             for (final k in keys)
-              tester.widget<TextField>(find.byKey(Key(k))).readOnly,
+              tester.widget<TextField>(find.byKey(Key(k))).enabled ?? true,
           ];
-      expect(readOnly(), everyElement(isFalse));
+      expect(enabled(), everyElement(isTrue));
+      final buttonAt = tester.getTopLeft(find.text(kDeleteButton));
 
       await tester.tap(find.text(kCreateButton));
       await tester.pump();
-      expect(readOnly(), everyElement(isTrue), reason: 'asking for permission');
+      expect(enabled(), everyElement(isFalse), reason: 'asking for permission');
+      // So it can't take the focus, and no keyboard opens by itself later.
+      await tester.tap(find.byKey(const Key('EmailAddressTemplate')),
+          warnIfMissed: false);
+      await tester.pump();
+      expect(tester.testTextInput.isVisible, isFalse);
       slow.permission.complete(true);
       await tester.pumpAndSettle();
       expect(find.byType(AlertDialog), findsOneWidget);
-      expect(readOnly(), everyElement(isTrue), reason: 'dialog open');
+      expect(enabled(), everyElement(isFalse), reason: 'dialog open');
+      // Nothing moves behind the dialog.
+      expect(tester.getTopLeft(find.text(kDeleteButton)), buttonAt);
       await tester.tap(dialogButton('Create'));
       await tester.pumpAndSettle();
 
-      expect(readOnly(), everyElement(isFalse));
+      expect(enabled(), everyElement(isTrue));
       expect(slow.all, hasLength(4));
+      expect(tester.testTextInput.isVisible, isFalse);
+      expect(FocusManager.instance.primaryFocus?.context?.widget,
+          isNot(isA<EditableText>()));
     });
 
     testWidgets('an error or a refused permission leaves it as it was',

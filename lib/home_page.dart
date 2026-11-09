@@ -69,8 +69,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   }
 
   // The text fields are the single source of truth for the settings. They
-  // are read-only while Create or Delete runs, so the preview always shows
-  // what the action is using.
+  // are disabled while Create or Delete runs, so the preview always shows
+  // what the action is using. (Disabled, not just read-only: a read-only
+  // field can still take the focus, and its keyboard would then open by
+  // itself when the action ends; and TalkBack says a disabled field is.)
   Settings get _settings => Settings(
         lastNamesText: lastNamesController.text,
         firstNamesText: firstNamesController.text,
@@ -436,6 +438,12 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       enabledBorder: const OutlineInputBorder(
         borderSide: BorderSide(color: Colors.greenAccent, width: 5.0),
       ),
+      // The same look, greyed, while disabled (before the settings load and
+      // during Create or Delete); without it the fields would switch to a
+      // plain underline on every tap.
+      disabledBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: Colors.grey.shade400, width: 5.0),
+      ),
     );
   }
 
@@ -460,8 +468,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     key: keyLastNames,
                     controller: lastNamesController,
                     onChanged: _settingsChanged,
-                    enabled: _settingsLoaded,
-                    readOnly: _isBusy,
+                    enabled: bCanAct,
                     minLines: 1,
                     maxLines: 4,
                     decoration: _fieldDecoration('Last names'),
@@ -471,8 +478,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     key: keyFirstNames,
                     controller: firstNamesController,
                     onChanged: _settingsChanged,
-                    enabled: _settingsLoaded,
-                    readOnly: _isBusy,
+                    enabled: bCanAct,
                     minLines: 1,
                     maxLines: 4,
                     decoration: _fieldDecoration('First names'),
@@ -483,8 +489,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     controller: phoneNumberTemplateController,
                     focusNode: _phoneFocus,
                     onChanged: _settingsChanged,
-                    enabled: _settingsLoaded,
-                    readOnly: _isBusy,
+                    enabled: bCanAct,
                     keyboardType: TextInputType.phone,
                     decoration: _fieldDecoration('Phone number template'),
                   ),
@@ -494,8 +499,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     controller: emailAddressTemplateController,
                     focusNode: _emailFocus,
                     onChanged: _settingsChanged,
-                    enabled: _settingsLoaded,
-                    readOnly: _isBusy,
+                    enabled: bCanAct,
                     keyboardType: TextInputType.emailAddress,
                     autocorrect: false,
                     decoration: _fieldDecoration('Email address template'),

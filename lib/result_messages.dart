@@ -80,18 +80,16 @@ const String kEnterNamesHint = "Enter at least one last name and one first name.
 ///     27 last names × 28 first names = 756 fake contacts.
 ///     For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com
 ///
-/// With [spoken], the same for a screen reader: commas instead of the dots,
-/// and words for the signs.
-///
 /// With an empty name list it says so the same way, and which list to fill
 /// in:
 ///
 ///     0 last names × 28 first names = no fake contacts.
 ///     Enter at least one last name.
-String settingsPreviewMessage(SettingsPreview preview, {bool spoken = false}) =>
-    _settingsPreview(preview, spoken: spoken).text;
+String settingsPreviewMessage(SettingsPreview preview) =>
+    _settingsPreview(preview, spoken: false).text;
 
-/// The preview for a screen reader (see [settingsPreviewMessage]), and
+/// The preview for a screen reader (see [settingsPreviewMessage]): commas
+/// instead of the dots and words for the signs, and
 /// where the example's phone number is in it, as (start, end), so the
 /// screen reader can be told to read it digit by digit rather than as one
 /// big number. [phoneNumber] is null if the example has none.
