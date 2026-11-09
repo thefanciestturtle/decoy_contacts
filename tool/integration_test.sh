@@ -42,7 +42,11 @@ if $wipe; then
 fi
 
 echo "== Running the tests"
-flutter test integration_test/app_test.dart -d "$serial" "$@"
+tests=()
+for file in integration_test/*_test.dart; do
+  [[ "$file" == integration_test/permission_test.dart ]] || tests+=("$file")
+done
+flutter test "${tests[@]}" -d "$serial" "$@"
 
 echo "== Running the tests with the contacts permission permanently denied"
 # `flutter test` uninstalled the app at the end.

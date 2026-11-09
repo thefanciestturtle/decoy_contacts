@@ -338,10 +338,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
 
     void finish(String? message) {
       if (!mounted) return;
-      setState(() {
-        _isBusy = false;
-        _isConfirming = false;
-      });
+      setState(() { _isBusy = false; });
       if (message != null) _showResultSnackBar(message);
       unawaited(_refreshStatus());
     }
@@ -361,18 +358,21 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       case PermissionAnswer.denied:
         return finish(kPermissionDeniedMessage);
       case PermissionAnswer.permanentlyDenied:
-        if (!await _confirm(permissionSettings)) {
+        final bOpen = await _confirm(permissionSettings);
+        // Done before the settings open, so no spinner shows meanwhile.
+        finish(null);
+        if (!bOpen) {
           log("$name: settings not opened");
-          return finish(null);
+          return;
         }
         try {
           await widget.contacts.openSettings();
         } catch (e) {
           log("$name: error opening settings $e");
-          return finish(kOpenSettingsFailedMessage);
+          _showResultSnackBar(kOpenSettingsFailedMessage);
         }
-        // The status line is updated when the user comes back.
-        return finish(null);
+        // The status line is updated again when the user comes back.
+        return;
     }
 
     final P planned;
