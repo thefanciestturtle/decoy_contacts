@@ -9,14 +9,29 @@ class FlutterContactsGateway implements ContactsGateway {
   const FlutterContactsGateway();
 
   @override
-  Future<bool> requestPermission() async {
+  Future<PermissionAnswer> requestPermission() async {
     final status =
         await FlutterContacts.permissions.request(PermissionType.readWrite);
     if (status != PermissionStatus.granted) {
       log("FlutterContactsGateway: no permission, status $status");
     }
-    return status == PermissionStatus.granted;
+    return switch (status) {
+      PermissionStatus.granted => PermissionAnswer.granted,
+      // The plugin only reports this one on Android. (restricted and
+      // limited are iOS only.) It also reports it when the user leaves
+      // the very first dialog with Back or a tap outside it, though
+      // Android would still ask the next time: in both cases Android only
+      // says there's no need to explain why the app asks. Then the app
+      // offers the settings once when it needn't have, which does no harm;
+      // telling the two apart would mean guessing from how long the
+      // request took. (The app's activity is paused either way.)
+      PermissionStatus.permanentlyDenied => PermissionAnswer.permanentlyDenied,
+      _ => PermissionAnswer.denied,
+    };
   }
+
+  @override
+  Future<void> openSettings() => FlutterContacts.permissions.openSettings();
 
   @override
   Future<bool> hasPermission() async =>

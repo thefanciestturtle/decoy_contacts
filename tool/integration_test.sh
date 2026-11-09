@@ -12,7 +12,10 @@
 # Permission: the app is installed and granted the contacts permission with
 # `pm grant` before the tests run, so nobody has to tap the system dialog.
 # `flutter test` then reinstalls the app with `adb install -r`, which keeps
-# runtime permissions that were already granted.
+# runtime permissions that were already granted. After them,
+# integration_test/permission_test.dart runs with the permission
+# permanently denied instead (revoked and "user fixed", as two "Don't allow"
+# taps leave it), which also needs no tap.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -39,4 +42,14 @@ if $wipe; then
 fi
 
 echo "== Running the tests"
-flutter test integration_test -d "$serial" "$@"
+flutter test integration_test/app_test.dart -d "$serial" "$@"
+
+echo "== Running the tests with the contacts permission permanently denied"
+# `flutter test` uninstalled the app at the end.
+adb_ install -r -t "$APK"
+for permission in READ_CONTACTS WRITE_CONTACTS; do
+  adb_ shell pm revoke "$APP_ID" "android.permission.$permission"
+  adb_ shell pm set-permission-flags "$APP_ID" \
+    "android.permission.$permission" user-set user-fixed
+done
+flutter test integration_test/permission_test.dart -d "$serial" "$@"

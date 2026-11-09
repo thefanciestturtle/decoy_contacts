@@ -296,14 +296,19 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// ([preview]), ask the user to confirm that, run [action], and show the
   /// result.
   ///
+  /// If Android no longer asks for the permission, a dialog offers the
+  /// app's settings instead; after it the user taps the button again.
+  ///
   /// [nothingToDo] gives the message to show instead of the dialog when the
   /// preview finds nothing to do, else null. [action] works everything out
   /// again rather than trusting the preview, since the address book can
   /// change while the dialog is open; it gets the preview so it can refuse
   /// (by returning null) to do more than the user agreed to. [name] is used
-  /// in the log, [doing] in the message for an error in [action].
+  /// in the log, [verb] ("create" or "delete") in the settings dialog,
+  /// [doing] in the message for an error in [action].
   Future<void> _runContactsAction<P, R>({
     required String name,
+    required String verb,
     required String doing,
     required Future<P> Function(Settings settings) preview,
     required String? Function(Settings settings, P preview) nothingToDo,
@@ -339,8 +344,26 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     }
 
     log("$name: about to request permission");
-    if (!await widget.contacts.requestPermission()) {
-      return finish(kPermissionDeniedMessage);
+    switch (await widget.contacts.requestPermission()) {
+      case PermissionAnswer.granted:
+        break;
+      case PermissionAnswer.denied:
+        return finish(kPermissionDeniedMessage);
+      case PermissionAnswer.permanentlyDenied:
+        if (!mounted) return;
+        setState(() { _isConfirming = true; });
+        if (!await _confirm(permissionSettingsConfirmation(verb))) {
+          log("$name: settings not opened");
+          return finish(null);
+        }
+        try {
+          await widget.contacts.openSettings();
+        } catch (e) {
+          log("$name: error opening settings $e");
+          return finish(kOpenSettingsFailedMessage);
+        }
+        // The status line is updated when the user comes back.
+        return finish(null);
     }
 
     final P planned;
@@ -375,6 +398,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
 
   Future<void> _createAllContacts() => _runContactsAction(
         name: "_createAllContacts",
+        verb: "create",
         doing: "creating",
         preview: (settings) =>
             previewCreate(widget.contacts, widget.ledgerStore, settings),
@@ -390,6 +414,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
 
   Future<void> _deleteAllContacts() => _runContactsAction(
         name: "_deleteAllContacts",
+        verb: "delete",
         doing: "deleting",
         preview: (settings) =>
             previewDelete(widget.contacts, widget.ledgerStore, settings),

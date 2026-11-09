@@ -6,6 +6,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:fake_contacts/contacts_gateway.dart';
 import 'package:fake_contacts/fake_contacts_core.dart';
 import 'package:fake_contacts/home_page.dart';
 import 'package:fake_contacts/main.dart';
@@ -267,6 +268,45 @@ void main() {
     expect(find.widgetWithText(TextButton, 'Delete').hitTestable(),
         findsOneWidget);
   });
+
+  testWidgets('The dialog that offers the settings fits a small screen at a '
+      'large font size (U5)', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(640, 1136);
+    tester.view.devicePixelRatio = 2.0;
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final book = InMemoryContactsGateway()
+      ..permission = PermissionAnswer.permanentlyDenied;
+    await pumpMyApp(tester, MyApp(contacts: book));
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(find.text('Delete Fake Contacts'), 100,
+        scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.text('Delete Fake Contacts'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    final dialog = find.byType(AlertDialog);
+    expect(find.descendant(of: dialog, matching: find.text('Contacts access is off')),
+        findsOneWidget);
+    for (final label in ['Cancel', 'Open settings']) {
+      expect(find.widgetWithText(TextButton, label).hitTestable(),
+          findsOneWidget);
+    }
+    // The text scrolls to its end, with nothing cut off.
+    final body = find.descendant(of: dialog, matching: find.byType(Scrollable));
+    await tester.drag(body, const Offset(0, -2000));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(
+        tester.getRect(find.textContaining('then Allow.')).bottom,
+        lessThanOrEqualTo(tester.getRect(body).bottom + 0.01));
+    await tester.tap(find.widgetWithText(TextButton, 'Open settings'));
+    await tester.pumpAndSettle();
+    expect(book.openSettingsCalls, 1);
+  });
+
   group('preview under the fields (U2)', () {
     testWidgets('shows what the settings make, with an example',
         (WidgetTester tester) async {

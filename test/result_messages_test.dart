@@ -139,6 +139,19 @@ void main() {
     expect(kPermissionDeniedMessage, 'Permission to access contacts was denied.');
   });
 
+  test('permission permanently denied: the dialog that offers the settings '
+      '(U5)', () {
+    expect(permissionSettingsConfirmation('create'), (
+      title: 'Contacts access is off',
+      body: 'To create fake contacts, this app needs access to your contacts.'
+          ' In Settings, tap Permissions, then Contacts, then Allow.',
+      action: 'Open settings',
+    ));
+    expect(permissionSettingsConfirmation('delete').body,
+        startsWith('To delete fake contacts, '));
+    expect(kOpenSettingsFailedMessage, "Couldn't open Settings.");
+  });
+
   test('status line', () {
     expect(statusMessage(toDelete(0)), 'No fake contacts on this phone.');
     expect(statusMessage(toDelete(1)), '1 fake contact on this phone.');

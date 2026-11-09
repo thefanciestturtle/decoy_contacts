@@ -38,10 +38,27 @@ class NewContact {
   });
 }
 
+/// The answer to a request for access to the contacts.
+enum PermissionAnswer {
+  granted,
+
+  /// Refused, but the app can ask again.
+  denied,
+
+  /// Refused, and Android won't ask the user again (after a second "Don't
+  /// allow", or "Don't ask again" on older versions): asking returns at
+  /// once without a dialog. Only the app's settings can allow it now.
+  permanentlyDenied,
+}
+
 /// The address book operations the app needs.
 abstract interface class ContactsGateway {
-  /// Asks for read/write access to the contacts. True if it was granted.
-  Future<bool> requestPermission();
+  /// Asks for read/write access to the contacts.
+  Future<PermissionAnswer> requestPermission();
+
+  /// Opens this app's page in the system settings, where the user can allow
+  /// access to the contacts.
+  Future<void> openSettings();
 
   /// True if read/write access to the contacts was already granted. Never
   /// asks the user.
