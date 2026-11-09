@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -614,4 +614,116 @@ void main() {
       });
     });
   });
+  group('input checks (U4)', () {
+    const kNoN = 'There is no n, so every contact gets the same number.';
+    const kNotAnAddress =
+        "This doesn't look like an email address (FIRST.LAST@example.com).";
+
+    Future<void> type(WidgetTester tester, String key, String text) async {
+      await tester.enterText(find.byKey(Key(key)), text);
+      await tester.pump();
+    }
+
+    /// The warning under the field with [key], or null.
+    String? warningUnder(WidgetTester tester, String key) =>
+        tester.widget<TextField>(find.byKey(Key(key))).decoration!.helperText;
+
+    testWidgets('no warnings with the defaults', (WidgetTester tester) async {
+      await tester.pumpWidget(const MyApp());
+      await tester.pumpAndSettle();
+      for (final key in ['PhoneNumberTemplate', 'EmailAddressTemplate']) {
+        expect(warningUnder(tester, key), isNull, reason: key);
+      }
+    });
+
+    testWidgets('warnings follow the typing, under the field they concern',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(const MyApp());
+      await tester.pumpAndSettle();
+
+      await type(tester, 'PhoneNumberTemplate', '+447700900123');
+      expect(warningUnder(tester, 'PhoneNumberTemplate'), kNoN);
+      expect(find.text(kNoN), findsOneWidget);
+      await type(tester, 'PhoneNumberTemplate', '+447700900NNN');
+      expect(warningUnder(tester, 'PhoneNumberTemplate'),
+          'A phone number can\'t contain "N".\n$kNoN');
+      await type(tester, 'PhoneNumberTemplate', '+447700900nnn');
+      expect(warningUnder(tester, 'PhoneNumberTemplate'), isNull);
+
+      await type(tester, 'EmailAddressTemplate', 'FIRST.LAST');
+      expect(warningUnder(tester, 'EmailAddressTemplate'), kNotAnAddress);
+      expect(warningUnder(tester, 'PhoneNumberTemplate'), isNull);
+      await type(tester, 'EmailAddressTemplate', 'FIRST.LAST@example.com');
+      expect(warningUnder(tester, 'EmailAddressTemplate'), isNull);
+
+      // A name with a space shows up under the email template that uses it.
+      await type(tester, 'FirstNames', 'Zoe, Mary Ann');
+      expect(warningUnder(tester, 'EmailAddressTemplate'),
+          '"Mary Ann" has a space, so those email addresses won\'t work.');
+      await type(tester, 'EmailAddressTemplate', 'LAST@example.com');
+      expect(warningUnder(tester, 'EmailAddressTemplate'), isNull);
+
+      // Warnings never stop Create.
+      await type(tester, 'PhoneNumberTemplate', 'call me');
+      await type(tester, 'EmailAddressTemplate', 'nope');
+      expect(tester.widget<ElevatedButton>(find.byType(ElevatedButton)).enabled,
+          isTrue);
+      await tester.pumpAndSettle(kSaveDelay);
+    });
+
+    testWidgets('a warning is read out with its field', (WidgetTester tester) async {
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(const MyApp());
+      await tester.pumpAndSettle();
+      await type(tester, 'PhoneNumberTemplate', '+447700900123');
+
+      // A part of the field's own node, so it is read with the field.
+      final warning = tester.getSemantics(find.text(kNoN));
+      expect(warning.label, kNoN);
+      expect(warning.parent!.label, 'Phone number template');
+      expect(warning.parent!.flagsCollection.isTextField, isTrue);
+      semantics.dispose();
+      await tester.pumpAndSettle(kSaveDelay);
+    });
+
+    testWidgets('the phone template gets a keyboard with letters, so n can be '
+        'typed', (WidgetTester tester) async {
+      await tester.pumpWidget(const MyApp());
+      await tester.pumpAndSettle();
+      final field =
+          tester.widget<TextField>(find.byKey(const Key('PhoneNumberTemplate')));
+      expect(field.keyboardType, TextInputType.text);
+      expect(field.autocorrect, isFalse);
+      expect(field.enableSuggestions, isFalse);
+    });
+
+    testWidgets('warnings fit a small screen at a large font size',
+        (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(640, 1136);
+      tester.view.devicePixelRatio = 2.0;
+      tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await tester.pumpWidget(const MyApp());
+      await tester.pumpAndSettle();
+
+      await type(tester, 'PhoneNumberTemplate', '+447700900NNN');
+      await type(tester, 'EmailAddressTemplate', 'FIRST.LAST');
+      await type(tester, 'FirstNames', 'Mary Ann, Ann Marie, Zoe');
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      // Neither is cut off.
+      for (final key in ['PhoneNumberTemplate', 'EmailAddressTemplate']) {
+        final warning = warningUnder(tester, key)!;
+        expect(warning.split('\n'), hasLength(2), reason: key);
+        expect(
+            tester.renderObject<RenderParagraph>(find.text(warning))
+                .didExceedMaxLines,
+            isFalse,
+            reason: key);
+      }
+      await tester.pumpAndSettle(kSaveDelay);
+    });
+  });
 }
+

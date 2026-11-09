@@ -119,6 +119,21 @@ void main() {
         'Nothing to create. 4 fake contacts already exist.');
     expect(describeAll(await readAddressBook()), describeAll(book));
     expect(await storedLedger(), ledgerAfterFirst);
+
+    // U4: these settings give no warnings, and without last names Create
+    // is disabled (the preview says why).
+    for (final key in ['PhoneNumberTemplate', 'EmailAddressTemplate']) {
+      expect(tester.widget<TextField>(find.byKey(Key(key))).decoration!.helperText,
+          isNull, reason: key);
+    }
+    await tester.enterText(find.byKey(const Key('LastNames')), '');
+    await tester.pumpAndSettle();
+    expect(createButtonEnabled(tester), isFalse);
+    expect(tester.widget<Text>(find.byKey(const Key('Preview'))).data,
+        endsWith('\nEnter at least one last name.'));
+    await tester.enterText(find.byKey(const Key('LastNames')), 'Zen, Zima');
+    await tester.pumpAndSettle();
+    expect(createButtonEnabled(tester), isTrue);
   });
 
   testWidgets('Delete removes the fakes, and every real contact survives',

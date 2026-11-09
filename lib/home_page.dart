@@ -7,6 +7,7 @@ import 'package:flutter/rendering.dart';
 
 import 'contact_actions.dart';
 import 'contacts_gateway.dart';
+import 'input_checks.dart';
 import 'result_messages.dart';
 import 'settings_store.dart';
 
@@ -52,13 +53,27 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   final ValueNotifier<PreviewText?> _preview = ValueNotifier(null);
   Settings? _previewSettings;
 
+  /// What the settings as typed allow: Create only with at least one last
+  /// and one first name (the preview says why not), and the warnings shown
+  /// under the template fields (see input_checks.dart).
+  ({bool canCreate, String? phoneWarning, String? emailWarning}) _checks =
+      (canCreate: false, phoneWarning: null, emailWarning: null);
+
   /// Called on any change to a text field, the cursor included.
   void _fieldsChanged() {
     if (!_settingsLoaded) return;
     final settings = _settings;
     if (settings == _previewSettings) return;
     _previewSettings = settings;
-    _preview.value = settingsPreviewText(previewSettings(settings));
+    final preview = previewSettings(settings);
+    _preview.value = settingsPreviewText(preview);
+    final checks = (
+      canCreate: preview.combinations > 0,
+      phoneWarning: phoneTemplateWarning(settings.phoneTemplate),
+      emailWarning: emailTemplateWarning(settings.emailTemplate,
+          firstNames: settings.firstNames, lastNames: settings.lastNames),
+    );
+    if (checks != _checks) setState(() => _checks = checks);
   }
 
   // The text fields are the single source of truth for the settings. They
@@ -425,9 +440,14 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         rect: Rect.fromLTRB(caret.left, top, caret.right, bottom));
   }
 
-  InputDecoration _fieldDecoration(String sLabel) {
+  /// [warning], if any, is shown under the field.
+  InputDecoration _fieldDecoration(String sLabel, {String? warning}) {
     return InputDecoration(
       labelText: sLabel,
+      helperText: warning,
+      // Never cut off (null would mean one line): at a large font size on a
+      // small screen, a two-sentence warning takes about eight lines.
+      helperMaxLines: 20,
       focusedBorder: const OutlineInputBorder(
         borderSide: BorderSide(color: Colors.red, width: 5.0),
       ),
@@ -495,8 +515,12 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                           focusNode: _phoneFocus,
                           onChanged: _settingsChanged,
                           enabled: bCanAct,
-                          keyboardType: TextInputType.phone,
-                          decoration: _fieldDecoration('Phone number template'),
+                          // Not TextInputType.phone: a dial pad has no n.
+                          keyboardType: TextInputType.text,
+                          autocorrect: false,
+                          enableSuggestions: false,
+                          decoration: _fieldDecoration('Phone number template',
+                              warning: _checks.phoneWarning),
                         ),
                         const SizedBox(height: 20),
                         TextField(
@@ -507,7 +531,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                           enabled: bCanAct,
                           keyboardType: TextInputType.emailAddress,
                           autocorrect: false,
-                          decoration: _fieldDecoration('Email address template'),
+                          decoration: _fieldDecoration('Email address template',
+                              warning: _checks.emailWarning),
                         ),
                       ],
                     ),
@@ -554,7 +579,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                   const SizedBox(height: 16),
                   Center(
                     child: ElevatedButton(
-                      onPressed: bCanAct ? () => _createAllContacts() : null,
+                      onPressed: bCanAct && _checks.canCreate
+                          ? () => _createAllContacts()
+                          : null,
                       child: const Text("Create Fake Contacts"),
                     ),
                   ),

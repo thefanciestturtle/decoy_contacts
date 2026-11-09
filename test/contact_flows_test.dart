@@ -684,19 +684,41 @@ void main() {
       ));
     });
 
-    testWidgets('Create with an empty name list says so instead of asking',
-        (tester) async {
+    testWidgets('with an empty name list, Create is disabled and the preview '
+        'says why (U4)', (tester) async {
       await pumpApp(tester, book);
-      await tester.enterText(find.byKey(const Key('LastNames')), ' , ');
+      bool createEnabled() =>
+          tester.widget<ElevatedButton>(find.byType(ElevatedButton)).enabled;
+      bool deleteEnabled() =>
+          tester.widget<FilledButton>(find.byType(FilledButton)).enabled;
+      String preview() =>
+          tester.widget<Text>(find.byKey(const Key('Preview'))).data!;
+      expect(createEnabled(), isTrue);
 
-      await tapExpectingNoDialog(tester, kCreateButton);
+      for (final (key, text, hint) in [
+        ('LastNames', ' , ', 'Enter at least one last name.'),
+        ('FirstNames', '', 'Enter at least one last name and one first name.'),
+        ('LastNames', 'Zen', 'Enter at least one first name.'),
+      ]) {
+        await tester.enterText(find.byKey(Key(key)), text);
+        await tester.pump();
+        expect(createEnabled(), isFalse, reason: '$key "$text"');
+        expect(preview(), endsWith('\n$hint'));
+        // Delete doesn't need names.
+        expect(deleteEnabled(), isTrue);
+      }
 
-      // The same hint as the preview gives.
-      expect(snackBarText(tester), 'Nothing to create. Enter at least one last name.');
-      expect(tester.widget<Text>(find.byKey(const Key('Preview'))).data,
-          endsWith('\nEnter at least one last name.'));
-      expect(book.createAllCalls, isEmpty);
-      expect(await storedLedgerJson(), isNull);
+      await tester.tap(find.text(kCreateButton), warnIfMissed: false);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(book.permissionRequests, 0);
+
+      await tester.enterText(find.byKey(const Key('FirstNames')), 'Zoe');
+      await tester.pump();
+      expect(createEnabled(), isTrue);
+      await tapCreate(tester);
+      expect(book.displayNames, ['Zoe Zen']);
     });
 
     testWidgets('Delete says how many it will delete; Cancel deletes none',

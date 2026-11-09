@@ -2,6 +2,7 @@
 // messages shown afterwards.
 
 import 'contact_actions.dart';
+import 'input_checks.dart';
 
 const String kPermissionDeniedMessage =
     "Permission to access contacts was denied.";
@@ -91,6 +92,9 @@ String _enterNamesHint(SettingsPreview preview) {
 ///
 ///     0 last names × 28 first names = no fake contacts.
 ///     Enter at least one last name.
+///
+/// More than [kManyFakeContacts] get a third line that warns it takes long
+/// and can slow down the contacts app.
 typedef PreviewText = ({
   String text,
   String spoken,
@@ -139,6 +143,10 @@ PreviewText settingsPreviewText(SettingsPreview preview) {
     if (bPhone) phoneNumber = (out.length, out.length + sPart.length);
     out.write(sPart);
   }
+  if (n > kManyFakeContacts) {
+    out.write("\nThat many take a long time to create and can slow down"
+        " your contacts app.");
+  }
   return (text: out.toString(), phoneNumber: phoneNumber);
 }
 
@@ -154,7 +162,8 @@ String statusMessage(DeletePreview found) {
 
 /// Shown instead of the dialog when Create has nothing to add. [settings]
 /// is what the settings Create used make (see previewSettings), to say
-/// which name list is empty, as the preview does.
+/// which name list is empty, as the preview does. (Create is disabled while
+/// a name list is empty, so that case is only a fallback.)
 String nothingToCreateMessage(CreatePreview preview, SettingsPreview settings) {
   final existed = preview.alreadyExisted;
   if (existed == 0) {

@@ -11,7 +11,7 @@ The app is available through F-Droid.
 This is a sister-application to "Fake Contacts 2", which puts fake information in some fields of all contacts.
 
 ## Functionality
-The user can set lists of last names and first names for fake contacts, and phone-number and email-address templates for them.  Then click buttons to create or delete fake contacts with all combinations of the first and last names.  Below the fields, the app shows how many contacts that makes, and an example of one.
+The user can set lists of last names and first names for fake contacts, and phone-number and email-address templates for them.  Then click buttons to create or delete fake contacts with all combinations of the first and last names.  Below the fields, the app shows how many contacts that makes, and an example of one.  "Create" is disabled until both lists have at least one name.
 
 
 ## Use
@@ -33,9 +33,9 @@ You could uninstall this app after creating the fake contacts, without causing a
 
 * The list of first names is similar.
 
-* The phone-number template is a single value used for all contacts.  Any character "n" in it will be replaced by a digit 0-9, derived from the contact's last name.  The default format is ```+447700900nnn```, which falls in the UK range Ofcom reserves for TV and film (+44 7700 900000 to 900999), so the numbers can never belong to a real person.  (The old default, ```+2134567nnnn```, was in Algeria's country code +213; if you still have it, the app switches you to the new default automatically.)  You could delete the contents of this field if you wish, and no phone numbers will be generated.
+* The phone-number template is a single value used for all contacts.  Any character "n" in it will be replaced by a digit 0-9, derived from the contact's last name.  The default format is ```+447700900nnn```, which falls in the UK range Ofcom reserves for TV and film (+44 7700 900000 to 900999), so the numbers can never belong to a real person.  (The old default, ```+2134567nnnn```, was in Algeria's country code +213; if you still have it, the app switches you to the new default automatically.)  You could delete the contents of this field if you wish, and no phone numbers will be generated.  The app warns under the field if the template has no "n" (every contact would get the same number) or characters a phone number can't have.
 
-* The email-address template is a single value used for all contacts.  Any string "FIRST" in it will be replaced by the contact's first name.  Any string "LAST" in it will be replaced by the contact's last name.  The default format is ```FIRST.LAST@example.com```, which is intended to be an unused email domain.  You could delete the contents of this field if you wish, and no email addresses will be generated.
+* The email-address template is a single value used for all contacts.  Any string "FIRST" in it will be replaced by the contact's first name.  Any string "LAST" in it will be replaced by the contact's last name.  The default format is ```FIRST.LAST@example.com```, which is intended to be an unused email domain.  You could delete the contents of this field if you wish, and no email addresses will be generated.  The app warns under the field if the template doesn't look like an email address, or if a name it uses has a space.
 
 
 ### Quirks
