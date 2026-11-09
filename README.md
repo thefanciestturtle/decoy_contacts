@@ -4,6 +4,8 @@ Android phone app that creates fake contacts, which will be stored on your smart
 
 Nothing about these fake contacts will interfere with your normal use of your phone or your real contacts.
 
+Only Android is supported.  The source still has an `ios/` folder, but don't build the app for iOS: there, "Create" adds the contacts but can't record them (it warns that they must be deleted by hand), and "Delete" then removes nothing.  On an iPhone the contacts usually sync to iCloud, so they would end up on all of your Apple devices.
+
 The app is available through F-Droid.
 
 This is a sister-application to "Fake Contacts 2", which puts fake information in some fields of all contacts.
@@ -79,7 +81,6 @@ Added Spanish description to Fastlane per https://github.com/BillDietrich/fake_c
 * Add buttons to add/delete fake secondary info (e.g. birthday ?) on ALL contacts. Or make a separate app for that.
 * Want to explicitly set Notification permission off, but there's no way to do it.
 * Add photos from thispersondoesnotexist.com ?
-* Test on iOS.
 
 ### Tests
 * `flutter test` runs the unit and widget tests.
