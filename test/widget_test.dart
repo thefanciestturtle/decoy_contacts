@@ -307,6 +307,93 @@ void main() {
     expect(book.openSettingsCalls, 1);
   });
 
+  group('on a small screen at a large font size (U8)', () {
+    setUp(() {
+      SharedPreferences.setMockInitialValues({
+        'sListOfLastNames': 'Zen, Zima',
+        'sListOfFirstNames': 'Zoe, Zach',
+        'sPhoneNumberTemplate': kDefaultPhoneTemplate,
+        'sEmailAddressTemplate': kDefaultEmailTemplate,
+      });
+    });
+
+    /// A small phone (320 x 568 dp) with the text at twice the normal size.
+    void smallScreen(WidgetTester tester) {
+      tester.view.physicalSize = const Size(640, 1136);
+      tester.view.devicePixelRatio = 2.0;
+      tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    }
+
+    Future<void> tapAndConfirm(WidgetTester tester, String label,
+        String answer) async {
+      await tester.scrollUntilVisible(find.text(label), 100,
+          scrollable: find.byType(Scrollable).first);
+      await tester.tap(find.text(label));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, answer));
+    }
+
+    testWidgets('a long result: its close button is in reach, and clears '
+        'it off the buttons', (WidgetTester tester) async {
+      smallScreen(tester);
+      final book = InMemoryContactsGateway();
+      await pumpMyApp(tester, MyApp(contacts: book));
+      await tester.pumpAndSettle();
+      await tapAndConfirm(tester, 'Create Fake Contacts', 'Create');
+      await tester.pumpAndSettle();
+      tester
+          .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
+          .removeCurrentSnackBar();
+      await tester.pumpAndSettle();
+      // A long result (24 words). (The longest, with fakes left alone for
+      // both reasons, 35 words, was checked on a device: there it takes 11
+      // lines, with the close button in reach; in tests twice that.)
+      book.setPhones(book.idOf('Zoe Zen'), ['+1 555 0199']);
+      await tapAndConfirm(tester, 'Delete Fake Contacts', 'Delete');
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      // (Whether all of it fits is checked on a device: in tests every
+      // letter is as wide as it is high, so the text needs twice the lines.)
+      expect(find.textContaining('no longer matches'), findsOneWidget);
+      // It covers the buttons, and can be closed.
+      final close = find.byIcon(Icons.close);
+      expect(close.hitTestable(), findsOneWidget);
+      expect(find.text('Delete Fake Contacts').hitTestable(), findsNothing);
+      await tester.tap(close);
+      await tester.pumpAndSettle();
+      expect(find.byType(SnackBar), findsNothing);
+      expect(find.text('Delete Fake Contacts').hitTestable(), findsOneWidget);
+    });
+
+    testWidgets('the progress is scrolled into view, with Stop in reach',
+        (WidgetTester tester) async {
+      smallScreen(tester);
+      final gate = Completer<void>();
+      final book = InMemoryContactsGateway()
+        ..beforeCreateAll = (call) => call == 1 ? gate.future : Future.value();
+      await pumpMyApp(tester, MyApp(contacts: book, createChunkSize: 1));
+      await tester.pumpAndSettle();
+      await tapAndConfirm(tester, 'Create Fake Contacts', 'Create');
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      final progress = find.byKey(const Key('Progress'));
+      expect(tester.widget<Text>(progress).data, 'Created 1 of 4');
+      expect(containsVertically(visibleArea(tester), tester.getRect(progress)),
+          isTrue);
+      final stop = find.widgetWithText(OutlinedButton, 'Stop');
+      expect(stop.hitTestable(), findsOneWidget);
+      await tester.tap(stop);
+      gate.complete();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Stopped after creating 2 of 4'),
+          findsOneWidget);
+    });
+  });
+
   group('preview under the fields (U2)', () {
     testWidgets('shows what the settings make, with an example',
         (WidgetTester tester) async {

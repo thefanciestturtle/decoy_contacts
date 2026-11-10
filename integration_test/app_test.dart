@@ -6,8 +6,11 @@
 // tool/integration_test.sh sets that up and runs them. Each test checks that
 // the address book is empty before it starts, and leaves it empty again.
 
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:fake_contacts/contact_actions.dart'
+    show kCreateChunkSize, kDeleteChunkSize;
 import 'package:fake_contacts/contacts_gateway.dart' show NewContact;
 import 'package:fake_contacts/fake_contacts_core.dart';
 import 'package:fake_contacts/flutter_contacts_gateway.dart';
@@ -81,6 +84,35 @@ class StopsPartway extends FlutterContactsGateway {
     if (!stop) return super.deleteAll(contactIds);
     await super.deleteAll(contactIds.take(after).toList());
     throw Exception('stopped on purpose');
+  }
+}
+
+/// The device's address book, but the create call numbered [hangOn] (from
+/// 0) creates its contacts and then never returns, as if the app had been
+/// killed during it.
+class HangsAfterCreating extends FlutterContactsGateway {
+  HangsAfterCreating(this.hangOn);
+
+  final int hangOn;
+  int calls = 0;
+
+  @override
+  Future<List<String>> createAll(List<NewContact> contacts) async {
+    final ids = await super.createAll(contacts);
+    if (calls++ == hangOn) await Completer<void>().future;
+    return ids;
+  }
+}
+
+/// The device's address book, but each create call waits a moment first,
+/// so a test can tap Stop while the first one runs.
+class SlowCreate extends FlutterContactsGateway {
+  const SlowCreate();
+
+  @override
+  Future<List<String>> createAll(List<NewContact> contacts) async {
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    return super.createAll(contacts);
   }
 }
 
@@ -263,6 +295,8 @@ void main() {
       for (final c in book.values)
         if (!real.containsKey(c.id)) ...rawIdsOf(c),
     ]));
+    // The two it didn't find stay pending, in case that read was wrong (U8).
+    expect(await storedPending(), isNotNull);
 
     gateway.stop = false;
     expect(
@@ -292,6 +326,71 @@ void main() {
     await expectStatus(tester, 'No fake contacts on this phone.');
     expect(describeAll(await readAddressBook()), describeAll(real));
     expect(await storedLedger(), isEmpty);
+  });
+
+  testWidgets('U8: Create and Delete in chunks show progress and can be '
+      'stopped', (tester) async {
+    await startWithEmptyAddressBook(tester);
+    final real = await seed(kRealContacts);
+    await launchApp(tester,
+        contacts: const SlowCreate(), createChunkSize: 1, deleteChunkSize: 1);
+
+    // Stop while the first chunk runs: it stops after that one.
+    await tapAndConfirm(tester, kCreate, 'Create 4 fake contacts?');
+    await pumpUntil(tester, () => progressText(tester) == 'Created 0 of 4',
+        'progress');
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Stop'));
+    expect(await waitForResult(tester, 'Create'),
+        'Stopped after creating 1 of 4 fake contacts.');
+    await expectStatus(tester, '1 fake contact on this phone.');
+    expect(await storedLedger(), hasLength(1));
+    expect(await readAddressBook(), hasLength(real.length + 1));
+
+    // The rest, then Delete in chunks.
+    expect(
+        await tapAndWaitForResult(tester, kCreate,
+            confirm: 'Create 3 fake contacts?'),
+        'Created 3 fake contacts. 1 already existed.');
+    expect(
+        await tapAndWaitForResult(tester, kDelete,
+            confirm: 'Delete 4 fake contacts?'),
+        'Deleted 4 fake contacts.');
+    await expectStatus(tester, 'No fake contacts on this phone.');
+    expect(describeAll(await readAddressBook()), describeAll(real));
+    expect(await storedLedger(), isEmpty);
+  });
+
+  testWidgets('U8: after the app is killed during a Create, Delete removes '
+      'everything it made', (tester) async {
+    await startWithEmptyAddressBook(tester);
+    final real = await seed(kRealContacts);
+    await launchApp(tester,
+        contacts: HangsAfterCreating(1), createChunkSize: 2);
+    await tapAndConfirm(tester, kCreate, 'Create 4 fake contacts?');
+    await pumpUntil(tester, () => progressText(tester) == 'Created 2 of 4',
+        'the first chunk');
+    // The second chunk is created, but the app never hears back.
+    await pumpUntil(
+        tester,
+        () => false,
+        'nothing',
+        timeout: const Duration(seconds: 3),
+        failOnTimeout: false);
+    expect(await readAddressBook(), hasLength(real.length + 4));
+    expect(await storedLedger(), hasLength(2));
+    expect(await storedPending(), isNotNull);
+
+    // A new start of the app.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await launchApp(tester);
+    await expectStatus(tester, '4 fake contacts on this phone.');
+    expect(
+        await tapAndWaitForResult(tester, kDelete,
+            confirm: 'Delete 4 fake contacts?'),
+        'Deleted 4 fake contacts.');
+    expect(describeAll(await readAddressBook()), describeAll(real));
+    expect(await storedLedger(), isEmpty);
+    expect(await storedPending(), isNull);
   });
 
   testWidgets('S1: a ledger whose raw IDs point at real contacts deletes '
@@ -400,8 +499,13 @@ Future<Map<String, Contact>> seed(List<RealContact> contacts,
 /// Starts the app, with the device's address book unless [contacts] is
 /// given.
 Future<void> launchApp(WidgetTester tester,
-    {FlutterContactsGateway contacts = const FlutterContactsGateway()}) async {
-  await tester.pumpWidget(MyApp(contacts: contacts));
+    {FlutterContactsGateway contacts = const FlutterContactsGateway(),
+    int createChunkSize = kCreateChunkSize,
+    int deleteChunkSize = kDeleteChunkSize}) async {
+  await tester.pumpWidget(MyApp(
+      contacts: contacts,
+      createChunkSize: createChunkSize,
+      deleteChunkSize: deleteChunkSize));
   // The buttons are enabled once the settings are loaded.
   await pumpUntil(tester, () => appIdle(tester), 'settings loaded');
 }
@@ -438,6 +542,24 @@ Future<String> tapAndWaitForResult(WidgetTester tester, String label,
     expect(find.byType(AlertDialog), findsNothing,
         reason: '"$label" should not ask here');
   }
+  return waitForResult(tester, label);
+}
+
+/// Taps the button labelled [label], expects the dialog that asks to go
+/// ahead, with the title [title], and confirms it; then returns at once,
+/// without waiting for the result (see [waitForResult]).
+Future<void> tapAndConfirm(
+    WidgetTester tester, String label, String title) async {
+  await tapAndWaitForAnswer(tester, label);
+  expectDialog(tester, title);
+  await tester.tap(dialogButton(label.split(' ').first));
+  await tester.pump();
+}
+
+/// Waits for the snack bar with the result of [label] and returns its text.
+/// The app talks to the real contacts provider, so this waits in real time
+/// rather than relying on pumpAndSettle.
+Future<String> waitForResult(WidgetTester tester, String label) async {
   await pumpUntil(tester, () => find.byType(SnackBar).evaluate().isNotEmpty,
       'result of "$label"');
   final bar = tester.widget<SnackBar>(find.byType(SnackBar));
@@ -449,6 +571,12 @@ Future<String> tapAndWaitForResult(WidgetTester tester, String label,
   await pumpUntil(tester, () => appIdle(tester), 'app idle');
   await tester.pumpAndSettle();
   return text;
+}
+
+/// The progress shown under the buttons, or null.
+String? progressText(WidgetTester tester) {
+  final found = find.byKey(const Key('Progress'));
+  return found.evaluate().isEmpty ? null : tester.widget<Text>(found).data;
 }
 
 /// Waits until the status line says [text].
@@ -511,12 +639,16 @@ void expectDialog(WidgetTester tester, String title) {
 Finder dialogButton(String label) => find.descendant(
     of: find.byType(AlertDialog), matching: find.widgetWithText(TextButton, label));
 
+/// Pumps until [condition] holds. After [timeout], fails, or with
+/// [failOnTimeout] false just returns.
 Future<void> pumpUntil(
-    WidgetTester tester, bool Function() condition, String what) async {
-  final deadline = DateTime.now().add(kActionTimeout);
+    WidgetTester tester, bool Function() condition, String what,
+    {Duration timeout = kActionTimeout, bool failOnTimeout = true}) async {
+  final deadline = DateTime.now().add(timeout);
   while (!condition()) {
     if (DateTime.now().isAfter(deadline)) {
-      fail('Timed out after $kActionTimeout waiting for: $what');
+      if (!failOnTimeout) return;
+      fail('Timed out after $timeout waiting for: $what');
     }
     // In an integration test this waits in real time.
     await tester.pump(const Duration(milliseconds: 100));
@@ -534,8 +666,15 @@ Future<Map<String, Contact>> readAddressBook() async {
   return {for (final c in contacts) c.id!: c};
 }
 
-/// The ledger the app stored, decoded from JSON.
-Future<Map<String, Object?>> storedLedger() async {
+/// The ledger the app stored, decoded from JSON, without the pending
+/// record of a Create (see [storedPending]).
+Future<Map<String, Object?>> storedLedger() async =>
+    {...await _storedJson()}..remove(kPendingCreateKey);
+
+/// The pending record of a Create stored with the ledger, or null.
+Future<Object?> storedPending() async => (await _storedJson())[kPendingCreateKey];
+
+Future<Map<String, Object?>> _storedJson() async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.reload();
   final json = prefs.getString(kLedgerPrefsKey);

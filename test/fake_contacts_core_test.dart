@@ -109,6 +109,45 @@ void main() {
       expect(Ledger.decode('{"10":5,"11":{"phone":"1"}}').isEmpty, isTrue);
     });
 
+    test('keeps a pending Create with it, which only decodeWithPending '
+        'reads', () {
+      final l = Ledger({'10': fake('Zoe', 'Zen')});
+      final pending = PendingCreate(
+          maxRawId: 10, entries: [fake('Zach', 'Zen'), fake('Zoe', 'Zima')]);
+      final json = l.encode(pending: pending);
+
+      // Older versions read it as they did: an entry without a name is
+      // skipped.
+      expect(Ledger.decode(json).entries, l.entries);
+      final decoded = Ledger.decodeWithPending(json);
+      expect(decoded.ledger.entries, l.entries);
+      expect(decoded.pending!.maxRawId, 10);
+      expect(decoded.pending!.entries, pending.entries);
+      // Without one, there is none.
+      expect(Ledger.decodeWithPending(l.encode()).pending, isNull);
+      expect(Ledger.decodeWithPending(null).pending, isNull);
+    });
+
+    test('a pending Create with an empty address book before it, or odd '
+        'data', () {
+      final json = Ledger().encode(
+          pending: PendingCreate(maxRawId: null, entries: [fake('Zoe', 'Zen')]));
+      final pending = Ledger.decodeWithPending(json).pending!;
+      expect(pending.maxRawId, isNull);
+      expect(pending.entries, [fake('Zoe', 'Zen')]);
+
+      // Entries without details can't be matched, so they are dropped.
+      expect(
+          PendingCreate.fromJson({
+            'maxRawId': 'x',
+            'entries': ['Zoe Zen', fake('Zach', 'Zen').toJson(), 5],
+          })!
+              .entries,
+          [fake('Zach', 'Zen')]);
+      expect(PendingCreate.fromJson({'maxRawId': 3}), isNull);
+      expect(PendingCreate.fromJson('x'), isNull);
+    });
+
     test('prunes raw contacts that no longer exist', () {
       final l = Ledger({'10': fake('Zoe', 'Zen'), '11': fake('Zach', 'Zen')});
       expect(l.prunedTo({'11'}).entries, {'11': fake('Zach', 'Zen')});
@@ -197,7 +236,7 @@ void main() {
         newlyCreatedRawIds(
             created: created,
             createdContactIds: ['c1', 'c21'],
-            before: before,
+            oldRawIds: allRawIds(before),
             after: after),
         {'20': fake('Zoe', 'Zen'), '21': fake('Zach', 'Zen')},
       );
@@ -218,7 +257,7 @@ void main() {
       expect(
         createdBeforeFailure(
           planned: [zoe, zach, zima],
-          before: before,
+          oldRawIds: allRawIds(before),
           after: after,
           fingerprintsByContact: {
             'c1': aliceFps,
@@ -236,7 +275,7 @@ void main() {
       expect(
         createdBeforeFailure(
           planned: [zoe],
-          before: {'c1': ['1']},
+          oldRawIds: {'1'},
           after: {'c1': ['1', '20']},
           fingerprintsByContact: {
             'c1': {...realZoe, ...fingerprintsMatching(zoe)},
@@ -252,7 +291,7 @@ void main() {
       expect(
         createdBeforeFailure(
           planned: [zoe],
-          before: {'c1': ['1']},
+          oldRawIds: {'1'},
           after: {'c1': ['1']},
           fingerprintsByContact: {'c1': fingerprintsMatching(zoe)},
         ),
@@ -266,7 +305,7 @@ void main() {
       expect(
         createdBeforeFailure(
           planned: [zoe],
-          before: const {},
+          oldRawIds: const {},
           after: {'c30': ['30'], 'c31': ['31']},
           fingerprintsByContact: {
             'c30': fingerprintsOf('Zoe Zen', ['+15555550101'], []).toSet(),
@@ -283,7 +322,7 @@ void main() {
       expect(
         createdBeforeFailure(
           planned: [zoe, zach],
-          before: const {},
+          oldRawIds: const {},
           after: {'c20': ['20'], 'c30': ['30'], 'c21': ['21']},
           fingerprintsByContact: {
             'c20': fingerprintsMatching(zoe),
@@ -301,7 +340,7 @@ void main() {
       expect(
         createdBeforeFailure(
           planned: [zoe, zach],
-          before: const {},
+          oldRawIds: const {},
           after: {'c20': ['20'], 'c21': ['21']},
           fingerprintsByContact: {
             'c20': {...fingerprintsMatching(zoe), ...fingerprintsMatching(zach)},
@@ -316,10 +355,119 @@ void main() {
       expect(
         createdBeforeFailure(
           planned: [zoe, zach],
-          before: const {},
+          oldRawIds: const {},
           after: {'c20': ['20', '21']},
           fingerprintsByContact: {
             'c20': {...fingerprintsMatching(zoe), ...fingerprintsMatching(zach)},
+          },
+        ),
+        isEmpty,
+      );
+    });
+  });
+
+  test('maxRawIdOf compares numbers, not text, and skips the rest', () {
+    expect(maxRawIdOf(['9', '10', '2']), 10);
+    expect(maxRawIdOf(['x', '7']), 7);
+    expect(maxRawIdOf(const []), isNull);
+    expect(maxRawIdOf(['x']), isNull);
+  });
+
+  group('createdByPending', () {
+    final zoe = fake('Zoe', 'Zen');
+    final zach = fake('Zach', 'Zen');
+    final realZoe = fingerprintsOf('Zoe Zen', ['+15555550101'], []).toSet();
+
+    test('records the pending fakes with raw IDs newer than before it',
+        () {
+      // Raw 1 is real, 5 a recorded fake; 6 and 7 were made by the pending
+      // call; Zach's twin, raw 4, was there before (not newer).
+      expect(
+        createdByPending(
+          PendingCreate(maxRawId: 5, entries: [zoe, zach]),
+          recorded: {'5'},
+          after: {
+            'c1': ['1'],
+            'c4': ['4'],
+            'c5': ['5'],
+            'c6': ['6'],
+            'c7': ['7'],
+          },
+          fingerprintsByContact: {
+            'c1': realZoe,
+            'c4': fingerprintsMatching(zach),
+            'c5': fingerprintsMatching(zoe),
+            'c6': fingerprintsMatching(zoe),
+            'c7': fingerprintsMatching(zach),
+          },
+        ),
+        {'6': zoe, '7': zach},
+      );
+    });
+
+    test('a fake merged into a contact from before: only its own raw '
+        'contact', () {
+      // A real Zoe Zen (raw 1, another account) that Android linked with the
+      // new fake (raw 6); with only a name, the contact has exactly the
+      // fake's details.
+      expect(
+        createdByPending(
+          PendingCreate(maxRawId: 5, entries: [zoe]),
+          recorded: const {},
+          after: {
+            'c1': ['1', '6'],
+          },
+          fingerprintsByContact: {'c1': fingerprintsMatching(zoe)},
+        ),
+        {'6': zoe},
+      );
+    });
+
+    test('with an empty address book before it, every raw contact not '
+        'recorded is new', () {
+      expect(
+        createdByPending(
+          PendingCreate(maxRawId: null, entries: [zoe]),
+          recorded: {'1'},
+          after: {
+            'c1': ['1'],
+            'c2': ['2'],
+          },
+          fingerprintsByContact: {
+            'c1': fingerprintsMatching(zoe),
+            'c2': fingerprintsMatching(zoe),
+          },
+        ),
+        {'2': zoe},
+      );
+    });
+
+    test("a raw ID that isn't a number counts as old", () {
+      expect(
+        createdByPending(
+          PendingCreate(maxRawId: 5, entries: [zoe]),
+          recorded: const {},
+          after: {
+            'cx': ['x'],
+          },
+          fingerprintsByContact: {'cx': fingerprintsMatching(zoe)},
+        ),
+        isEmpty,
+      );
+    });
+
+    test('a pending fake matched by two new contacts is left out', () {
+      expect(
+        createdByPending(
+          PendingCreate(maxRawId: 5, entries: [zoe]),
+          recorded: const {},
+          after: {
+            'c6': ['6'],
+            'c7': ['7'],
+          },
+          fingerprintsByContact: {
+            'c6': fingerprintsMatching(zoe),
+            'c7': fingerprintsMatching(zoe),
           },
         ),
         isEmpty,

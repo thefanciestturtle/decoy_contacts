@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+import 'accessibility_timeout.dart';
 import 'app_log.dart';
 import 'contact_actions.dart';
 import 'contacts_gateway.dart';
@@ -15,6 +16,14 @@ import 'settings_store.dart';
 /// How long to wait after the last keystroke before saving the settings.
 const Duration kSaveDelay = Duration(milliseconds: 500);
 
+/// How long a result shows: a plain success briefly (Flutter's default),
+/// one that needs attention ([ResultMessage.needsAttention]) for the
+/// longest Material's guidelines suggest for snack bars (4 to 10 s), with
+/// a close button. Either longer if the user's accessibility timeout asks
+/// for more (see recommendedTimeout).
+const Duration kShortMessageDuration = Duration(seconds: 4);
+const Duration kLongMessageDuration = Duration(seconds: 10);
+
 class MyHomePage extends StatefulWidget {
   const MyHomePage({
     super.key,
@@ -22,12 +31,19 @@ class MyHomePage extends StatefulWidget {
     required this.contacts,
     this.settingsStore = const SettingsStore(),
     this.ledgerStore = const LedgerStore(),
+    this.createChunkSize = kCreateChunkSize,
+    this.deleteChunkSize = kDeleteChunkSize,
   });
 
   final String title;
   final ContactsGateway contacts;
   final SettingsStore settingsStore;
   final LedgerStore ledgerStore;
+
+  /// How many contacts Create and Delete handle per call (tests use small
+  /// ones, to see progress with only a few contacts).
+  final int createChunkSize;
+  final int deleteChunkSize;
 
   @override
   State<MyHomePage> createState() => _MyHomePageState();
@@ -41,6 +57,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   static const Key keyEmailAddressTemplate = Key("EmailAddressTemplate");
   static const Key keyStatus = Key("Status");
   static const Key keyPreview = Key("Preview");
+  static const Key keyProgress = Key("Progress");
 
   final TextEditingController lastNamesController = TextEditingController();
   final TextEditingController firstNamesController = TextEditingController();
@@ -137,10 +154,15 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     // The email warning is a live region only while its field has the focus.
     _emailFocus.addListener(_focusChanged);
     _loadSettings();
+    unawaited(_updateMessageDurations());
   }
 
   @override
   void dispose() {
+    // If the app's code still runs (its screen was closed, but the app not
+    // killed), a running Create or Delete stops after the chunk it is on,
+    // with its ledger saved.
+    _stopRequested = true;
     WidgetsBinding.instance.removeObserver(this);
     _saveSettingsNow();
     lastNamesController.dispose();
@@ -176,12 +198,52 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     // Contacts may have been changed in another app meanwhile. (Not after
     // only "inactive", e.g. for the notification shade or a system dialog.)
     if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
-      _wasInBackground = true;
+      _inBackground = true;
     }
-    if (state == AppLifecycleState.resumed && _wasInBackground) {
-      _wasInBackground = false;
-      if (_settingsLoaded && !_isBusy) unawaited(_refreshStatus());
+    if (state == AppLifecycleState.resumed) {
+      final bWasInBackground = _inBackground;
+      _inBackground = false;
+      // The accessibility timeout may have been changed meanwhile, in the
+      // settings. (A held result doesn't wait for it: that would make it
+      // hang on a platform call; a new timeout applies from the next
+      // result.)
+      if (bWasInBackground) unawaited(_updateMessageDurations());
+      final held = _heldMessage;
+      _heldMessage = null;
+      if (held != null) _showResultSnackBar(held);
+      if (bWasInBackground && _settingsLoaded && !_isBusy) {
+        unawaited(_refreshStatus());
+      }
     }
+  }
+
+  /// Whether the app is out of sight (hidden or paused, not only inactive)
+  /// since it was last in front.
+  bool _inBackground = false;
+
+  /// A result that came while the app was out of sight, shown once it is
+  /// back, so its time doesn't run out unseen.
+  ResultMessage? _heldMessage;
+
+  /// How long results show, after the user's accessibility timeout (see
+  /// recommendedTimeout).
+  Duration _shortMessageDuration = kShortMessageDuration;
+  Duration _longMessageDuration = kLongMessageDuration;
+
+  /// Counts [_updateMessageDurations] calls, so only the latest one's
+  /// answer is used.
+  int _durationsRequest = 0;
+
+  Future<void> _updateMessageDurations() async {
+    final int request = ++_durationsRequest;
+    final (short, long) = await (
+      recommendedTimeout(kShortMessageDuration, hasControls: false),
+      // The close button is something to tap.
+      recommendedTimeout(kLongMessageDuration, hasControls: true),
+    ).wait;
+    if (request != _durationsRequest) return;
+    _shortMessageDuration = short;
+    _longMessageDuration = long;
   }
 
   /// Reads the settings once at startup (the store fills in defaults on
@@ -197,8 +259,6 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     _fieldsChanged();
     unawaited(_refreshStatus());
   }
-
-  bool _wasInBackground = false;
 
   /// The status line ([statusMessage]), or null to show none: no permission,
   /// or the address book couldn't be read yet.
@@ -264,10 +324,57 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// dialog still has the spinner behind it.)
   bool _waitingForUser = false;
 
-  void _showResultSnackBar(String message) {
+  /// Set while a Create or Delete of more than one chunk runs: how far it
+  /// got. It then shows a progress bar and Stop instead of the spinner.
+  ({bool creating, int done, int total})? _progress;
+
+  /// Set by Stop, or Back, while a Create or Delete runs: it stops after the
+  /// chunk it is on.
+  bool _stopRequested = false;
+
+  final GlobalKey _progressBox = GlobalKey();
+
+  /// A [ProgressCallback] that shows the progress of a Create
+  /// ([creating]) or Delete.
+  ProgressCallback _showProgress({required bool creating}) =>
+      (int done, int total) {
+        if (!mounted) return;
+        final bFirst = _progress == null;
+        setState(() {
+          _progress = (creating: creating, done: done, total: total);
+        });
+        // On a small screen it may be below the edge.
+        if (bFirst) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final box = _progressBox.currentContext;
+            if (box == null || !box.mounted) return;
+            Scrollable.ensureVisible(box,
+                duration: const Duration(milliseconds: 200),
+                alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd);
+          });
+        }
+      };
+
+  void _requestStop() {
+    if (_progress == null || _stopRequested) return;
+    log("stop requested");
+    setState(() { _stopRequested = true; });
+  }
+
+  void _showResultSnackBar(ResultMessage message) {
     if (!mounted) return;
+    if (_inBackground) {
+      _heldMessage = message;
+      return;
+    }
+    final bLong = message.needsAttention;
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(message.text),
+      duration: bLong ? _longMessageDuration : _shortMessageDuration,
+      // So it can be read, then cleared off the buttons.
+      showCloseIcon: bLong,
+    ));
   }
 
   /// Asks before going ahead. True only if the user taps the action button;
@@ -325,11 +432,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     required String name,
     required Confirmation permissionSettings,
     required Future<P> Function(Settings settings) preview,
-    required String? Function(Settings settings, P preview) nothingToDo,
+    required ResultMessage? Function(Settings settings, P preview) nothingToDo,
     required Confirmation Function(P preview) confirmation,
     required Future<R?> Function(Settings settings, P preview) action,
-    required String Function(R result) describe,
-    required String Function(Object error) failed,
+    required ResultMessage Function(R result) describe,
+    required ResultMessage Function(Object error) failed,
   }) async {
     if (_isBusy) return;
     // If a text field has the focus, close the keyboard, so the dialog, the
@@ -348,11 +455,13 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     unawaited(_saveSettingsNow());
     final settings = _settings;
 
-    void finish(String? message) {
+    void finish(ResultMessage? message) {
       if (!mounted) return;
       setState(() {
         _isBusy = false;
         _waitingForUser = false;
+        _progress = null;
+        _stopRequested = false;
       });
       if (message != null) _showResultSnackBar(message);
       unawaited(_refreshStatus());
@@ -380,15 +489,15 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
           log("$name: settings not opened");
           return finish(null);
         }
-        String? sFailed;
+        ResultMessage? failedToOpen;
         try {
           await widget.contacts.openSettings();
         } catch (e, st) {
           logError("$name, opening settings", e, st);
-          sFailed = kOpenSettingsFailedMessage;
+          failedToOpen = kOpenSettingsFailedMessage;
         }
         // The status line is updated again when the user comes back.
-        return finish(sFailed);
+        return finish(failedToOpen);
     }
 
     final P planned;
@@ -434,7 +543,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         confirmation: createConfirmation,
         action: (settings, preview) => createFakeContacts(
             widget.contacts, widget.ledgerStore, settings,
-            atMost: preview.toCreate),
+            atMost: preview.toCreate,
+            chunkSize: widget.createChunkSize,
+            onProgress: _showProgress(creating: true),
+            stopRequested: () => _stopRequested),
         describe: createdMessage,
         failed: createFailedMessage,
       );
@@ -449,7 +561,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         confirmation: deleteConfirmation,
         action: (settings, preview) => deleteFakeContacts(
             widget.contacts, widget.ledgerStore, settings,
-            atMost: preview.toDelete),
+            atMost: preview.toDelete,
+            chunkSize: widget.deleteChunkSize,
+            onProgress: _showProgress(creating: false),
+            stopRequested: () => _stopRequested),
         describe: deletedMessage,
         failed: deleteFailedMessage,
       );
@@ -568,155 +683,226 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final bool bCanAct = _settingsLoaded && !_isBusy;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
+    // While Create or Delete runs, Back doesn't close the app, which would
+    // cut it off without a result (Android finishes the call that is
+    // running; only the next Create or Delete would record what it made).
+    // With progress shown, Back stops it, as Stop does; before that (while
+    // the address book is read, or for an action of one chunk) it ignores
+    // Back for a moment.
+    return PopScope(
+      canPop: !_isBusy,
+      onPopInvokedWithResult: (bDidPop, _) {
+        if (!bDidPop) _requestStop();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(widget.title),
+        ),
+        body: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 600),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    // Also out of reach of the focus while disabled: with a D-pad
+                    // (directional navigation) a disabled TextField can still
+                    // take the focus, and its keyboard would open by itself when
+                    // the action ends.
+                    ExcludeFocus(
+                      excluding: !bCanAct,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          TextField(
+                            key: keyLastNames,
+                            controller: lastNamesController,
+                            onChanged: _settingsChanged,
+                            enabled: bCanAct,
+                            minLines: 1,
+                            maxLines: 4,
+                            decoration: _fieldDecoration('Last names'),
+                          ),
+                          const SizedBox(height: 20),
+                          TextField(
+                            key: keyFirstNames,
+                            controller: firstNamesController,
+                            onChanged: _settingsChanged,
+                            enabled: bCanAct,
+                            minLines: 1,
+                            maxLines: 4,
+                            decoration: _fieldDecoration('First names'),
+                          ),
+                          const SizedBox(height: 30),
+                          TextField(
+                            key: keyPhoneNumberTemplate,
+                            controller: phoneNumberTemplateController,
+                            focusNode: _phoneFocus,
+                            onChanged: _settingsChanged,
+                            enabled: bCanAct,
+                            // Not TextInputType.phone: a dial pad has no n.
+                            keyboardType: TextInputType.text,
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            // Always read out as it changes: only typing in
+                            // this field changes it.
+                            decoration: _fieldDecoration('Phone number template',
+                                warning: _checks.phoneWarning,
+                                enabled: bCanAct,
+                                bLive: true),
+                          ),
+                          const SizedBox(height: 20),
+                          TextField(
+                            key: keyEmailAddressTemplate,
+                            controller: emailAddressTemplateController,
+                            focusNode: _emailFocus,
+                            onChanged: _settingsChanged,
+                            enabled: bCanAct,
+                            keyboardType: TextInputType.emailAddress,
+                            autocorrect: false,
+                            // Suggestions stay on: without them Android gets a
+                            // keyboard with no @ key.
+                            decoration: _fieldDecoration('Email address template',
+                                warning: _checks.emailWarning,
+                                enabled: bCanAct,
+                                bLive: _emailFocus.hasFocus),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // Follows every keystroke. (Not a live region: TalkBack
+                    // would read it out after each one.)
+                    KeyedSubtree(
+                      key: _previewBox,
+                      child: ValueListenableBuilder(
+                        valueListenable: _preview,
+                        builder: (context, preview, _) => preview == null
+                            ? const SizedBox.shrink()
+                            : Semantics(
+                                container: true,
+                                // The phone number digit by digit.
+                                attributedLabel: AttributedString(preview.spoken,
+                                    attributes: [
+                                      if (preview.spokenPhoneNumber case (final start, final end))
+                                        SpellOutStringAttribute(
+                                            range: TextRange(start: start, end: end)),
+                                    ]),
+                                child: ExcludeSemantics(
+                                  child: Text(
+                                    preview.text,
+                                    key: keyPreview,
+                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                        color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                  ),
+                                ),
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    // Always there, empty without a count, so the buttons
+                    // don't move when it appears. (Not a live region: TalkBack
+                    // would read it over the result message.)
+                    Text(
+                      _status ?? "",
+                      key: keyStatus,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                    const SizedBox(height: 16),
+                    Center(
+                      child: ElevatedButton(
+                        onPressed: bCanAct && _checks.createBlocked == null
+                            ? () => _createAllContacts()
+                            : null,
+                        // While it can't be used, TalkBack also says why.
+                        // (Inside the button, so it joins the button's node.)
+                        child: Semantics(
+                          hint: _checks.createBlocked,
+                          child: const Text("Create Fake Contacts"),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 30),
+                    Center(
+                      child: FilledButton(
+                        onPressed: bCanAct ? () => _deleteAllContacts() : null,
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Colors.pink,
+                          foregroundColor: Colors.white,
+                        ),
+                        child: const Text("Delete Fake Contacts"),
+                      ),
+                    ),
+                    _buildProgress(context),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 600),
+    );
+  }
+
+  /// Under the buttons: how far a Create or Delete of more than one chunk
+  /// got, and Stop; otherwise the spinner while busy. The progress's space
+  /// is always reserved, so nothing moves when it appears. (The page is
+  /// centred, so more height below the buttons would move them up.)
+  Widget _buildProgress(BuildContext context) {
+    final progress = _progress;
+    final bSpinner = progress == null &&
+        ((_isBusy && !_waitingForUser) || !_settingsLoaded);
+    return Stack(
+      alignment: Alignment.center,
+      children: <Widget>[
+        // Out of sight, of TalkBack's reach, of taps and of the focus while
+        // there is no progress; but always taking up its space.
+        ExcludeFocus(
+          excluding: progress == null,
+          child: Visibility(
+            visible: progress != null,
+            maintainSize: true,
+            maintainAnimation: true,
+            maintainState: true,
+            child: Padding(
+              key: _progressBox,
+              padding: const EdgeInsets.symmetric(vertical: 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  // Also out of reach of the focus while disabled: with a D-pad
-                  // (directional navigation) a disabled TextField can still
-                  // take the focus, and its keyboard would open by itself when
-                  // the action ends.
-                  ExcludeFocus(
-                    excluding: !bCanAct,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: <Widget>[
-                        TextField(
-                          key: keyLastNames,
-                          controller: lastNamesController,
-                          onChanged: _settingsChanged,
-                          enabled: bCanAct,
-                          minLines: 1,
-                          maxLines: 4,
-                          decoration: _fieldDecoration('Last names'),
-                        ),
-                        const SizedBox(height: 20),
-                        TextField(
-                          key: keyFirstNames,
-                          controller: firstNamesController,
-                          onChanged: _settingsChanged,
-                          enabled: bCanAct,
-                          minLines: 1,
-                          maxLines: 4,
-                          decoration: _fieldDecoration('First names'),
-                        ),
-                        const SizedBox(height: 30),
-                        TextField(
-                          key: keyPhoneNumberTemplate,
-                          controller: phoneNumberTemplateController,
-                          focusNode: _phoneFocus,
-                          onChanged: _settingsChanged,
-                          enabled: bCanAct,
-                          // Not TextInputType.phone: a dial pad has no n.
-                          keyboardType: TextInputType.text,
-                          autocorrect: false,
-                          enableSuggestions: false,
-                          // Always read out as it changes: only typing in
-                          // this field changes it.
-                          decoration: _fieldDecoration('Phone number template',
-                              warning: _checks.phoneWarning,
-                              enabled: bCanAct,
-                              bLive: true),
-                        ),
-                        const SizedBox(height: 20),
-                        TextField(
-                          key: keyEmailAddressTemplate,
-                          controller: emailAddressTemplateController,
-                          focusNode: _emailFocus,
-                          onChanged: _settingsChanged,
-                          enabled: bCanAct,
-                          keyboardType: TextInputType.emailAddress,
-                          autocorrect: false,
-                          // Suggestions stay on: without them Android gets a
-                          // keyboard with no @ key.
-                          decoration: _fieldDecoration('Email address template',
-                              warning: _checks.emailWarning,
-                              enabled: bCanAct,
-                              bLive: _emailFocus.hasFocus),
-                        ),
-                      ],
-                    ),
+                  // TalkBack reads the count; the bar would add a bare
+                  // number ("41"). Not a live region: it would be read out
+                  // after every chunk, a few times a second; the result is
+                  // read out at the end.
+                  ExcludeSemantics(
+                    child: LinearProgressIndicator(
+                        // (Never indeterminate: its animation would run
+                        // unseen.)
+                        value: progress == null || progress.total == 0
+                            ? 0
+                            : progress.done / progress.total),
                   ),
-                  const SizedBox(height: 12),
-                  // Follows every keystroke. (Not a live region: TalkBack
-                  // would read it out after each one.)
-                  KeyedSubtree(
-                    key: _previewBox,
-                    child: ValueListenableBuilder(
-                      valueListenable: _preview,
-                      builder: (context, preview, _) => preview == null
-                          ? const SizedBox.shrink()
-                          : Semantics(
-                              container: true,
-                              // The phone number digit by digit.
-                              attributedLabel: AttributedString(preview.spoken,
-                                  attributes: [
-                                    if (preview.spokenPhoneNumber case (final start, final end))
-                                      SpellOutStringAttribute(
-                                          range: TextRange(start: start, end: end)),
-                                  ]),
-                              child: ExcludeSemantics(
-                                child: Text(
-                                  preview.text,
-                                  key: keyPreview,
-                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                      color: Theme.of(context).colorScheme.onSurfaceVariant),
-                                ),
-                              ),
-                            ),
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  // Always there, empty without a count, so the buttons
-                  // don't move when it appears. (Not a live region: TalkBack
-                  // would read it over the result message.)
+                  const SizedBox(height: 8),
                   Text(
-                    _status ?? "",
-                    key: keyStatus,
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodyLarge,
-                  ),
-                  const SizedBox(height: 16),
+                      progress == null
+                          ? ""
+                          : progressText(
+                              creating: progress.creating,
+                              done: progress.done,
+                              total: progress.total),
+                      key: progress == null ? null : keyProgress,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyLarge),
+                  const SizedBox(height: 8),
                   Center(
-                    child: ElevatedButton(
-                      onPressed: bCanAct && _checks.createBlocked == null
-                          ? () => _createAllContacts()
-                          : null,
-                      // While it can't be used, TalkBack also says why.
-                      // (Inside the button, so it joins the button's node.)
-                      child: Semantics(
-                        hint: _checks.createBlocked,
-                        child: const Text("Create Fake Contacts"),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 30),
-                  Center(
-                    child: FilledButton(
-                      onPressed: bCanAct ? () => _deleteAllContacts() : null,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.pink,
-                        foregroundColor: Colors.white,
-                      ),
-                      child: const Text("Delete Fake Contacts"),
-                    ),
-                  ),
-                  // Always reserve the spinner's space so the layout doesn't jump.
-                  SizedBox(
-                    height: 72,
-                    child: Center(
-                      child: ((_isBusy && !_waitingForUser) || !_settingsLoaded)
-                          ? const CircularProgressIndicator()
-                          : null,
+                    child: OutlinedButton(
+                      onPressed: progress == null || _stopRequested
+                          ? null
+                          : _requestStop,
+                      child: Text(_stopRequested ? "Stopping…" : "Stop"),
                     ),
                   ),
                 ],
@@ -724,7 +910,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
             ),
           ),
         ),
-      ),
+        if (bSpinner) const CircularProgressIndicator(),
+      ],
     );
   }
 }

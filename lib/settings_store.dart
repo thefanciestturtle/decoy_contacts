@@ -131,22 +131,32 @@ class LedgerNotSaved implements Exception {
   String toString() => 'LedgerNotSaved: Android could not write the ledger';
 }
 
-/// Keeps the [Ledger] of created raw contacts in the app's SharedPreferences.
+/// Keeps the [Ledger] of created raw contacts in the app's SharedPreferences,
+/// with the [PendingCreate] of a Create in progress, if any.
 class LedgerStore {
   const LedgerStore();
 
-  Future<Ledger> load() async {
+  Future<Ledger> load() async => (await loadWithPending()).ledger;
+
+  /// The ledger, and the [PendingCreate] saved with it, if any.
+  Future<({Ledger ledger, PendingCreate? pending})> loadWithPending() async {
     final prefs = await SharedPreferences.getInstance();
-    return Ledger.decode(prefs.getString(kLedgerPrefsKey));
+    return Ledger.decodeWithPending(prefs.getString(kLedgerPrefsKey));
   }
 
+  /// Saves [ledger] with [pending], in one write; with none, one saved
+  /// earlier is dropped. ([pending] is required, so no caller drops one by
+  /// leaving it out: see the pending records the Create and Delete plans
+  /// keep.)
+  ///
   /// Throws [LedgerNotSaved] if it couldn't be written. (Until the app is
   /// restarted, [load] then still returns it: the plugin keeps it in memory
   /// either way.)
-  Future<void> save(Ledger ledger) async {
+  Future<void> save(Ledger ledger, {required PendingCreate? pending}) async {
     final prefs = await SharedPreferences.getInstance();
     // Android reports a failed write as false rather than as an error.
-    if (!await prefs.setString(kLedgerPrefsKey, ledger.encode())) {
+    if (!await prefs.setString(
+        kLedgerPrefsKey, ledger.encode(pending: pending))) {
       throw const LedgerNotSaved();
     }
   }

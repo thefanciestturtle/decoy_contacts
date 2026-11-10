@@ -39,6 +39,17 @@ class InMemoryContactsGateway implements ContactsGateway {
   int? createAllStopsAfter;
   int? deleteAllStopsAfter;
 
+  /// Awaited at the start of each [createAll] or [deleteAll] call, with how
+  /// many calls there were before it; e.g. to hold a chunk back while a
+  /// test looks at the progress.
+  Future<void> Function(int call)? beforeCreateAll;
+  Future<void> Function(int call)? beforeDeleteAll;
+
+  /// Awaited once [createAll] has created its contacts, before it returns
+  /// their IDs. A future that never completes acts like the app being
+  /// killed: the contacts are there, but the app never learns which.
+  Future<void> Function(int call)? afterCreateAll;
+
   /// Called for each contact [createAll] adds. Returning an existing contact
   /// ID merges the new raw contact into that contact, as Android's
   /// aggregation can do.
@@ -144,7 +155,9 @@ class InMemoryContactsGateway implements ContactsGateway {
 
   @override
   Future<List<String>> createAll(List<NewContact> contacts) async {
+    final call = createAllCalls.length;
     createAllCalls.add(contacts);
+    await beforeCreateAll?.call(call);
     final error = createAllError;
     if (error != null && createAllStopsAfter == null) throw error;
     final ids = <String>[];
@@ -164,12 +177,15 @@ class InMemoryContactsGateway implements ContactsGateway {
       }
     }
     if (error != null) throw error;
+    await afterCreateAll?.call(call);
     return ids;
   }
 
   @override
   Future<void> deleteAll(List<String> contactIds) async {
+    final call = deleteAllCalls.length;
     deleteAllCalls.add(contactIds);
+    await beforeDeleteAll?.call(call);
     final error = deleteAllError;
     if (error != null && deleteAllStopsAfter == null) throw error;
     for (final (i, id) in contactIds.indexed) {
