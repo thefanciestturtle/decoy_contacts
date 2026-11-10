@@ -49,10 +49,10 @@ void main() {
       expect(calls, [check, request, check]);
     });
 
-    test('a request Android cut short, which the plugin calls granted, is '
-        'a denial', () async {
+    test('a request Android cut short, which the plugin calls granted, '
+        'failed: the user didn\'t refuse', () async {
       plugin(['notDetermined', 'notDetermined'], request: 'granted');
-      expect(await gateway.requestPermission(), PermissionAnswer.denied);
+      await expectLater(gateway.requestPermission(), throwsStateError);
     });
 
     test('a second "Don\'t allow" is a denial; once Android no longer '

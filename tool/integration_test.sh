@@ -60,7 +60,8 @@ for permission in READ_CONTACTS WRITE_CONTACTS; do
     "android.permission.$permission" user-set user-fixed
 done
 # Without the extra arguments: they are meant for the tests above (e.g. a
-# --plain-name filter, which would match nothing here).
-flutter test integration_test/permission_test.dart -d "$serial"
+# --plain-name filter, which would match nothing here). The run above
+# already got the packages, if it was going to.
+flutter test integration_test/permission_test.dart -d "$serial" --no-pub
 # It ends with the app's settings in front; leave the home screen instead.
 adb_ shell input keyevent KEYCODE_HOME

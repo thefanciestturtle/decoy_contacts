@@ -13,12 +13,13 @@ class FlutterContactsGateway implements ContactsGateway {
     final before =
         await FlutterContacts.permissions.check(PermissionType.readWrite);
     if (before == PermissionStatus.granted) return PermissionAnswer.granted;
-    var after =
+    final after =
         await FlutterContacts.permissions.request(PermissionType.readWrite);
     // The plugin says "granted" for a request Android cut short (with no
-    // answers at all), so make sure.
+    // answers at all), so make sure. The user didn't refuse, so it isn't a
+    // denial: asking failed.
     if (after == PermissionStatus.granted && !await hasPermission()) {
-      after = PermissionStatus.denied;
+      throw StateError("permission request cut short");
     }
     if (after != PermissionStatus.granted) {
       log("FlutterContactsGateway: no permission, status $before -> $after");
@@ -100,8 +101,9 @@ class FlutterContactsGateway implements ContactsGateway {
 ///   and the app's activity is paused either way), so the app then offers
 ///   the settings once when it needn't have, which does no harm.
 ///
-/// The plugin only reports "permanently denied" on Android; restricted and
-/// limited are iOS only.
+/// This is Android's behaviour. (On iOS the plugin reports "permanently
+/// denied" after the first refusal, and restricted and limited exist; the
+/// app doesn't run there for now.)
 PermissionAnswer permissionAnswer(
         {required PermissionStatus before, required PermissionStatus after}) =>
     switch (after) {
