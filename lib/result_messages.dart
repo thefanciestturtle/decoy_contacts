@@ -29,9 +29,61 @@ const String kOpenSettingsFailedMessage = "Couldn't open Settings.";
 const String kPermissionRequestFailedMessage =
     "Couldn't ask for permission to access contacts. Try again.";
 
-/// [doing] is "reading", "creating" or "deleting".
-String errorMessage(String doing, Object error) =>
-    "Error while $doing contacts: $error";
+// The error messages below are plain sentences; the error itself goes to
+// the log (see logError). The app can't tell a passing failure from a
+// lasting one, and trying again is safe (Create skips what exists, Delete
+// checks everything again), so they say to try again; except when the
+// phone's storage is full (see storageFull), which trying again doesn't
+// help.
+
+/// Shown if reading the address book failed before Create or Delete
+/// changed anything.
+const String kReadFailedMessage = "Couldn't read your contacts. Try again.";
+
+const String _kStorageFull = "your phone's storage is full";
+
+/// "[done] of [planned] fake contacts", or "[done] fake contacts" if that
+/// was all of them.
+String _doneOf(int done, int planned) =>
+    done == planned ? _fakeContacts(done) : "$done of ${_fakeContacts(planned)}";
+
+/// Shown if Create failed: how far it got if it stopped partway (see
+/// [StoppedPartway]).
+String createFailedMessage(Object error) => switch (error) {
+      StoppedPartway(done: null) => "Couldn't finish creating fake contacts."
+          " Some may have been added that this app can't delete.",
+      // Delete still finds them while the app stays open.
+      StoppedPartway(:final int done, :final planned, recorded: false) =>
+        "Created ${_doneOf(done, planned)}, but couldn't save"
+            "${done == 1 ? " a record of it. Delete it" : " the list of them. Delete them"}"
+            " now, or this app may not be able to later.",
+      StoppedPartway(:final int done, :final planned) when done > 0 =>
+        storageFull(error)
+            ? "Created ${_doneOf(done, planned)} before your phone ran out of"
+                " storage."
+            : "Created ${_doneOf(done, planned)}, then something went wrong."
+                " Try again to create the rest.",
+      _ => storageFull(error)
+          ? "Couldn't create fake contacts: $_kStorageFull."
+          : "Couldn't create fake contacts. Try again.",
+    };
+
+/// Shown if Delete failed: how far it got if it stopped partway (see
+/// [StoppedPartway]).
+String deleteFailedMessage(Object error) => switch (error) {
+      StoppedPartway(done: null) => storageFull(error)
+          ? "Couldn't finish deleting fake contacts: $_kStorageFull."
+          : "Couldn't finish deleting fake contacts. Try again.",
+      StoppedPartway(:final int done, :final planned) when done > 0 =>
+        storageFull(error)
+            ? "Deleted ${_doneOf(done, planned)} before your phone ran out of"
+                " storage."
+            : "Deleted ${_doneOf(done, planned)}, then something went wrong."
+                " Try again to delete the rest.",
+      _ => storageFull(error)
+          ? "Couldn't delete fake contacts: $_kStorageFull."
+          : "Couldn't delete fake contacts. Try again.",
+    };
 
 /// Shown when, after the user said yes, Create or Delete would do more than
 /// the dialog said, because the address book changed while it was open.

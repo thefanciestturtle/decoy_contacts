@@ -2,6 +2,7 @@ import 'dart:developer';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_log.dart';
 import 'fake_contacts_core.dart';
 
 const String kDefaultLastNames = "Zen,Zaragoza,Zabinski,Zimmermann,Zapata,Zona,Zidane,Zeiss,Zimmer,Zaal,Zaman,Zambrano,Zanetti,Zangari,Zappa,Zavala,Zawisza,Zeegers,Zelenka,Zellweger,Zeni,Zhang,Zhao,Zheng,Zhou,Ziegler,Zima";
@@ -96,14 +97,38 @@ class SettingsStore {
     return settings;
   }
 
+  /// A failed write (Android reports it as false, e.g. with the storage
+  /// full) or an error is only logged: the settings stay in memory
+  /// meanwhile, and the next save tries again.
   Future<void> save(Settings settings) async {
     log("SettingsStore.save: called");
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(kLastNamesKey, settings.lastNamesText);
-    await prefs.setString(kFirstNamesKey, settings.firstNamesText);
-    await prefs.setString(kPhoneTemplateKey, settings.phoneTemplateText);
-    await prefs.setString(kEmailTemplateKey, settings.emailTemplateText);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      var bSaved = true;
+      for (final (key, value) in [
+        (kLastNamesKey, settings.lastNamesText),
+        (kFirstNamesKey, settings.firstNamesText),
+        (kPhoneTemplateKey, settings.phoneTemplateText),
+        (kEmailTemplateKey, settings.emailTemplateText),
+      ]) {
+        if (!await prefs.setString(key, value)) bSaved = false;
+      }
+      if (!bSaved) {
+        logError("SettingsStore.save", "Android could not write the settings");
+      }
+    } catch (e, st) {
+      logError("SettingsStore.save", e, st);
+    }
   }
+}
+
+/// Thrown when the ledger couldn't be written, e.g. with the phone's
+/// storage full.
+class LedgerNotSaved implements Exception {
+  const LedgerNotSaved();
+
+  @override
+  String toString() => 'LedgerNotSaved: Android could not write the ledger';
 }
 
 /// Keeps the [Ledger] of created raw contacts in the app's SharedPreferences.
@@ -115,8 +140,14 @@ class LedgerStore {
     return Ledger.decode(prefs.getString(kLedgerPrefsKey));
   }
 
+  /// Throws [LedgerNotSaved] if it couldn't be written. (Until the app is
+  /// restarted, [load] then still returns it: the plugin keeps it in memory
+  /// either way.)
   Future<void> save(Ledger ledger) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(kLedgerPrefsKey, ledger.encode());
+    // Android reports a failed write as false rather than as an error.
+    if (!await prefs.setString(kLedgerPrefsKey, ledger.encode())) {
+      throw const LedgerNotSaved();
+    }
   }
 }

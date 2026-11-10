@@ -4,13 +4,17 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fake_contacts/app_log.dart';
 import 'package:fake_contacts/contacts_gateway.dart';
 import 'package:fake_contacts/fake_contacts_core.dart';
 import 'package:fake_contacts/main.dart';
+import 'package:fake_contacts/settings_store.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'failing_ledger_store.dart';
 import 'in_memory_contacts_gateway.dart';
 
 /// 2 last names x 2 first names = these 4 fakes.
@@ -34,6 +38,9 @@ const String kOneChanged =
 String someChanged(int n) =>
     " $n no longer match what this app created (edited, or the app's records"
     " came from another phone) and were left alone.";
+const String kReadFailed = "Couldn't read your contacts. Try again.";
+const String kCreateFailed = "Couldn't create fake contacts. Try again.";
+const String kDeleteFailed = "Couldn't delete fake contacts. Try again.";
 const String kCreateBody = 'They are added to the contacts on this phone.';
 const String kDeleteBody = 'Only contacts this app created are deleted.';
 
@@ -48,7 +55,8 @@ void setPrefs({Map<String, Object> ledger = const {}}) {
   });
 }
 
-Future<void> pumpApp(WidgetTester tester, ContactsGateway contacts) async {
+Future<void> pumpApp(WidgetTester tester, ContactsGateway contacts,
+    {LedgerStore ledgerStore = const LedgerStore()}) async {
   // Tall enough that both buttons are on screen.
   tester.view.physicalSize = const Size(1080, 2400);
   tester.view.devicePixelRatio = 1.0;
@@ -60,7 +68,7 @@ Future<void> pumpApp(WidgetTester tester, ContactsGateway contacts) async {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
   });
-  await tester.pumpWidget(MyApp(contacts: contacts));
+  await tester.pumpWidget(MyApp(contacts: contacts, ledgerStore: ledgerStore));
   await tester.pumpAndSettle();
 }
 
@@ -221,6 +229,50 @@ class _HoldsReadAfterDelete extends InMemoryContactsGateway {
   }
 }
 
+/// When creating or deleting fails, reading the address book fails too,
+/// until [getAllError] is cleared.
+class _ReadsFailAfterError extends InMemoryContactsGateway {
+  @override
+  Future<List<String>> createAll(List<NewContact> contacts) async {
+    try {
+      return await super.createAll(contacts);
+    } catch (_) {
+      getAllError = Exception('provider gone');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> deleteAll(List<String> contactIds) async {
+    try {
+      return await super.deleteAll(contactIds);
+    } catch (_) {
+      getAllError = Exception('provider gone');
+      rethrow;
+    }
+  }
+}
+
+/// While [empty] is set, the address book reads as empty, as when the
+/// contacts provider is missing.
+class _ReadsEmpty extends InMemoryContactsGateway {
+  bool empty = false;
+
+  @override
+  Future<List<StoredContact>> getAll({List<String>? ids}) async =>
+      empty ? [] : await super.getAll(ids: ids);
+}
+
+/// Looking up the new contacts after creating them fails; reading them all
+/// works.
+class _LookupFails extends InMemoryContactsGateway {
+  @override
+  Future<List<StoredContact>> getAll({List<String>? ids}) {
+    if (ids != null) throw Exception('lookup failed');
+    return super.getAll(ids: ids);
+  }
+}
+
 /// Can't find the first new contact when looking them up after creating
 /// them, so its raw contact can't be recorded.
 class _LosesFirstNewContact extends InMemoryContactsGateway {
@@ -234,9 +286,16 @@ class _LosesFirstNewContact extends InMemoryContactsGateway {
 void main() {
   late InMemoryContactsGateway book;
 
+  /// What logError wrote, instead of Android's log.
+  late List<String> logged;
+
   setUp(() {
     setPrefs();
     book = InMemoryContactsGateway();
+    logged = [];
+    final previous = errorLogSink;
+    errorLogSink = logged.add;
+    addTearDown(() => errorLogSink = previous);
   });
 
   group('Create', () {
@@ -364,8 +423,7 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
 
-      expect(snackBarText(tester),
-          'Error while creating contacts: Exception: disk full');
+      expect(snackBarText(tester), kCreateFailed);
       expect(book.all, isEmpty);
       expect(await storedLedgerJson(), isNull);
       expect(buttonsEnabled(tester), isTrue);
@@ -378,8 +436,7 @@ void main() {
       await tapExpectingNoDialog(tester, kCreateButton);
 
       // It happened before anything was created, and the message says so.
-      expect(snackBarText(tester),
-          'Error while reading contacts: Exception: no provider');
+      expect(snackBarText(tester), kReadFailed);
       expect(book.createAllCalls, isEmpty);
       expect(await storedLedgerJson(), isNull);
     });
@@ -624,8 +681,7 @@ void main() {
 
       await tapDelete(tester);
 
-      expect(snackBarText(tester),
-          'Error while deleting contacts: Exception: provider gone');
+      expect(snackBarText(tester), kDeleteFailed);
       expect(book.all, hasLength(4));
       expect(await storedLedgerJson(), ledgerBefore);
       expect(buttonsEnabled(tester), isTrue);
@@ -635,6 +691,260 @@ void main() {
       await tapDelete(tester);
       expect(snackBarText(tester), 'Deleted 4 fake contacts.');
       expect(book.all, isEmpty);
+    });
+  });
+
+  group('errors (U6)', () {
+    /// What the plugin reports when the contacts provider can't write.
+    final kStorageFull = PlatformException(
+        code: 'flutter_contacts_error',
+        message: 'Failed to handle createAll: database or disk is full'
+            ' (code 13 SQLITE_FULL)');
+
+    const kStoppedCreating = 'Created 2 of 4 fake contacts, then something'
+        ' went wrong. Try again to create the rest.';
+    const kStoppedDeleting = 'Deleted 2 of 4 fake contacts, then something'
+        ' went wrong. Try again to delete the rest.';
+
+    testWidgets('a Create that stops partway records what it created, and '
+        'trying again creates the rest', (tester) async {
+      book.createAllError = Exception('provider gone');
+      book.createAllStopsAfter = 2;
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+
+      expect(snackBarText(tester), kStoppedCreating);
+      expect(book.all, hasLength(2));
+      final ledger = await storedLedger();
+      expect(ledger.entries.keys,
+          unorderedEquals([for (final c in book.all) ...c.rawContactIds]));
+      expect(statusText(tester), '2 fake contacts on this phone.');
+      expect(buttonsEnabled(tester), isTrue);
+
+      book.createAllError = null;
+      await tapCreate(tester);
+      expect(snackBarText(tester), 'Created 2 fake contacts. 2 already existed.');
+      expect(book.displayNames, unorderedEquals(kFakeNames));
+
+      // All four are recorded, so Delete removes them all.
+      await tapDelete(tester);
+      expect(snackBarText(tester), 'Deleted 4 fake contacts.');
+      expect(book.all, isEmpty);
+    });
+
+    testWidgets('a fake merged into a real contact before it stopped is '
+        'recorded, and Delete leaves it alone', (tester) async {
+      final alice = book.add('Zoe Zen', phones: ['+1 555 0101']);
+      book.mergeInto = (c) => c.first == 'Zoe' && c.last == 'Zen' ? alice : null;
+      book.createAllError = Exception('provider gone');
+      book.createAllStopsAfter = 2;
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+
+      expect(snackBarText(tester), kStoppedCreating);
+      expect((await storedLedger()).length, 2);
+
+      book.createAllError = null;
+      await tapCreate(tester);
+      await tapDelete(tester);
+      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneMerged');
+      expect(book.rawIdsOf(alice), hasLength(2));
+    });
+
+    testWidgets("if what a failed Create did can't be read, it says some may "
+        "be left that can't be deleted", (tester) async {
+      final failing = _ReadsFailAfterError();
+      failing.createAllError = Exception('provider gone');
+      failing.createAllStopsAfter = 2;
+      await pumpApp(tester, failing);
+      await tapCreate(tester);
+
+      expect(
+          snackBarText(tester),
+          "Couldn't finish creating fake contacts. Some may have been added"
+          " that this app can't delete.");
+      expect(failing.all, hasLength(2));
+      expect(await storedLedgerJson(), isNull);
+      expect(buttonsEnabled(tester), isTrue);
+
+      // So it is: Create skips them, and Delete can't remove them.
+      failing.createAllError = null;
+      failing.getAllError = null;
+      await tapCreate(tester);
+      expect(snackBarText(tester), 'Created 2 fake contacts. 2 already existed.');
+      await tapDelete(tester);
+      expect(snackBarText(tester), 'Deleted 2 fake contacts.');
+      expect(failing.all, hasLength(2));
+    });
+
+    testWidgets('a Create that created everything before failing says so',
+        (tester) async {
+      final failing = _LookupFails();
+      await pumpApp(tester, failing);
+      await tapCreate(tester);
+
+      expect(snackBarText(tester), 'Created 4 fake contacts.');
+      expect((await storedLedger()).length, 4);
+      expect(logged.single, contains('lookup failed'));
+
+      await tapDelete(tester);
+      expect(snackBarText(tester), 'Deleted 4 fake contacts.');
+      expect(failing.all, isEmpty);
+    });
+
+    testWidgets('a Delete that stops partway says how many it deleted, and '
+        'trying again deletes the rest', (tester) async {
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      final ledgerBefore = await storedLedgerJson();
+      book.deleteAllError = Exception('provider gone');
+      book.deleteAllStopsAfter = 2;
+
+      await tapDelete(tester);
+      expect(snackBarText(tester), kStoppedDeleting);
+      expect(book.all, hasLength(2));
+      expect(statusText(tester), '2 fake contacts on this phone.');
+      // The ledger is left as it was: entries for the deleted ones do no
+      // harm.
+      expect(await storedLedgerJson(), ledgerBefore);
+
+      book.deleteAllError = null;
+      await tapAndOpenDialog(tester, kDeleteButton);
+      expect(dialogText(tester).title, 'Delete 2 fake contacts?');
+      await tester.tap(dialogButton('Delete'));
+      await tester.pumpAndSettle();
+      expect(snackBarText(tester), 'Deleted 2 fake contacts.');
+      expect(book.all, isEmpty);
+      expect((await storedLedger()).isEmpty, isTrue);
+    });
+
+    testWidgets('a failed Create keeps the ledger even if the address book '
+        'reads as empty', (tester) async {
+      // With the contacts provider missing, reads find nothing rather than
+      // failing, so nothing must be dropped for not being found.
+      final broken = _ReadsEmpty();
+      await pumpApp(tester, broken);
+      await tapCreate(tester);
+      final ledgerBefore = await storedLedgerJson();
+
+      broken.empty = true;
+      broken.createAllError = Exception('Unknown authority');
+      await tapCreate(tester);
+      expect(snackBarText(tester), kCreateFailed);
+      expect(await storedLedgerJson(), ledgerBefore);
+
+      broken.empty = false;
+      broken.createAllError = null;
+      await tapDelete(tester);
+      expect(snackBarText(tester), 'Deleted 4 fake contacts.');
+    });
+
+    testWidgets("if what a failed Delete did can't be read, it says so",
+        (tester) async {
+      final failing = _ReadsFailAfterError();
+      await pumpApp(tester, failing);
+      await tapCreate(tester);
+      final ledgerBefore = await storedLedgerJson();
+      failing.deleteAllError = Exception('provider gone');
+      failing.deleteAllStopsAfter = 2;
+
+      await tapDelete(tester);
+      expect(snackBarText(tester),
+          "Couldn't finish deleting fake contacts. Try again.");
+      expect(failing.all, hasLength(2));
+      expect(await storedLedgerJson(), ledgerBefore);
+      expect(buttonsEnabled(tester), isTrue);
+
+      // The ledger still lists the deleted ones, which does no harm.
+      failing.deleteAllError = null;
+      failing.getAllError = null;
+      await tapAndOpenDialog(tester, kDeleteButton);
+      expect(dialogText(tester).title, 'Delete 2 fake contacts?');
+      await tester.tap(dialogButton('Delete'));
+      await tester.pumpAndSettle();
+      expect(snackBarText(tester), 'Deleted 2 fake contacts.');
+      expect(failing.all, isEmpty);
+    });
+
+    testWidgets('with the storage full, it says so instead of "Try again"',
+        (tester) async {
+      book.createAllError = kStorageFull;
+      book.createAllStopsAfter = 2;
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      expect(snackBarText(tester),
+          'Created 2 of 4 fake contacts before your phone ran out of storage.');
+      expect((await storedLedger()).length, 2);
+
+      book.createAllStopsAfter = null;
+      await tapCreate(tester);
+      expect(snackBarText(tester),
+          "Couldn't create fake contacts: your phone's storage is full.");
+
+      book.deleteAllError = kStorageFull;
+      await tapDelete(tester);
+      expect(snackBarText(tester),
+          "Couldn't delete fake contacts: your phone's storage is full.");
+      expect(book.all, hasLength(2));
+    });
+
+    testWidgets("fakes found but not recorded: it says to delete them now, "
+        "and Delete can", (tester) async {
+      // The storage is full: the ledger is kept in memory but not written.
+      book.createAllError = kStorageFull;
+      book.createAllStopsAfter = 2;
+      await pumpApp(tester, book, ledgerStore: FailingLedgerStore(2));
+      await tapCreate(tester);
+
+      expect(
+          snackBarText(tester),
+          "Created 2 of 4 fake contacts, but couldn't save the list of them."
+          " Delete them now, or this app may not be able to later.");
+      expect(statusText(tester), '2 fake contacts on this phone.');
+
+      book.createAllError = null;
+      await tapDelete(tester);
+      expect(snackBarText(tester), 'Deleted 2 fake contacts.');
+      expect(book.all, isEmpty);
+    });
+
+    testWidgets('the log keeps the details the message leaves out',
+        (tester) async {
+      book.getAllError = Exception('no provider');
+      await pumpApp(tester, book);
+      logged.clear(); // the status line's count failed too
+      await tapExpectingNoDialog(tester, kCreateButton);
+
+      expect(snackBarText(tester), kReadFailed);
+      expect(logged.single, contains('_createAllContacts, preview'));
+      expect(logged.single, contains('Exception: no provider'));
+      // With the stack trace.
+      expect(logged.single, contains('previewCreate'));
+    });
+
+    testWidgets('the log keeps what stopped a Create partway, and where',
+        (tester) async {
+      book.createAllError = Exception('provider gone');
+      book.createAllStopsAfter = 2;
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+
+      expect(logged.single,
+          startsWith('Fake Contacts: _createAllContacts, stopped after 2 of 4:'
+              ' Exception: provider gone\n'));
+      expect(logged.single, contains('InMemoryContactsGateway.createAll'));
+    });
+
+    testWidgets('a failed status count is logged but not shown',
+        (tester) async {
+      setPrefs(ledger: {'1': fakeEntry('Zoe', 'Zen').toJson()}); // so it reads
+      book.getAllError = Exception('no provider');
+      await pumpApp(tester, book);
+
+      expect(statusText(tester), isNull);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(logged.single, contains('_refreshStatus'));
+      expect(logged.single, contains('Exception: no provider'));
     });
   });
 
@@ -869,8 +1179,7 @@ void main() {
       await tester.tap(dialogButton('Delete'));
       await tester.pumpAndSettle();
 
-      expect(snackBarText(tester),
-          'Error while deleting contacts: Exception: provider gone');
+      expect(snackBarText(tester), kDeleteFailed);
       expect(book.deleteAllCalls, isEmpty);
       expect(buttonsEnabled(tester), isTrue);
     });
@@ -1325,7 +1634,7 @@ void main() {
 
       book.getAllError = Exception('no provider');
       await tapExpectingNoDialog(tester, kCreateButton);
-      expect(snackBarText(tester), startsWith('Error while reading contacts'));
+      expect(snackBarText(tester), kReadFailed);
       expect(previewText(tester), before);
 
       book.getAllError = null;
