@@ -34,7 +34,8 @@ class InMemoryContactsGateway implements ContactsGateway {
 
   /// With [createAllError] or [deleteAllError] set, how many contacts the
   /// call creates or deletes before it throws, as the plugin does when a
-  /// later batch fails. Null means none.
+  /// later batch fails. Null means none; as many as there are or more,
+  /// all, and it still throws.
   int? createAllStopsAfter;
   int? deleteAllStopsAfter;
 
@@ -162,6 +163,7 @@ class InMemoryContactsGateway implements ContactsGateway {
         ids.add(id);
       }
     }
+    if (error != null) throw error;
     return ids;
   }
 
@@ -174,5 +176,6 @@ class InMemoryContactsGateway implements ContactsGateway {
       if (error != null && i == deleteAllStopsAfter) throw error;
       _contacts.remove(id);
     }
+    if (error != null) throw error;
   }
 }

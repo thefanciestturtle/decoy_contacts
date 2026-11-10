@@ -227,8 +227,8 @@ void main() {
       expect(
           createFailedMessage(
               stopped(1, 1, recorded: false, cause: Exception(sFull))),
-          'Created 1 fake contact, but couldn\'t save the list of them.'
-          ' Delete them now, or this app may not be able to later.');
+          'Created 1 fake contact, but couldn\'t save a record of it.'
+          ' Delete it now, or this app may not be able to later.');
     });
 
     test('storage full: no "Try again"', () {

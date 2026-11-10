@@ -54,8 +54,9 @@ String createFailedMessage(Object error) => switch (error) {
           " Some may have been added that this app can't delete.",
       // Delete still finds them while the app stays open.
       StoppedPartway(:final int done, :final planned, recorded: false) =>
-        "Created ${_doneOf(done, planned)}, but couldn't save the list of"
-            " them. Delete them now, or this app may not be able to later.",
+        "Created ${_doneOf(done, planned)}, but couldn't save"
+            "${done == 1 ? " a record of it. Delete it" : " the list of them. Delete them"}"
+            " now, or this app may not be able to later.",
       StoppedPartway(:final int done, :final planned) when done > 0 =>
         storageFull(error)
             ? "Created ${_doneOf(done, planned)} before your phone ran out of"

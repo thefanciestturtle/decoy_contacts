@@ -214,7 +214,9 @@ Future<CreatePreview> previewCreate(
 /// If creating fails, reads the address book again to record what was
 /// created, and throws [StoppedPartway] saying how far it got; unless it
 /// got everything done after all (say, only looking up the new contacts
-/// failed). An error before it starts creating is thrown as it is.
+/// failed). If only saving the ledger fails, throws [StoppedPartway] with
+/// [StoppedPartway.recorded] false. An error before it starts creating is
+/// thrown as it is.
 Future<CreateResult?> createFakeContacts(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings,
     {int? atMost}) async {
@@ -224,10 +226,16 @@ Future<CreateResult?> createFakeContacts(
     log("createFakeContacts: ${toCreate.length} to create, more than $atMost");
     return null;
   }
+  final nothingCreated = CreateResult(
+      created: 0, alreadyExisted: plan.alreadyExisted, untracked: 0);
   if (toCreate.isEmpty) {
-    await ledgerStore.save(plan.ledger);
-    return CreateResult(
-        created: 0, alreadyExisted: plan.alreadyExisted, untracked: 0);
+    try {
+      // Only drops entries whose raw contacts are gone.
+      await ledgerStore.save(plan.ledger);
+    } catch (e, st) {
+      logError("createFakeContacts, saving the ledger", e, st);
+    }
+    return nothingCreated;
   }
   final newContacts = [
     for (final (name, entry) in toCreate)
@@ -241,23 +249,19 @@ Future<CreateResult?> createFakeContacts(
   final entries = [for (final (_, entry) in toCreate) entry];
   // From here on, contacts may have been created, so an error must not lose
   // track of them.
+  final List<String> ids;
+  final Map<String, LedgerEntry> created;
   try {
     log("createFakeContacts: about to call createAll for ${newContacts.length} contact(s)");
-    final ids = await contacts.createAll(newContacts);
+    ids = await contacts.createAll(newContacts);
     final after = addressBookOf(await contacts.getAll(ids: ids));
-    final created = newlyCreatedRawIds(
+    created = newlyCreatedRawIds(
         created: entries,
         createdContactIds: ids,
         before: plan.before,
         after: after);
-    await ledgerStore.save(Ledger({...plan.ledger.entries, ...created}));
-    log("createFakeContacts: nCreated ${ids.length}");
-    return CreateResult(
-      created: ids.length,
-      alreadyExisted: plan.alreadyExisted,
-      untracked: ids.length - created.length,
-    );
   } catch (e, st) {
+    // What was created isn't known: work it out from the address book.
     final found = await _recordCreatedBeforeFailure(
         contacts, ledgerStore, plan, entries);
     if (found != null && found.saved && found.count == entries.length) {
@@ -276,6 +280,36 @@ Future<CreateResult?> createFakeContacts(
         cause: e,
         stackTrace: st);
   }
+  try {
+    await ledgerStore.save(Ledger({...plan.ledger.entries, ...created}));
+  } catch (e, st) {
+    // All were created, but the ledger couldn't be saved (with the storage
+    // full); it still holds them while the app stays open.
+    throw StoppedPartway(
+        done: ids.length,
+        planned: entries.length,
+        recorded: false,
+        cause: e,
+        stackTrace: st);
+  }
+  log("createFakeContacts: nCreated ${ids.length}");
+  return CreateResult(
+    created: ids.length,
+    alreadyExisted: plan.alreadyExisted,
+    untracked: ids.length - created.length,
+  );
+}
+
+/// Whether a read of the address book made after a failed Create or Delete
+/// ([after]) can be trusted: it still has every raw contact from [before]
+/// that the action left alone ([touched] are those it may have deleted).
+/// With the contacts provider gone, reads find nothing instead of failing,
+/// which would look like everything was deleted, or nothing created.
+bool _plausibleAfterFailure(AddressBook before, AddressBook after,
+    {Set<String> touched = const {}}) {
+  final present = allRawIds(after);
+  return allRawIds(before)
+      .every((raw) => touched.contains(raw) || present.contains(raw));
 }
 
 /// After creating failed: reads the address book again, records in the
@@ -285,7 +319,8 @@ Future<CreateResult?> createFakeContacts(
 ///
 /// Only adds to the ledger as stored. Nothing is dropped for not being
 /// found, in case that read was wrong too: with the contacts provider
-/// missing, reads find no contacts at all rather than failing.
+/// missing, reads find no contacts at all rather than failing. Such a read
+/// counts as not read (see [_plausibleAfterFailure]).
 Future<({int count, bool saved})?> _recordCreatedBeforeFailure(
     ContactsGateway contacts,
     LedgerStore ledgerStore,
@@ -294,10 +329,14 @@ Future<({int count, bool saved})?> _recordCreatedBeforeFailure(
   final Map<String, LedgerEntry> created;
   try {
     final everyone = await contacts.getAll();
+    final after = addressBookOf(everyone);
+    if (!_plausibleAfterFailure(plan.before, after)) {
+      throw StateError("contacts that were there before are missing");
+    }
     created = createdBeforeFailure(
       planned: entries,
       before: plan.before,
-      after: addressBookOf(everyone),
+      after: after,
       fingerprintsByContact: {
         for (final c in everyone) c.id: fingerprintsOfContact(c),
       },
@@ -417,9 +456,9 @@ Future<DeletePreview> countFakeContacts(
 /// returns null.
 ///
 /// If deleting fails, reads the address book again and throws
-/// [StoppedPartway] saying how far it got; unless all were deleted (say,
-/// only saving the ledger failed). An error before it starts deleting is
-/// thrown as it is.
+/// [StoppedPartway] saying how far it got. If only saving the ledger
+/// fails, that is logged: all were deleted. An error before it starts
+/// deleting is thrown as it is.
 Future<DeleteResult?> deleteFakeContacts(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings,
     {int? atMost}) async {
@@ -437,17 +476,17 @@ Future<DeleteResult?> deleteFakeContacts(
   try {
     log("deleteFakeContacts: about to call deleteAll for ${plan.contactIdsToDelete.length} contact(s)");
     await contacts.deleteAll(plan.contactIdsToDelete);
-    await ledgerStore.save(plan.remaining);
   } catch (e, st) {
     final done = await _countDeletedBeforeFailure(contacts, check);
-    if (done == plan.rawContactsDeleted) {
-      // All were deleted; only saving the ledger failed. No harm done:
-      // entries whose raw contacts are gone are dropped when next read.
-      logError("deleteFakeContacts, recovered", e, st);
-      return result;
-    }
     throw StoppedPartway(
         done: done, planned: plan.rawContactsDeleted, cause: e, stackTrace: st);
+  }
+  try {
+    await ledgerStore.save(plan.remaining);
+  } catch (e, st) {
+    // All were deleted. No harm done: entries whose raw contacts are gone
+    // are dropped when next read.
+    logError("deleteFakeContacts, saving the ledger", e, st);
   }
   log("deleteFakeContacts: nDeleted ${plan.rawContactsDeleted}");
   return result;
@@ -460,15 +499,20 @@ Future<DeleteResult?> deleteFakeContacts(
 /// The ledger is left as it was. Its entries for the deleted ones do no
 /// harm (they are dropped when next read), and pruning it to what this
 /// read finds could lose the rest if the read was wrong too (see
-/// [_recordCreatedBeforeFailure]).
+/// [_plausibleAfterFailure]).
 Future<int?> _countDeletedBeforeFailure(
     ContactsGateway contacts, _DeleteCheck check) async {
   try {
-    final present = allRawIds(addressBookOf(await contacts.getAll()));
-    return [
+    final after = addressBookOf(await contacts.getAll());
+    final planned = {
       for (final contactId in check.plan.contactIdsToDelete)
         ...check.book[contactId]!,
-    ].where((raw) => !present.contains(raw)).length;
+    };
+    if (!_plausibleAfterFailure(check.book, after, touched: planned)) {
+      throw StateError("contacts that weren't to be deleted are missing");
+    }
+    final present = allRawIds(after);
+    return planned.where((raw) => !present.contains(raw)).length;
   } catch (e, st) {
     logError("deleteFakeContacts, finding what was deleted", e, st);
     return null;

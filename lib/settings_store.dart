@@ -2,6 +2,7 @@ import 'dart:developer';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_log.dart';
 import 'fake_contacts_core.dart';
 
 const String kDefaultLastNames = "Zen,Zaragoza,Zabinski,Zimmermann,Zapata,Zona,Zidane,Zeiss,Zimmer,Zaal,Zaman,Zambrano,Zanetti,Zangari,Zappa,Zavala,Zawisza,Zeegers,Zelenka,Zellweger,Zeni,Zhang,Zhao,Zheng,Zhou,Ziegler,Zima";
@@ -96,13 +97,22 @@ class SettingsStore {
     return settings;
   }
 
+  /// A failed write (Android reports it as false, e.g. with the storage
+  /// full) is only logged: the settings stay in memory meanwhile, and the
+  /// next save tries again.
   Future<void> save(Settings settings) async {
     log("SettingsStore.save: called");
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(kLastNamesKey, settings.lastNamesText);
-    await prefs.setString(kFirstNamesKey, settings.firstNamesText);
-    await prefs.setString(kPhoneTemplateKey, settings.phoneTemplateText);
-    await prefs.setString(kEmailTemplateKey, settings.emailTemplateText);
+    var bSaved = true;
+    for (final (key, value) in [
+      (kLastNamesKey, settings.lastNamesText),
+      (kFirstNamesKey, settings.firstNamesText),
+      (kPhoneTemplateKey, settings.phoneTemplateText),
+      (kEmailTemplateKey, settings.emailTemplateText),
+    ]) {
+      if (!await prefs.setString(key, value)) bSaved = false;
+    }
+    if (!bSaved) logError("SettingsStore.save", "Android could not write the settings");
   }
 }
 
