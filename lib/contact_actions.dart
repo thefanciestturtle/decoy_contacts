@@ -299,11 +299,12 @@ Future<CreatePreview> previewCreate(
 /// contacts failed), and then it goes on. If that can't be found out, the
 /// pending record stays for the next Create or Delete, and
 /// [StoppedPartway.done] counts what the chunks before created (null if
-/// none). If saving the ledger fails once something was created, it stops
-/// with [StoppedPartway]: what it made is still recorded, as the save
-/// before the chunk is on disk (the chunk as a pending record), and the
-/// ledger stays in memory while the app is open (see [LedgerStore.save]).
-/// An error before it creates anything is thrown as it is.
+/// none). If saving the ledger fails before a later chunk, it stops with
+/// [StoppedPartway]; what it made is still recorded, as the save before is
+/// on disk (the chunk as a pending record), and the ledger stays in memory
+/// while the app is open (see [LedgerStore.save]). If only the save at the
+/// end fails, that is logged. An error before it creates anything is
+/// thrown as it is.
 Future<CreateResult?> createFakeContacts(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings,
     {int? atMost,
@@ -390,13 +391,9 @@ Future<CreateResult?> createFakeContacts(
         // them by their details, as after a failure. Raw contacts already
         // recorded with another entry aren't taken (in case Android linked
         // two new fakes and shows the second one's name).
-        found = {
-          ...found,
-          ...await _findByDetails(
-              contacts,
-              {...known, ...found.keys},
-              PendingCreate(maxRawId: pending.maxRawId, entries: missing)),
-        };
+        final more = await _findByDetails(contacts, {...known, ...found.keys},
+            PendingCreate(maxRawId: pending.maxRawId, entries: missing));
+        found = {...found, ...?more?.created};
       }
       final seen = {...allRawIds(after), ...found.keys};
       known.addAll(seen);
@@ -405,8 +402,9 @@ Future<CreateResult?> createFakeContacts(
     } catch (e, st) {
       // What this chunk created isn't known: work it out from the address
       // book.
+      // (Those of the ledger that are still there are among [known].)
       final recovered =
-          await _findCreatedAfterFailure(contacts, known, pending);
+          await _findByDetails(contacts, known, pending, untouched: known);
       if (recovered == null) {
         // The pending record stays: the next Create or Delete looks again.
         // What the chunks before created is known (and recorded).
@@ -419,9 +417,18 @@ Future<CreateResult?> createFakeContacts(
       found = recovered.created;
       final count = found.values.toSet().length;
       if (count != entries.length) {
+        // Those not found stay pending, in case this read was wrong: the
+        // next Create or Delete looks again.
+        final foundEntries = found.values.toSet();
+        final unfound = [
+          for (final entry in entries)
+            if (!foundEntries.contains(entry)) entry,
+        ];
         try {
-          await ledgerStore
-              .save(Ledger({...plan.stored.entries, ...created, ...found}));
+          await ledgerStore.save(
+              Ledger({...plan.stored.entries, ...created, ...found}),
+              pending:
+                  PendingCreate(maxRawId: pending.maxRawId, entries: unfound));
         } catch (e2, st2) {
           // The save before the chunk still holds it as a pending record.
           logError("createFakeContacts, recording what was created", e2, st2);
@@ -443,11 +450,10 @@ Future<CreateResult?> createFakeContacts(
     // Drops entries whose raw contacts are gone, and the pending record.
     await ledgerStore.save(Ledger({...plan.ledger.entries, ...created}));
   } catch (e, st) {
-    // All were created, but the ledger couldn't be saved (with the storage
-    // full). The save before the last chunk holds that one as a pending
-    // record, and the ledger stays in memory while the app is open.
-    throw StoppedPartway(
-        done: done, planned: total, cause: e, stackTrace: st);
+    // No harm done: the save before the last chunk holds that one as a
+    // pending record (the next Create or Delete records it), and the
+    // ledger stays in memory while the app is open.
+    logError("createFakeContacts, saving the ledger", e, st);
   }
   log("createFakeContacts: nCreated $done");
   return CreateResult(
@@ -457,24 +463,6 @@ Future<CreateResult?> createFakeContacts(
     planned: total,
     stopped: bStopped,
   );
-}
-
-/// Reads the address book and returns the fakes of [pending] in it (see
-/// [createdByPending]; [recorded] are raw contacts not to be taken for
-/// them); none if it can't be read.
-Future<Map<String, LedgerEntry>> _findByDetails(ContactsGateway contacts,
-    Set<String> recorded, PendingCreate pending) async {
-  try {
-    final everyone = await contacts.getAll();
-    return createdByPending(pending,
-        recorded: recorded,
-        after: addressBookOf(everyone),
-        fingerprintsByContact: fingerprintsByContactOf(everyone));
-  } catch (e, st) {
-    logError("createFakeContacts, looking for new contacts by their details",
-        e, st);
-    return const {};
-  }
 }
 
 /// The higher of two raw contact IDs, either of which may be missing.
@@ -493,30 +481,33 @@ bool _plausibleAfterFailure(Set<String> untouched, AddressBook after) {
   return untouched.isEmpty || untouched.any(present.contains);
 }
 
-/// After a create call failed: reads the address book again and returns
-/// the fakes of [pending] it created (see [createdByPending]; [known] are
-/// the raw contacts known to exist before the call), and every raw contact
-/// found; null if the address book couldn't be read, or the read can't be
-/// trusted (see [_plausibleAfterFailure]: [known] must still be there).
+/// Reads the address book and returns the fakes of [pending] in it (see
+/// [createdByPending]; [recorded] are raw contacts not to be taken for
+/// them), and every raw contact found; null if it can't be read.
+///
+/// After a failed call, [untouched] are the raw contacts that must still be
+/// there: a read without any of them isn't trusted either (see
+/// [_plausibleAfterFailure]).
 Future<({Map<String, LedgerEntry> created, Set<String> present})?>
-    _findCreatedAfterFailure(ContactsGateway contacts, Set<String> known,
-        PendingCreate pending) async {
+    _findByDetails(ContactsGateway contacts, Set<String> recorded,
+        PendingCreate pending,
+        {Set<String>? untouched}) async {
   try {
     final everyone = await contacts.getAll();
     final after = addressBookOf(everyone);
-    // (Those of the ledger that are still there are among [known].)
-    if (!_plausibleAfterFailure(known, after)) {
+    if (untouched != null && !_plausibleAfterFailure(untouched, after)) {
       throw StateError("all contacts that were there before are missing");
     }
     return (
       created: createdByPending(pending,
-          recorded: known,
+          recorded: recorded,
           after: after,
           fingerprintsByContact: fingerprintsByContactOf(everyone)),
       present: allRawIds(after),
     );
   } catch (e, st) {
-    logError("createFakeContacts, finding what was created", e, st);
+    logError("createFakeContacts, looking for new contacts by their details",
+        e, st);
     return null;
   }
 }

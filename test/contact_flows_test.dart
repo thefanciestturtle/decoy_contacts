@@ -456,7 +456,8 @@ void main() {
       expect(snackBarText(tester), kCreateFailed);
       expect(book.all, isEmpty);
       expect((await storedLedger()).isEmpty, isTrue);
-      expect(await storedPending(), isNull);
+      // None found; they stay pending in case the read was wrong.
+      expect((await storedPending())!.entries, hasLength(4));
       expect(buttonsEnabled(tester), isTrue);
     });
 
@@ -2108,7 +2109,8 @@ void main() {
       expect(buttonsEnabled(tester), isTrue);
       expect((await storedLedger()).entries.keys,
           unorderedEquals([for (final c in book.all) ...c.rawContactIds]));
-      expect(await storedPending(), isNull);
+      // The one not found stays pending, in case the read was wrong.
+      expect((await storedPending())!.entries, hasLength(1));
       expect(statusText(tester), '3 fake contacts on this phone.');
     });
 
@@ -2284,20 +2286,18 @@ void main() {
       addTearDown(() => tester.binding.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, null));
       await pumpApp(tester, book);
-      expect(answers, hasLength(1)); // the short one, at startup
+      expect(answers, hasLength(2)); // both, at startup
 
-      // The user changes the setting and comes back; that answer comes
+      // The user changes the setting and comes back; those answers come
       // first.
       await leaveAndReturn(tester);
-      expect(answers, hasLength(2));
-      answers[1].complete(30000);
-      await tester.pump();
+      expect(answers, hasLength(4));
       answers[2].complete(30000);
+      answers[3].complete(30000);
       await tester.pump();
-      // Then the one from startup.
+      // Then the ones from startup.
       answers[0].complete(4000);
-      await tester.pump();
-      answers[3].complete(10000);
+      answers[1].complete(10000);
       await tester.pumpAndSettle();
 
       await tapCreate(tester);

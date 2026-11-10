@@ -103,24 +103,21 @@ void main() {
     expect(book.createAllCalls, isEmpty);
   });
 
-  test("Create: if the ledger can't be saved at the end, it stops, without "
+  test("Create: if only the save at the end fails, that is logged, without "
       'reading the address book again; Delete can still remove them '
       'meanwhile', () async {
     final store = FailingLedgerStore(1, succeeding: 1);
-    final error = await createFakeContacts(book, store, kSettings)
-        .then<Object?>((_) => null, onError: (Object e) => e);
+    final result = await createFakeContacts(book, store, kSettings);
 
-    expect(error, isA<StoppedPartway>());
-    final stopped = error! as StoppedPartway;
-    expect(stopped.done, 4);
-    expect(stopped.planned, 4);
-    expect(stopped.cause, isA<LedgerNotSaved>());
+    expect(result!.created, 4);
+    expect(logged.single,
+        contains('createFakeContacts, saving the ledger: LedgerNotSaved'));
     expect(book.all, hasLength(4));
     // Plan, then look up the new ones; no third read.
     expect(book.getAllCalls, 2);
 
-    final result = await deleteFakeContacts(book, store, kSettings);
-    expect(result!.deleted, 4);
+    final deleted = await deleteFakeContacts(book, store, kSettings);
+    expect(deleted!.deleted, 4);
     expect(book.all, isEmpty);
   });
 
@@ -150,12 +147,11 @@ void main() {
       "can't be saved", () async {
     book.createAllError = Exception('provider gone');
     book.createAllStopsAfter = 4;
-    final error = await createFakeContacts(
-            book, FailingLedgerStore(1, succeeding: 1), kSettings)
-        .then<Object?>((_) => null, onError: (Object e) => e);
+    final result = await createFakeContacts(
+        book, FailingLedgerStore(1, succeeding: 1), kSettings);
 
-    final stopped = error! as StoppedPartway;
-    expect((stopped.done, stopped.planned), (4, 4));
+    expect(result!.created, 4);
+    expect(logged.last, contains('saving the ledger: LedgerNotSaved'));
   });
 
   test('Create: a re-read that lost one contact from before is trusted',
@@ -270,25 +266,37 @@ void main() {
   /// leaves what was saved before.
   test("Create: when a save fails, what is on disk still lets Delete find "
       'every fake', () async {
-    final store = _WritesNothingWhenFull(succeeding: 2);
-    final error = await createFakeContacts(book, store, kSettings,
-            chunkSize: 2)
-        .then<Object?>((_) => null, onError: (Object e) => e);
-    final stopped = error! as StoppedPartway;
-    expect((stopped.done, stopped.planned), (4, 4));
-    expect(createFailedMessage(stopped).text,
-        'Created 4 fake contacts before your phone ran out of storage.');
+    // The save at the end fails; so does the one before a third chunk.
+    for (final (chunkSize, created) in [(2, 4), (1, 2)]) {
+      SharedPreferences.setMockInitialValues({});
+      book = InMemoryContactsGateway();
+      final store = _WritesNothingWhenFull(succeeding: 2);
+      final outcome = await createFakeContacts(book, store, kSettings,
+              chunkSize: chunkSize)
+          .then<Object?>((r) => r, onError: (Object e) => e);
+      if (outcome case StoppedPartway stopped) {
+        expect((stopped.done, stopped.planned), (created, 4));
+        expect(createFailedMessage(stopped).text,
+            'Created 2 of 4 fake contacts before your phone ran out of'
+            ' storage.');
+      } else {
+        expect((outcome! as CreateResult).created, created);
+      }
+      expect(book.all, hasLength(created));
 
-    // On disk: the first chunk, and the second as a pending record.
-    final onDisk = await const LedgerStore().loadWithPending();
-    expect(onDisk.ledger.length, 2);
-    expect(onDisk.pending!.entries, hasLength(2));
-    final preview = await previewDelete(book, const LedgerStore(), kSettings);
-    expect(preview.toDelete, 4);
-    final deleted =
-        await deleteFakeContacts(book, const LedgerStore(), kSettings);
-    expect(deleted!.deleted, 4);
-    expect(book.all, isEmpty);
+      // On disk: the chunks before the last one, and that one as a pending
+      // record.
+      final onDisk = await const LedgerStore().loadWithPending();
+      expect(onDisk.ledger.length, created - chunkSize);
+      expect(onDisk.pending!.entries, hasLength(chunkSize));
+      final preview =
+          await previewDelete(book, const LedgerStore(), kSettings);
+      expect(preview.toDelete, created);
+      final deleted =
+          await deleteFakeContacts(book, const LedgerStore(), kSettings);
+      expect(deleted!.deleted, created);
+      expect(book.all, isEmpty);
+    }
   });
 
   group('in chunks (U8)', () {
@@ -382,7 +390,8 @@ void main() {
       expect((stopped.done, stopped.planned), (3, 4));
       final stored = await storedWithPending();
       expect(stored.ledger.length, 3);
-      expect(stored.pending, isNull);
+      // The one not found stays pending, in case the read was wrong.
+      expect(stored.pending!.entries.map((e) => e.name), ['Zach Zima']);
       expect(book.all, hasLength(3));
     });
 

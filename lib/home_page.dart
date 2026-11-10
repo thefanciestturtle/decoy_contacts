@@ -198,10 +198,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     // Contacts may have been changed in another app meanwhile. (Not after
     // only "inactive", e.g. for the notification shade or a system dialog.)
     if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
-      _wasInBackground = true;
       _inBackground = true;
     }
     if (state == AppLifecycleState.resumed) {
+      final bWasInBackground = _inBackground;
       _inBackground = false;
       // The accessibility timeout may have been changed meanwhile. (A held
       // result doesn't wait for it: that would make it hang on a platform
@@ -210,14 +210,14 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       final held = _heldMessage;
       _heldMessage = null;
       if (held != null) _showResultSnackBar(held);
-    }
-    if (state == AppLifecycleState.resumed && _wasInBackground) {
-      _wasInBackground = false;
-      if (_settingsLoaded && !_isBusy) unawaited(_refreshStatus());
+      if (bWasInBackground && _settingsLoaded && !_isBusy) {
+        unawaited(_refreshStatus());
+      }
     }
   }
 
-  /// Whether the app is out of sight (hidden or paused, not only inactive).
+  /// Whether the app is out of sight (hidden or paused, not only inactive)
+  /// since it was last in front.
   bool _inBackground = false;
 
   /// A result that came while the app was out of sight, shown once it is
@@ -235,11 +235,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
 
   Future<void> _updateMessageDurations() async {
     final int request = ++_durationsRequest;
-    final short =
-        await recommendedTimeout(kShortMessageDuration, hasControls: false);
-    // The close button is something to tap.
-    final long =
-        await recommendedTimeout(kLongMessageDuration, hasControls: true);
+    final (short, long) = await (
+      recommendedTimeout(kShortMessageDuration, hasControls: false),
+      // The close button is something to tap.
+      recommendedTimeout(kLongMessageDuration, hasControls: true),
+    ).wait;
     if (request != _durationsRequest) return;
     _shortMessageDuration = short;
     _longMessageDuration = long;
@@ -258,8 +258,6 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     _fieldsChanged();
     unawaited(_refreshStatus());
   }
-
-  bool _wasInBackground = false;
 
   /// The status line ([statusMessage]), or null to show none: no permission,
   /// or the address book couldn't be read yet.
@@ -684,9 +682,12 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final bool bCanAct = _settingsLoaded && !_isBusy;
 
-    // While Create or Delete runs, Back doesn't close the app: Android would
-    // finish the call that is running, but the app would never record what
-    // it created. With progress shown, Back stops it, as Stop does.
+    // While Create or Delete runs, Back doesn't close the app, which would
+    // cut it off without a result (Android finishes the call that is
+    // running; only the next Create or Delete would record what it made).
+    // With progress shown, Back stops it, as Stop does; before that (while
+    // the address book is read, or for an action of one chunk) it ignores
+    // Back for a moment.
     return PopScope(
       canPop: !_isBusy,
       onPopInvokedWithResult: (bDidPop, _) {
