@@ -32,6 +32,12 @@ class InMemoryContactsGateway implements ContactsGateway {
   Object? createAllError;
   Object? deleteAllError;
 
+  /// With [createAllError] or [deleteAllError] set, how many contacts the
+  /// call creates or deletes before it throws, as the plugin does when a
+  /// later batch fails. Null means none.
+  int? createAllStopsAfter;
+  int? deleteAllStopsAfter;
+
   /// Called for each contact [createAll] adds. Returning an existing contact
   /// ID merges the new raw contact into that contact, as Android's
   /// aggregation can do.
@@ -138,9 +144,12 @@ class InMemoryContactsGateway implements ContactsGateway {
   @override
   Future<List<String>> createAll(List<NewContact> contacts) async {
     createAllCalls.add(contacts);
-    if (createAllError != null) throw createAllError!;
+    final error = createAllError;
+    if (error != null && createAllStopsAfter == null) throw error;
     final ids = <String>[];
-    for (final c in contacts) {
+    for (final (i, c) in contacts.indexed) {
+      // The plugin doesn't return the IDs of what it created before failing.
+      if (error != null && i == createAllStopsAfter) throw error;
       final raw = _Raw('${_nextRawId++}', '${c.first} ${c.last}',
           [if (c.phone.isNotEmpty) c.phone], [if (c.email.isNotEmpty) c.email]);
       final target = mergeInto?.call(c);
@@ -159,7 +168,11 @@ class InMemoryContactsGateway implements ContactsGateway {
   @override
   Future<void> deleteAll(List<String> contactIds) async {
     deleteAllCalls.add(contactIds);
-    if (deleteAllError != null) throw deleteAllError!;
-    contactIds.forEach(_contacts.remove);
+    final error = deleteAllError;
+    if (error != null && deleteAllStopsAfter == null) throw error;
+    for (final (i, id) in contactIds.indexed) {
+      if (error != null && i == deleteAllStopsAfter) throw error;
+      _contacts.remove(id);
+    }
   }
 }

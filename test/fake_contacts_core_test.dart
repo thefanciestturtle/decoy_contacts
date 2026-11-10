@@ -204,6 +204,112 @@ void main() {
     });
   });
 
+  group('createdBeforeFailure', () {
+    final zoe = fake('Zoe', 'Zen');
+    final zach = fake('Zach', 'Zen');
+    final zima = fake('Zoe', 'Zima');
+    final aliceFps =
+        fingerprintsOf('Alice Example', ['+15555550103'], []).toSet();
+
+    test('records the planned fakes that were created', () {
+      // Zoe Zen and Zach Zen were created before it failed; Zoe Zima wasn't.
+      final before = {'c1': ['1']}; // Alice
+      final after = {'c1': ['1'], 'c20': ['20'], 'c21': ['21']};
+      expect(
+        createdBeforeFailure(
+          planned: [zoe, zach, zima],
+          before: before,
+          after: after,
+          fingerprintsByContact: {
+            'c1': aliceFps,
+            'c20': fingerprintsMatching(zoe),
+            'c21': fingerprintsMatching(zach),
+          },
+        ),
+        {'20': zoe, '21': zach},
+      );
+    });
+
+    test('records a fake merged into an existing contact', () {
+      // A real Zoe Zen with another number; Android merged the new fake in.
+      final realZoe = fingerprintsOf('Zoe Zen', ['+15555550101'], []).toSet();
+      expect(
+        createdBeforeFailure(
+          planned: [zoe],
+          before: {'c1': ['1']},
+          after: {'c1': ['1', '20']},
+          fingerprintsByContact: {
+            'c1': {...realZoe, ...fingerprintsMatching(zoe)},
+          },
+        ),
+        {'20': zoe},
+      );
+    });
+
+    test('never records a contact that existed before', () {
+      // A contact with exactly a fake's details, which was there already
+      // (in practice Create wouldn't plan that fake).
+      expect(
+        createdBeforeFailure(
+          planned: [zoe],
+          before: {'c1': ['1']},
+          after: {'c1': ['1']},
+          fingerprintsByContact: {'c1': fingerprintsMatching(zoe)},
+        ),
+        isEmpty,
+      );
+    });
+
+    test('never records a new contact with other details', () {
+      // Added meanwhile, e.g. synced: a Zoe Zen with another number, and
+      // someone else.
+      expect(
+        createdBeforeFailure(
+          planned: [zoe],
+          before: const {},
+          after: {'c30': ['30'], 'c31': ['31']},
+          fingerprintsByContact: {
+            'c30': fingerprintsOf('Zoe Zen', ['+15555550101'], []).toSet(),
+            'c31': aliceFps,
+          },
+        ),
+        isEmpty,
+      );
+    });
+
+    test('records nothing for a fake that two new contacts match', () {
+      // The fake and, say, a copy of it synced from another phone: which
+      // one this app created can't be told.
+      expect(
+        createdBeforeFailure(
+          planned: [zoe, zach],
+          before: const {},
+          after: {'c20': ['20'], 'c30': ['30'], 'c21': ['21']},
+          fingerprintsByContact: {
+            'c20': fingerprintsMatching(zoe),
+            'c30': fingerprintsMatching(zoe),
+            'c21': fingerprintsMatching(zach),
+          },
+        ),
+        {'21': zach},
+      );
+    });
+
+    test('records nothing for a contact that matches two fakes', () {
+      expect(
+        createdBeforeFailure(
+          planned: [zoe, zach],
+          before: const {},
+          after: {'c20': ['20', '21']},
+          fingerprintsByContact: {
+            'c20': {...fingerprintsMatching(zoe), ...fingerprintsMatching(zach)},
+          },
+        ),
+        isEmpty,
+      );
+    });
+  });
+
   group('planDelete', () {
     final zoe = fake('Zoe', 'Zen');
     final zach = fake('Zach', 'Zen');

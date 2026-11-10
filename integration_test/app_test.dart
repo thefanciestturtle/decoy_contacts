@@ -8,7 +8,9 @@
 
 import 'dart:convert';
 
+import 'package:fake_contacts/contacts_gateway.dart' show NewContact;
 import 'package:fake_contacts/fake_contacts_core.dart';
+import 'package:fake_contacts/flutter_contacts_gateway.dart';
 import 'package:fake_contacts/main.dart';
 import 'package:fake_contacts/settings_store.dart';
 import 'package:flutter/material.dart';
@@ -57,6 +59,30 @@ const String kCreate = 'Create Fake Contacts';
 const String kDelete = 'Delete Fake Contacts';
 
 const Duration kActionTimeout = Duration(seconds: 60);
+
+/// The device's address book, but while [stop] is set, Create and Delete
+/// do the first [after] contacts and then fail, as the plugin does when a
+/// later batch fails (it then doesn't say what it did).
+class StopsPartway extends FlutterContactsGateway {
+  StopsPartway(this.after);
+
+  final int after;
+  bool stop = true;
+
+  @override
+  Future<List<String>> createAll(List<NewContact> contacts) async {
+    if (!stop) return super.createAll(contacts);
+    await super.createAll(contacts.take(after).toList());
+    throw Exception('stopped on purpose');
+  }
+
+  @override
+  Future<void> deleteAll(List<String> contactIds) async {
+    if (!stop) return super.deleteAll(contactIds);
+    await super.deleteAll(contactIds.take(after).toList());
+    throw Exception('stopped on purpose');
+  }
+}
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -216,6 +242,58 @@ void main() {
     expect(phonesOf(zach), contains('+15555550104'));
   });
 
+  testWidgets('U6: a Create or Delete that stops partway says how far it '
+      'got, and trying again does the rest', (tester) async {
+    await startWithEmptyAddressBook(tester);
+    final real = await seed(kRealContacts);
+    final gateway = StopsPartway(2);
+    await launchApp(tester, contacts: gateway);
+
+    expect(
+        await tapAndWaitForResult(tester, kCreate,
+            confirm: 'Create 4 fake contacts?'),
+        'Created 2 of 4 fake contacts, then something went wrong. Try again '
+        'to create the rest.');
+    // The two it created were found and recorded, so they are counted.
+    await expectStatus(tester, '2 fake contacts on this phone.');
+    var book = await readAddressBook();
+    expect(book, hasLength(real.length + 2));
+    expectUnchanged(book, real);
+    expect((await storedLedger()).keys, unorderedEquals([
+      for (final c in book.values)
+        if (!real.containsKey(c.id)) ...rawIdsOf(c),
+    ]));
+
+    gateway.stop = false;
+    expect(
+        await tapAndWaitForResult(tester, kCreate,
+            confirm: 'Create 2 fake contacts?'),
+        'Created 2 fake contacts. 2 already existed.');
+    await expectStatus(tester, '4 fake contacts on this phone.');
+
+    gateway.stop = true;
+    expect(
+        await tapAndWaitForResult(tester, kDelete,
+            confirm: 'Delete 4 fake contacts?'),
+        'Deleted 2 of 4 fake contacts, then something went wrong. Try again '
+        'to delete the rest.');
+    await expectStatus(tester, '2 fake contacts on this phone.');
+    book = await readAddressBook();
+    expect(book, hasLength(real.length + 2));
+    expectUnchanged(book, real);
+    // The ledger is left as it was; entries for the deleted ones do no harm.
+    expect(await storedLedger(), hasLength(4));
+
+    gateway.stop = false;
+    expect(
+        await tapAndWaitForResult(tester, kDelete,
+            confirm: 'Delete 2 fake contacts?'),
+        'Deleted 2 fake contacts.');
+    await expectStatus(tester, 'No fake contacts on this phone.');
+    expect(describeAll(await readAddressBook()), describeAll(real));
+    expect(await storedLedger(), isEmpty);
+  });
+
   testWidgets('S1: a ledger whose raw IDs point at real contacts deletes '
       'nothing', (tester) async {
     await startWithEmptyAddressBook(tester);
@@ -319,8 +397,11 @@ Future<Map<String, Contact>> seed(List<RealContact> contacts,
   return seeded;
 }
 
-Future<void> launchApp(WidgetTester tester) async {
-  await tester.pumpWidget(const MyApp());
+/// Starts the app, with the device's address book unless [contacts] is
+/// given.
+Future<void> launchApp(WidgetTester tester,
+    {FlutterContactsGateway contacts = const FlutterContactsGateway()}) async {
+  await tester.pumpWidget(MyApp(contacts: contacts));
   // The buttons are enabled once the settings are loaded.
   await pumpUntil(tester, () => appIdle(tester), 'settings loaded');
 }

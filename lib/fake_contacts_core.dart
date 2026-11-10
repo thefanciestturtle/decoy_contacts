@@ -288,6 +288,53 @@ Map<String, LedgerEntry> newlyCreatedRawIds({
   return result;
 }
 
+/// Works out which raw contacts a create call made before it failed, as it
+/// then doesn't say (the IDs of what it did create are lost).
+///
+/// [planned] are the entries for the contacts passed to the create call.
+/// A contact in [after] (with its fingerprints in [fingerprintsByContact])
+/// that holds raw contacts which weren't in [before] is taken for the fake
+/// of a planned entry if it has exactly that entry's name, phone and email
+/// (see [fingerprintsOf]); its new raw contacts are recorded with that
+/// entry, as [newlyCreatedRawIds] does.
+///
+/// It is left out if it matches several planned entries, or if another new
+/// contact matches the same entry (say, a copy synced from another phone
+/// meanwhile): which one this app created can't be told then. Left out, it
+/// is only skipped by Create and never deleted.
+Map<String, LedgerEntry> createdBeforeFailure({
+  required List<LedgerEntry> planned,
+  required AddressBook before,
+  required AddressBook after,
+  required Map<String, Set<String>> fingerprintsByContact,
+}) {
+  final old = allRawIds(before);
+  final byFingerprint = {
+    for (final e in planned)
+      if (e.fingerprint != null) e.fingerprint!: e,
+  };
+  // Planned fingerprint -> the new contacts that have it.
+  final matches = <String, List<String>>{};
+  final newRaws = <String, List<String>>{};
+  after.forEach((contactId, raws) {
+    final added = [for (final r in raws) if (!old.contains(r)) r];
+    if (added.isEmpty) return;
+    final found = [
+      for (final f in fingerprintsByContact[contactId] ?? const <String>{})
+        if (byFingerprint.containsKey(f)) f,
+    ];
+    if (found.length != 1) return;
+    newRaws[contactId] = added;
+    (matches[found.single] ??= []).add(contactId);
+  });
+  return {
+    for (final MapEntry(key: fingerprint, value: contactIds) in matches.entries)
+      if (contactIds.length == 1)
+        for (final raw in newRaws[contactIds.single]!)
+          raw: byFingerprint[fingerprint]!,
+  };
+}
+
 class DeletePlan {
   /// Contacts made up entirely of raw contacts this app created, which still
   /// have exactly the name, phone number and email they were created with.

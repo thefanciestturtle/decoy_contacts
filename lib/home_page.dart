@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 
+import 'app_log.dart';
 import 'contact_actions.dart';
 import 'contacts_gateway.dart';
 import 'input_checks.dart';
@@ -226,8 +227,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         status = statusMessage(
             await countFakeContacts(widget.contacts, widget.ledgerStore));
       }
-    } catch (e) {
-      log("_refreshStatus: error $e");
+    } catch (e, st) {
+      // Nothing is shown: the user didn't ask for it.
+      logError("_refreshStatus", e, st);
       bFailed = true;
     }
     // A Create or Delete that started meanwhile refreshes it again when done.
@@ -316,17 +318,18 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// preview finds nothing to do, else null. [action] works everything out
   /// again rather than trusting the preview, since the address book can
   /// change while the dialog is open; it gets the preview so it can refuse
-  /// (by returning null) to do more than the user agreed to. [name] is used
-  /// in the log, [doing] in the message for an error in [action].
+  /// (by returning null) to do more than the user agreed to. [failed] gives
+  /// the message for an error in [action]. [name] is used in the log, which
+  /// also gets each error's details.
   Future<void> _runContactsAction<P, R>({
     required String name,
-    required String doing,
     required Confirmation permissionSettings,
     required Future<P> Function(Settings settings) preview,
     required String? Function(Settings settings, P preview) nothingToDo,
     required Confirmation Function(P preview) confirmation,
     required Future<R?> Function(Settings settings, P preview) action,
     required String Function(R result) describe,
+    required String Function(Object error) failed,
   }) async {
     if (_isBusy) return;
     // If a text field has the focus, close the keyboard, so the dialog, the
@@ -359,10 +362,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     final PermissionAnswer permission;
     try {
       permission = await widget.contacts.requestPermission();
-    } catch (e) {
+    } catch (e, st) {
       // E.g. the plugin's "no activity available" while the app's screen
       // is being recreated.
-      log("$name: error requesting permission $e");
+      logError("$name, requesting permission", e, st);
       return finish(kPermissionRequestFailedMessage);
     }
     switch (permission) {
@@ -380,8 +383,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         String? sFailed;
         try {
           await widget.contacts.openSettings();
-        } catch (e) {
-          log("$name: error opening settings $e");
+        } catch (e, st) {
+          logError("$name, opening settings", e, st);
           sFailed = kOpenSettingsFailedMessage;
         }
         // The status line is updated again when the user comes back.
@@ -391,10 +394,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     final P planned;
     try {
       planned = await preview(settings);
-    } catch (e) {
-      log("$name: error in preview $e");
-      // Nothing was changed yet, so don't say "creating" or "deleting".
-      return finish(errorMessage("reading", e));
+    } catch (e, st) {
+      logError("$name, preview", e, st);
+      // Nothing was changed yet, so don't say "create" or "delete".
+      return finish(kReadFailedMessage);
     }
     final sNothingToDo = nothingToDo(settings, planned);
     if (sNothingToDo != null) return finish(sNothingToDo);
@@ -408,16 +411,20 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     final R? result;
     try {
       result = await action(settings, planned);
-    } catch (e) {
-      log("$name: error $e");
-      return finish(errorMessage(doing, e));
+    } catch (e, st) {
+      if (e is StoppedPartway) {
+        // How far it got; and what stopped it, and where.
+        logError("$name, ${e.progress}", e.cause, e.stackTrace);
+      } else {
+        logError(name, e, st);
+      }
+      return finish(failed(e));
     }
     finish(result == null ? kChangedMeanwhileMessage : describe(result));
   }
 
   Future<void> _createAllContacts() => _runContactsAction(
         name: "_createAllContacts",
-        doing: "creating",
         permissionSettings: permissionSettingsConfirmation("create"),
         preview: (settings) =>
             previewCreate(widget.contacts, widget.ledgerStore, settings),
@@ -429,11 +436,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
             widget.contacts, widget.ledgerStore, settings,
             atMost: preview.toCreate),
         describe: createdMessage,
+        failed: createFailedMessage,
       );
 
   Future<void> _deleteAllContacts() => _runContactsAction(
         name: "_deleteAllContacts",
-        doing: "deleting",
         permissionSettings: permissionSettingsConfirmation("delete"),
         preview: (settings) =>
             previewDelete(widget.contacts, widget.ledgerStore, settings),
@@ -444,6 +451,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
             widget.contacts, widget.ledgerStore, settings,
             atMost: preview.toDelete),
         describe: deletedMessage,
+        failed: deleteFailedMessage,
       );
 
   // While the phone or email template is edited, the preview under the

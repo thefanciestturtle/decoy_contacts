@@ -171,13 +171,120 @@ void main() {
         'Your contacts changed meanwhile, so nothing was done. Try again.');
   });
 
-  test('errors', () {
-    expect(errorMessage('creating', Exception('disk full')),
-        'Error while creating contacts: Exception: disk full');
-    expect(errorMessage('reading', Exception('no provider')),
-        'Error while reading contacts: Exception: no provider');
-    expect(errorMessage('deleting', StateError('gone')),
-        'Error while deleting contacts: Bad state: gone');
+  group('errors', () {
+    /// Stopped after [done] of [planned], because of [cause].
+    StoppedPartway stopped(int? done, int planned,
+            {Object cause = 'provider gone', bool recorded = true}) =>
+        StoppedPartway(
+            done: done,
+            planned: planned,
+            recorded: recorded,
+            cause: cause,
+            stackTrace: StackTrace.empty);
+
+    /// What the plugin reports when the contacts provider can't write.
+    const sFull = 'PlatformException(flutter_contacts_error, Failed to handle'
+        ' createAll: database or disk is full (code 13 SQLITE_FULL), null,'
+        ' null)';
+
+    test('reading', () {
+      expect(kReadFailedMessage, "Couldn't read your contacts. Try again.");
+    });
+
+    test('nothing created or deleted', () {
+      for (final error in [
+        Exception('disk full'),
+        StateError('gone'),
+        stopped(0, 4),
+      ]) {
+        expect(createFailedMessage(error),
+            "Couldn't create fake contacts. Try again.");
+        expect(deleteFailedMessage(error),
+            "Couldn't delete fake contacts. Try again.");
+      }
+    });
+
+    test('some created or deleted, with the total in the plural', () {
+      expect(createFailedMessage(stopped(150, 756)),
+          'Created 150 of 756 fake contacts, then something went wrong.'
+          ' Try again to create the rest.');
+      expect(createFailedMessage(stopped(1, 2)),
+          'Created 1 of 2 fake contacts, then something went wrong.'
+          ' Try again to create the rest.');
+      expect(deleteFailedMessage(stopped(900, 2000)),
+          'Deleted 900 of 2000 fake contacts, then something went wrong.'
+          ' Try again to delete the rest.');
+      expect(deleteFailedMessage(stopped(1, 2)),
+          'Deleted 1 of 2 fake contacts, then something went wrong.'
+          ' Try again to delete the rest.');
+    });
+
+    test("created, but the list of them couldn't be saved", () {
+      expect(createFailedMessage(stopped(200, 755, recorded: false)),
+          'Created 200 of 755 fake contacts, but couldn\'t save the list of'
+          ' them. Delete them now, or this app may not be able to later.');
+      // Also when the storage is full: deleting them matters more.
+      expect(
+          createFailedMessage(
+              stopped(1, 1, recorded: false, cause: Exception(sFull))),
+          'Created 1 fake contact, but couldn\'t save the list of them.'
+          ' Delete them now, or this app may not be able to later.');
+    });
+
+    test('storage full: no "Try again"', () {
+      expect(createFailedMessage(Exception(sFull)),
+          "Couldn't create fake contacts: your phone's storage is full.");
+      expect(createFailedMessage(stopped(0, 755, cause: Exception(sFull))),
+          "Couldn't create fake contacts: your phone's storage is full.");
+      expect(createFailedMessage(stopped(200, 755, cause: Exception(sFull))),
+          'Created 200 of 755 fake contacts before your phone ran out of'
+          ' storage.');
+      expect(deleteFailedMessage(Exception(sFull)),
+          "Couldn't delete fake contacts: your phone's storage is full.");
+      expect(deleteFailedMessage(stopped(900, 2000, cause: Exception(sFull))),
+          'Deleted 900 of 2000 fake contacts before your phone ran out of'
+          ' storage.');
+    });
+
+    test('storage full is told by SQLite\'s message, old or new', () {
+      expect(storageFull(Exception(sFull)), isTrue);
+      // Older Android versions leave out the name of the code.
+      expect(storageFull(Exception('database or disk is full (code 13)')),
+          isTrue);
+      expect(storageFull(stopped(1, 2, cause: Exception(sFull))), isTrue);
+      expect(storageFull(Exception('disk I/O error (code 10)')), isFalse);
+      // Only what stopped it counts, not how far it got.
+      expect(storageFull(stopped(1, 2)), isFalse);
+    });
+
+    test("how far it got isn't known", () {
+      expect(createFailedMessage(stopped(null, 4)),
+          "Couldn't finish creating fake contacts. Some may have been added"
+          " that this app can't delete.");
+      expect(deleteFailedMessage(stopped(null, 4)),
+          "Couldn't finish deleting fake contacts. Try again.");
+    });
+
+    test('never show the error itself', () {
+      const sDetail = 'PlatformException(flutter_contacts_error)';
+      for (final error in [
+        Exception(sDetail),
+        stopped(null, 4, cause: Exception(sDetail)),
+        stopped(2, 4, cause: Exception(sDetail)),
+        stopped(2, 4, cause: Exception(sDetail), recorded: false),
+        Exception(sFull),
+        stopped(2, 4, cause: Exception(sFull)),
+      ]) {
+        for (final message in [
+          createFailedMessage(error),
+          deleteFailedMessage(error),
+        ]) {
+          expect(message, isNot(contains('flutter_contacts')));
+          expect(message, isNot(contains('Exception')));
+          expect(message, isNot(contains('SQLITE')));
+        }
+      }
+    });
   });
 
   group('createdMessage', () {

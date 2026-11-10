@@ -106,6 +106,15 @@ class SettingsStore {
   }
 }
 
+/// Thrown when the ledger couldn't be written, e.g. with the phone's
+/// storage full.
+class LedgerNotSaved implements Exception {
+  const LedgerNotSaved();
+
+  @override
+  String toString() => 'LedgerNotSaved: Android could not write the ledger';
+}
+
 /// Keeps the [Ledger] of created raw contacts in the app's SharedPreferences.
 class LedgerStore {
   const LedgerStore();
@@ -115,8 +124,14 @@ class LedgerStore {
     return Ledger.decode(prefs.getString(kLedgerPrefsKey));
   }
 
+  /// Throws [LedgerNotSaved] if it couldn't be written. (Until the app is
+  /// restarted, [load] then still returns it: the plugin keeps it in memory
+  /// either way.)
   Future<void> save(Ledger ledger) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(kLedgerPrefsKey, ledger.encode());
+    // Android reports a failed write as false rather than as an error.
+    if (!await prefs.setString(kLedgerPrefsKey, ledger.encode())) {
+      throw const LedgerNotSaved();
+    }
   }
 }
