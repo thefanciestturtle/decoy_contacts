@@ -156,6 +156,17 @@ class _SlowPermission extends InMemoryContactsGateway {
   }
 }
 
+/// Opening the settings finishes only when [opened] is completed.
+class _SlowSettings extends InMemoryContactsGateway {
+  final Completer<void> opened = Completer();
+
+  @override
+  Future<void> openSettings() async {
+    await super.openSettings();
+    await opened.future;
+  }
+}
+
 /// Asking for the permission throws, as the plugin does while another
 /// request is open, until [fail] is cleared.
 class _FailingPermission extends InMemoryContactsGateway {
@@ -1432,6 +1443,23 @@ void main() {
       expect(snackBarText(tester), "Couldn't open Settings.");
       expect(buttonsEnabled(tester), isTrue);
       expect(find.byType(CircularProgressIndicator), findsNothing);
+    });
+
+    testWidgets('no spinner while the settings open: the app is going to '
+        'the background, not working', (tester) async {
+      final slow = _SlowSettings()
+        ..permission = PermissionAnswer.permanentlyDenied;
+      await pumpApp(tester, slow);
+      await tapAndOpenDialog(tester, kCreateButton);
+      await tester.tap(dialogButton('Open settings'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(slow.openSettingsCalls, 1);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      slow.opened.complete();
+      await tester.pumpAndSettle();
+      expectDone(tester);
     });
 
     testWidgets('if asking fails, it says so, and the app still works',
