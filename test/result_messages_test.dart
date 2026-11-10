@@ -151,8 +151,7 @@ void main() {
         startsWith('To delete fake contacts, '));
     expect(kOpenSettingsFailedMessage, "Couldn't open Settings.");
     expect(kPermissionRequestFailedMessage,
-        "Couldn't ask for permission to access contacts. Restart the app and"
-          " try again.");
+        "Couldn't ask for permission to access contacts. Try again.");
   });
 
   test('status line', () {

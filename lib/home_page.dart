@@ -256,9 +256,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// cancelled). The buttons are disabled meanwhile.
   bool _isBusy = false;
 
-  /// Set while a dialog asks the user ([_confirm]), and while the app's
-  /// settings open for the user. No spinner then: the app is waiting for
-  /// the user, not working.
+  /// Set while one of the app's dialogs asks the user ([_confirm]), and
+  /// while the app's settings open for the user. No spinner then: the app
+  /// is waiting for the user, not working. (Android's own permission
+  /// dialog still has the spinner behind it.)
   bool _waitingForUser = false;
 
   void _showResultSnackBar(String message) {
@@ -269,7 +270,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
 
   /// Asks before going ahead. True only if the user taps the action button;
   /// Cancel, Back and tapping outside the dialog all count as no.
-  Future<bool> _confirm(Confirmation confirmation) async {
+  ///
+  /// With [keepWaiting], [_waitingForUser] stays set after a yes, for
+  /// whatever waits for the user next; finish() clears it.
+  Future<bool> _confirm(Confirmation confirmation,
+      {bool keepWaiting = false}) async {
     if (!mounted) return false;
     setState(() { _waitingForUser = true; });
     final bool? bConfirmed = await showDialog<bool>(
@@ -291,8 +296,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         ],
       ),
     );
-    if (mounted) setState(() { _waitingForUser = false; });
-    return bConfirmed ?? false;
+    final bool bYes = bConfirmed ?? false;
+    if (mounted && !(keepWaiting && bYes)) {
+      setState(() { _waitingForUser = false; });
+    }
+    return bYes;
   }
 
   /// The steps Create and Delete share: ignore taps while busy, save the
@@ -352,7 +360,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     try {
       permission = await widget.contacts.requestPermission();
     } catch (e) {
-      // E.g. the plugin's "another permission request is in progress".
+      // E.g. the plugin's "no activity available" while the app's screen
+      // is being recreated.
       log("$name: error requesting permission $e");
       return finish(kPermissionRequestFailedMessage);
     }
@@ -362,14 +371,12 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       case PermissionAnswer.denied:
         return finish(kPermissionDeniedMessage);
       case PermissionAnswer.permanentlyDenied:
-        if (!await _confirm(permissionSettings)) {
+        // The buttons stay disabled until the settings have been started,
+        // so a quick second tap can't ask again; no spinner meanwhile.
+        if (!await _confirm(permissionSettings, keepWaiting: true)) {
           log("$name: settings not opened");
           return finish(null);
         }
-        if (!mounted) return;
-        // The buttons stay disabled until the settings have been started,
-        // so a quick second tap can't ask again; no spinner meanwhile.
-        setState(() { _waitingForUser = true; });
         String? sFailed;
         try {
           await widget.contacts.openSettings();

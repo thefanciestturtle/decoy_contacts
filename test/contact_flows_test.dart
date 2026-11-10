@@ -1472,8 +1472,7 @@ void main() {
       await tapExpectingNoDialog(tester, kCreateButton);
 
       expect(snackBarText(tester),
-          "Couldn't ask for permission to access contacts. Restart the app and"
-          " try again.");
+          "Couldn't ask for permission to access contacts. Try again.");
       expect(buttonsEnabled(tester), isTrue);
       expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(failing.getAllCalls, 0);

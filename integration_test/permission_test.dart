@@ -7,7 +7,6 @@
 // tap. tool/integration_test.sh sets that up and runs this file after the
 // other tests.
 
-import 'package:fake_contacts/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,12 +15,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'app_test.dart'
     show
-        appIdle,
         dialogButton,
         expectDialog,
         kCreate,
         kDelete,
-        pumpUntil,
+        launchApp,
+        tapAndCancel,
         tapAndWaitForAnswer;
 
 const String kTitle = 'Contacts access is off';
@@ -46,22 +45,14 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear(); // the default settings
     addTearDown(prefs.clear);
-    await tester.pumpWidget(const MyApp());
-    await pumpUntil(tester, () => appIdle(tester), 'settings loaded');
+    await launchApp(tester);
 
     // Without the permission there is no status line.
     expect(tester.widget<Text>(find.byKey(const Key('Status'))).data, isEmpty);
 
     // No system dialog comes up (the test would time out waiting for it),
     // only the app's own.
-    await tapAndWaitForAnswer(tester, kCreate);
-    expectDialog(tester, kTitle);
-    expect(find.textContaining('To create fake contacts'), findsOneWidget);
-    await tester.tap(dialogButton('Cancel'));
-    await pumpUntil(tester, () => find.byType(AlertDialog).evaluate().isEmpty,
-        'dialog closed');
-    await pumpUntil(tester, () => appIdle(tester), 'app idle');
-    expect(find.byType(SnackBar), findsNothing);
+    await tapAndCancel(tester, kCreate, kTitle, body: 'To create fake contacts');
 
     await tapAndWaitForAnswer(tester, kDelete);
     expectDialog(tester, kTitle);

@@ -25,11 +25,9 @@ Confirmation permissionSettingsConfirmation(String verb) => (
 const String kOpenSettingsFailedMessage = "Couldn't open Settings.";
 
 /// Shown if asking for the contacts permission failed (rather than being
-/// answered). The app never asks twice at once, so the plugin is most
-/// likely stuck waiting for an answer to an earlier request.
+/// answered), e.g. while the app's screen was being recreated.
 const String kPermissionRequestFailedMessage =
-    "Couldn't ask for permission to access contacts. Restart the app and"
-    " try again.";
+    "Couldn't ask for permission to access contacts. Try again.";
 
 /// [doing] is "reading", "creating" or "deleting".
 String errorMessage(String doing, Object error) =>

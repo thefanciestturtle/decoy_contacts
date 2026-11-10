@@ -1,9 +1,77 @@
 import 'package:fake_contacts/contacts_gateway.dart';
 import 'package:fake_contacts/flutter_contacts_gateway.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('FlutterContactsGateway.requestPermission (U5)', () {
+    const channel = MethodChannel('flutter_contacts');
+    late List<String> calls;
+
+    /// The plugin answers `check` with [checks] in turn, and `request` with
+    /// [request] (or throws [requestError]).
+    void plugin(List<String> checks, {String? request, Object? requestError}) {
+      calls = [];
+      var nextCheck = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        calls.add(call.method);
+        switch (call.method) {
+          case 'permissions.check':
+            return checks[nextCheck++];
+          case 'permissions.request':
+            if (requestError != null) throw requestError;
+            return request;
+        }
+        throw UnimplementedError(call.method);
+      });
+    }
+
+    tearDown(() => TestDefaultBinaryMessengerBinding
+        .instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null));
+
+    const gateway = FlutterContactsGateway();
+    const check = 'permissions.check', request = 'permissions.request';
+
+    test('already granted: no request', () async {
+      plugin(['granted']);
+      expect(await gateway.requestPermission(), PermissionAnswer.granted);
+      expect(calls, [check]);
+    });
+
+    test('granted in Android\'s dialog', () async {
+      plugin(['notDetermined', 'granted'], request: 'granted');
+      expect(await gateway.requestPermission(), PermissionAnswer.granted);
+      expect(calls, [check, request, check]);
+    });
+
+    test('a request Android cut short, which the plugin calls granted, is '
+        'a denial', () async {
+      plugin(['notDetermined', 'notDetermined'], request: 'granted');
+      expect(await gateway.requestPermission(), PermissionAnswer.denied);
+    });
+
+    test('a second "Don\'t allow" is a denial; once Android no longer '
+        'asks, it is permanent', () async {
+      plugin(['denied'], request: 'permanentlyDenied');
+      expect(await gateway.requestPermission(), PermissionAnswer.denied);
+      plugin(['notDetermined'], request: 'permanentlyDenied');
+      expect(await gateway.requestPermission(),
+          PermissionAnswer.permanentlyDenied);
+    });
+
+    test('an error from the plugin is passed on', () async {
+      plugin(['notDetermined'],
+          requestError: PlatformException(code: 'ERROR', message: 'No activity'));
+      await expectLater(
+          gateway.requestPermission(), throwsA(isA<PlatformException>()));
+    });
+  });
+
   group('permissionAnswer (U5)', () {
     // What `check` says before the request on Android: notDetermined if
     // never asked or Android won't ask any more, denied after one refusal.

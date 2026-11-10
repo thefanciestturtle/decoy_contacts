@@ -381,11 +381,18 @@ Future<void> expectStatus(WidgetTester tester, String text) async {
 }
 
 /// Taps the button labelled [label], expects the dialog that asks to go
-/// ahead, with the title [title], and taps Cancel.
-Future<void> tapAndCancel(
-    WidgetTester tester, String label, String title) async {
+/// ahead, with the title [title] (and text containing [body], if given),
+/// and taps Cancel.
+Future<void> tapAndCancel(WidgetTester tester, String label, String title,
+    {String? body}) async {
   await tapAndWaitForAnswer(tester, label);
   expectDialog(tester, title);
+  if (body != null) {
+    expect(
+        find.descendant(
+            of: find.byType(AlertDialog), matching: find.textContaining(body)),
+        findsOneWidget);
+  }
   await tester.tap(dialogButton('Cancel'));
   await pumpUntil(tester, () => find.byType(AlertDialog).evaluate().isEmpty,
       'dialog closed');
