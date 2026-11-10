@@ -45,9 +45,11 @@ enum PermissionAnswer {
   /// Refused, but the app can ask again.
   denied,
 
-  /// Refused, and Android won't ask the user again (after a second "Don't
+  /// Refused, and Android no longer asks the user (since a second "Don't
   /// allow", or "Don't ask again" on older versions): asking returns at
-  /// once without a dialog. Only the app's settings can allow it now.
+  /// once without a dialog. Only the app's settings can allow it now. Not
+  /// for the second "Don't allow" itself: the user just said no, so that
+  /// one is [denied].
   permanentlyDenied,
 }
 

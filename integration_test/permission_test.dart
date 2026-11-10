@@ -18,6 +18,7 @@ import 'app_test.dart'
         dialogButton,
         expectDialog,
         kCreate,
+        kActionTimeout,
         kDelete,
         launchApp,
         tapAndCancel,
@@ -61,7 +62,7 @@ void main() {
     // The system settings come to the front: the app is no longer resumed.
     // (Waits without pumping: in the background the app draws no frames.)
     await tester.tap(dialogButton('Open settings'));
-    final deadline = DateTime.now().add(const Duration(seconds: 30));
+    final deadline = DateTime.now().add(kActionTimeout);
     while (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
       if (DateTime.now().isAfter(deadline)) {
         fail('The settings did not come to the front.');
