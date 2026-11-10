@@ -226,12 +226,18 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   Duration _shortMessageDuration = kShortMessageDuration;
   Duration _longMessageDuration = kLongMessageDuration;
 
+  /// Counts [_updateMessageDurations] calls, so only the latest one's
+  /// answer is used.
+  int _durationsRequest = 0;
+
   Future<void> _updateMessageDurations() async {
+    final int request = ++_durationsRequest;
     final short =
         await recommendedTimeout(kShortMessageDuration, hasControls: false);
     // The close button is something to tap.
     final long =
         await recommendedTimeout(kLongMessageDuration, hasControls: true);
+    if (request != _durationsRequest) return;
     _shortMessageDuration = short;
     _longMessageDuration = long;
   }

@@ -2255,6 +2255,39 @@ void main() {
       expect(snackBar(tester).duration, const Duration(seconds: 30));
     });
 
+    testWidgets('an older answer about the accessibility timeout that comes '
+        'last is not used', (tester) async {
+      const channel = MethodChannel('fake_contacts/accessibility');
+      final answers = <Completer<Object?>>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel,
+          (call) {
+        final answer = Completer<Object?>();
+        answers.add(answer);
+        return answer.future;
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null));
+      await pumpApp(tester, book);
+      expect(answers, hasLength(1)); // the short one, at startup
+
+      // The user changes the setting and comes back; that answer comes
+      // first.
+      await leaveAndReturn(tester);
+      expect(answers, hasLength(2));
+      answers[1].complete(30000);
+      await tester.pump();
+      answers[2].complete(30000);
+      await tester.pump();
+      // Then the one from startup.
+      answers[0].complete(4000);
+      await tester.pump();
+      answers[3].complete(10000);
+      await tester.pumpAndSettle();
+
+      await tapCreate(tester);
+      expect(snackBar(tester).duration, const Duration(seconds: 30));
+    });
+
     testWidgets('if asking for the accessibility timeout fails, the usual '
         'times apply', (tester) async {
       const channel = MethodChannel('fake_contacts/accessibility');

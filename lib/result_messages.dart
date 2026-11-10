@@ -299,8 +299,7 @@ ResultMessage nothingToDeleteMessage(DeletePreview preview) {
 /// What Create did; if the user stopped it, how far it got.
 ResultMessage createdMessage(CreateResult result) {
   var sMessage = result.stopped
-      ? "Stopped after creating ${result.created} of"
-          " ${_fakeContacts(result.planned)}."
+      ? "Stopped after creating ${_doneOf(result.created, result.planned)}."
       : "Created ${_fakeContacts(result.created)}.";
   if (result.alreadyExisted > 0) {
     sMessage += " ${result.alreadyExisted} already existed.";
@@ -317,8 +316,7 @@ ResultMessage createdMessage(CreateResult result) {
 /// What Delete did; if the user stopped it, how far it got.
 ResultMessage deletedMessage(DeleteResult result) {
   final text = (result.stopped
-          ? "Stopped after deleting ${result.deleted} of"
-              " ${_fakeContacts(result.planned)}."
+          ? "Stopped after deleting ${_doneOf(result.deleted, result.planned)}."
           : "Deleted ${_fakeContacts(result.deleted)}.") +
       _leftAlone(result.skippedMerged, result.skippedChanged, done: true);
   return result.stopped || result.skippedMerged + result.skippedChanged > 0

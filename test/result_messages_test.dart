@@ -480,6 +480,8 @@ void main() {
           'Stopped after creating 312 of 756 fake contacts.');
       expect(createdMessage(created(100, alreadyExisted: 4, stoppedOf: 200)),
           'Stopped after creating 100 of 200 fake contacts. 4 already existed.');
+      expect(createdMessage(created(1, stoppedOf: 2)),
+          'Stopped after creating 1 of 2 fake contacts.');
       expect(deletedMessage(deleted(300, stoppedOf: 756)),
           'Stopped after deleting 300 of 756 fake contacts.');
       expect(deletedMessage(deleted(200, merged: 1, stoppedOf: 400)),

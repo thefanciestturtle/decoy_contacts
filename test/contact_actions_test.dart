@@ -517,6 +517,112 @@ void main() {
       expect(book.all, hasLength(1));
     });
 
+    test("Delete: a chunk that fails is counted on its own: contacts of later "
+        "chunks deleted meanwhile don't make up for it", () async {
+      await createFakeContacts(book, const LedgerStore(), kSettings);
+      final lastFake = book.all.last.id;
+      book.beforeDeleteAll = (call) async {
+        if (call == 1) {
+          // Meanwhile, say by a sync, a fake of the last chunk goes.
+          book.beforeDeleteAll = null;
+          await book.deleteAll([lastFake]);
+          book.deleteAllError = Exception('provider gone');
+          book.deleteAllStopsAfter = 0;
+        }
+      };
+      final error = await deleteFakeContacts(
+              book, const LedgerStore(), kSettings, chunkSize: 1)
+          .then<Object?>((_) => null, onError: (Object e) => e);
+
+      final stopped = error! as StoppedPartway;
+      expect((stopped.done, stopped.planned), (1, 4));
+      // The one that wasn't deleted is still recorded.
+      final ledger = await const LedgerStore().load();
+      for (final c in book.all) {
+        expect(ledger.entries.keys, containsAll(c.rawContactIds));
+      }
+    });
+
+    test("Delete: if what a later chunk did can't be read, it says what the "
+        'chunks before deleted', () async {
+      await createFakeContacts(book, const LedgerStore(), kSettings);
+      book.beforeDeleteAll = (call) async {
+        if (call == 1) {
+          book.deleteAllError = Exception('provider gone');
+          book.getAllError = Exception('provider gone');
+        }
+      };
+      final error = await deleteFakeContacts(
+              book, const LedgerStore(), kSettings, chunkSize: 2)
+          .then<Object?>((_) => null, onError: (Object e) => e);
+
+      final stopped = error! as StoppedPartway;
+      expect((stopped.done, stopped.planned), (2, 4));
+    });
+
+    test("Create: if what a later chunk made can't be read, it says what the "
+        'chunks before created, and keeps the pending record', () async {
+      book.beforeCreateAll = (call) async {
+        if (call == 1) {
+          book.createAllError = Exception('provider gone');
+          book.createAllStopsAfter = 1;
+          book.getAllError = Exception('provider gone');
+        }
+      };
+      final error = await createFakeContacts(
+              book, const LedgerStore(), kSettings, chunkSize: 2)
+          .then<Object?>((_) => null, onError: (Object e) => e);
+
+      final stopped = error! as StoppedPartway;
+      expect((stopped.done, stopped.planned, stopped.recorded), (2, 4, true));
+      final stored = await storedWithPending();
+      expect(stored.ledger.length, 2);
+      expect(stored.pending!.entries, hasLength(2));
+
+      // The next Create finds the one the cut-short chunk made.
+      book.getAllError = null;
+      book.createAllError = null;
+      book.beforeCreateAll = null;
+      final rest =
+          await createFakeContacts(book, const LedgerStore(), kSettings);
+      expect((rest!.created, rest.alreadyExisted), (1, 3));
+      expect((await storedWithPending()).ledger.length, 4);
+    });
+
+    test('a pending record that is left for later survives the saves of '
+        "Delete, Delete's preview and a Create with nothing to do", () async {
+      final broken = _ReadsEmpty();
+      // A fake from an older version, which recorded only the name, so the
+      // preview saves its details.
+      final e = entryFor(const FakeName('Zoe', 'Zen'), kDefaultPhoneTemplate,
+          kDefaultEmailTemplate);
+      final zoe = broken.add('Zoe Zen', phones: [e.phone!], emails: [e.email!]);
+      final pending = PendingCreate(maxRawId: 5, entries: [e]);
+      await const LedgerStore().save(
+          Ledger({broken.rawIdsOf(zoe).single: const LedgerEntry.nameOnly('Zoe Zen')}),
+          pending: pending);
+      broken.empty = true;
+
+      await previewDelete(broken, const LedgerStore(), kSettings);
+      var stored = await storedWithPending();
+      expect(stored.ledger.entries.values.single.hasDetails, isTrue);
+      expect(stored.pending!.entries, pending.entries);
+
+      const noNames = Settings(
+          lastNamesText: '',
+          firstNamesText: '',
+          phoneTemplateText: kDefaultPhoneTemplate,
+          emailTemplateText: kDefaultEmailTemplate);
+      await createFakeContacts(broken, const LedgerStore(), noNames);
+      stored = await storedWithPending();
+      expect(stored.pending!.entries, pending.entries);
+
+      // And Delete's own save, with nothing to delete.
+      await deleteFakeContacts(broken, const LedgerStore(), kSettings);
+      stored = await storedWithPending();
+      expect(stored.pending!.entries, pending.entries);
+    });
+
     test('Delete: a chunk all deleted before its call failed: it goes on',
         () async {
       await createFakeContacts(book, const LedgerStore(), kSettings);
