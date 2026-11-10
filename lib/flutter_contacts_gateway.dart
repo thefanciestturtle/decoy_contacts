@@ -9,14 +9,29 @@ class FlutterContactsGateway implements ContactsGateway {
   const FlutterContactsGateway();
 
   @override
-  Future<bool> requestPermission() async {
-    final status =
+  Future<PermissionAnswer> requestPermission() async {
+    final before =
+        await FlutterContacts.permissions.check(PermissionType.readWrite);
+    if (before == PermissionStatus.granted) return PermissionAnswer.granted;
+    final after =
         await FlutterContacts.permissions.request(PermissionType.readWrite);
-    if (status != PermissionStatus.granted) {
-      log("FlutterContactsGateway: no permission, status $status");
+    // The plugin says "granted" for a request Android cut short (with no
+    // answers at all), so make sure. The user didn't refuse, so it isn't a
+    // denial: asking failed.
+    if (after == PermissionStatus.granted && !await hasPermission()) {
+      throw StateError("permission request cut short");
     }
-    return status == PermissionStatus.granted;
+    if (after != PermissionStatus.granted) {
+      log("FlutterContactsGateway: no permission, status $before -> $after");
+    }
+    return permissionAnswer(before: before, after: after);
   }
+
+  // If Android has no screen for the app's settings, the plugin's native
+  // code throws on the main thread and the app crashes, rather than
+  // returning an error; every phone has that screen, though.
+  @override
+  Future<void> openSettings() => FlutterContacts.permissions.openSettings();
 
   @override
   Future<bool> hasPermission() async =>
@@ -67,3 +82,33 @@ class FlutterContactsGateway implements ContactsGateway {
   Future<void> deleteAll(List<String> contactIds) =>
       FlutterContacts.deleteAll(contactIds);
 }
+
+/// The answer to a permission request, from the plugin's status [before]
+/// it (from `check`) and its answer [after].
+///
+/// The plugin says "permanently denied" whenever, after a refusal, Android
+/// says there's no need to explain why the app asks. That is so:
+/// - when Android didn't ask at all because it won't any more: the case
+///   to offer the settings for;
+/// - right after the user said "Don't allow" a second time in Android's
+///   dialog. They just said no, so the app only says it was denied; the
+///   next tap gets no dialog and offers the settings. Before such a
+///   dialog `check` says [PermissionStatus.denied] (an explanation was
+///   called for), which tells this case apart.
+/// - when the user left the very first dialog with Back or a tap outside
+///   it, though Android would still ask the next time. This can't be told
+///   apart from the first case (`check` says notDetermined before both,
+///   and the app's activity is paused either way), so the app then offers
+///   the settings once when it needn't have, which does no harm.
+///
+/// This is Android's behaviour. (On iOS the plugin reports "permanently
+/// denied" after the first refusal, and restricted and limited exist; the
+/// app doesn't run there for now.)
+PermissionAnswer permissionAnswer(
+        {required PermissionStatus before, required PermissionStatus after}) =>
+    switch (after) {
+      PermissionStatus.granted => PermissionAnswer.granted,
+      PermissionStatus.permanentlyDenied when before != PermissionStatus.denied =>
+        PermissionAnswer.permanentlyDenied,
+      _ => PermissionAnswer.denied,
+    };

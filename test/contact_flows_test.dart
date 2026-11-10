@@ -145,14 +145,40 @@ bool buttonsEnabled(WidgetTester tester) =>
     tester.widget<ElevatedButton>(find.byType(ElevatedButton)).enabled &&
     tester.widget<FilledButton>(find.byType(FilledButton)).enabled;
 
-/// Answers the permission request only when [permission] is completed.
+/// Answers the permission request only when [answer] is completed.
 class _SlowPermission extends InMemoryContactsGateway {
-  final Completer<bool> permission = Completer();
+  final Completer<PermissionAnswer> answer = Completer();
 
   @override
-  Future<bool> requestPermission() {
+  Future<PermissionAnswer> requestPermission() {
     permissionRequests++;
-    return permission.future;
+    return answer.future;
+  }
+}
+
+/// Opening the settings finishes only when [opened] is completed.
+class _SlowSettings extends InMemoryContactsGateway {
+  final Completer<void> opened = Completer();
+
+  @override
+  Future<void> openSettings() async {
+    await super.openSettings();
+    await opened.future;
+  }
+}
+
+/// Asking for the permission throws, as the plugin does while another
+/// request is open, until [fail] is cleared.
+class _FailingPermission extends InMemoryContactsGateway {
+  bool fail = true;
+
+  @override
+  Future<PermissionAnswer> requestPermission() {
+    if (fail) {
+      permissionRequests++;
+      throw Exception('Another permission request is in progress');
+    }
+    return super.requestPermission();
   }
 }
 
@@ -320,7 +346,7 @@ void main() {
     });
 
     testWidgets('permission denied: nothing is read or created', (tester) async {
-      book.permissionGranted = false;
+      book.permission = PermissionAnswer.denied;
       await pumpApp(tester, book);
       await tapExpectingNoDialog(tester, kCreateButton);
 
@@ -368,7 +394,7 @@ void main() {
       await tester.tap(find.text(kDeleteButton), warnIfMissed: false);
       await tester.pump();
 
-      slow.permission.complete(true);
+      slow.answer.complete(PermissionAnswer.granted);
       await tester.pumpAndSettle();
       expect(find.byType(AlertDialog), findsOneWidget);
       await tester.tap(dialogButton('Create'));
@@ -576,7 +602,7 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
       final ledgerBefore = await storedLedgerJson();
-      book.permissionGranted = false;
+      book.permission = PermissionAnswer.denied;
       final readsBefore = book.getAllCalls;
 
       await tapExpectingNoDialog(tester, kDeleteButton);
@@ -1242,7 +1268,7 @@ void main() {
           warnIfMissed: false);
       await tester.pump();
       expect(tester.testTextInput.isVisible, isFalse);
-      slow.permission.complete(true);
+      slow.answer.complete(PermissionAnswer.granted);
       await tester.pumpAndSettle();
       expect(find.byType(AlertDialog), findsOneWidget);
       expect(enabled(), everyElement(isFalse), reason: 'dialog open');
@@ -1283,7 +1309,7 @@ void main() {
       await tester.pump();
       expect(email.hasFocus, isFalse);
 
-      slow.permission.complete(true);
+      slow.answer.complete(PermissionAnswer.granted);
       await tester.pumpAndSettle();
       await tester.tap(dialogButton('Create'));
       await tester.pumpAndSettle();
@@ -1303,10 +1329,165 @@ void main() {
       expect(previewText(tester), before);
 
       book.getAllError = null;
-      book.permissionGranted = false;
+      book.permission = PermissionAnswer.denied;
       await tapExpectingNoDialog(tester, kCreateButton);
       expect(snackBarText(tester), kDenied);
       expect(previewText(tester), before);
+    });
+  });
+
+  group('permission permanently denied (U5)', () {
+    const kTitle = 'Contacts access is off';
+    String body(String verb) =>
+        'To $verb fake contacts, this app needs access to your contacts.'
+        ' In Settings, tap Permissions and allow Contacts.';
+
+    setUp(() => book.permission = PermissionAnswer.permanentlyDenied);
+
+    /// Checks that the dialog is gone and nothing else happened.
+    void expectDone(WidgetTester tester) {
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(buttonsEnabled(tester), isTrue);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    }
+
+    testWidgets('Create offers the settings and opens them; nothing is read '
+        'or created', (tester) async {
+      await pumpApp(tester, book);
+      await tapAndOpenDialog(tester, kCreateButton);
+
+      expect(dialogText(tester), (title: kTitle, body: body('create')));
+      expect(dialogButton('Cancel'), findsOneWidget);
+      // The app waits for the user: no spinner, and nothing else to tap.
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(buttonsEnabled(tester), isFalse);
+      expect(book.openSettingsCalls, 0);
+
+      await tester.tap(dialogButton('Open settings'));
+      await tester.pumpAndSettle();
+
+      expect(book.openSettingsCalls, 1);
+      expectDone(tester);
+      expect(book.permissionRequests, 1);
+      expect(book.getAllCalls, 0);
+      expect(book.createAllCalls, isEmpty);
+      expect(await storedLedgerJson(), isNull);
+    });
+
+    testWidgets('Delete offers them too; Cancel opens nothing',
+        (tester) async {
+      book.permission = PermissionAnswer.granted;
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      final ledger = await storedLedgerJson();
+      // Turned off in the system settings, after "Don't allow" twice.
+      book.permission = PermissionAnswer.permanentlyDenied;
+      book.alreadyGranted = false;
+      final reads = book.getAllCalls;
+
+      await tapAndOpenDialog(tester, kDeleteButton);
+      expect(dialogText(tester), (title: kTitle, body: body('delete')));
+      await tester.tap(dialogButton('Cancel'));
+      await tester.pumpAndSettle();
+
+      expectDone(tester);
+      expect(book.openSettingsCalls, 0);
+      expect(book.getAllCalls, reads);
+      expect(book.deleteAllCalls, isEmpty);
+      expect(book.all, hasLength(4));
+      expect(await storedLedgerJson(), ledger);
+    });
+
+    testWidgets('Back and tapping outside the dialog open nothing either',
+        (tester) async {
+      await pumpApp(tester, book);
+      for (final (how, dismiss) in [
+        ('Back', () => tester.binding.handlePopRoute()),
+        ('outside', () => tester.tapAt(const Offset(10, 10))),
+      ]) {
+        await tapAndOpenDialog(tester, kCreateButton);
+        await dismiss();
+        await tester.pumpAndSettle();
+        expectDone(tester);
+        expect(book.openSettingsCalls, 0, reason: how);
+      }
+      expect(book.permissionRequests, 2);
+    });
+
+    testWidgets('after allowing it in the settings, the status line shows '
+        'and Create works', (tester) async {
+      await pumpApp(tester, book);
+      expect(statusText(tester), isNull);
+      await tapAndAnswer(tester, kCreateButton, 'Open settings');
+
+      // Allowed in the system settings, then back to the app.
+      book.permission = PermissionAnswer.granted;
+      book.alreadyGranted = true;
+      await leaveAndReturn(tester);
+
+      expect(statusText(tester), 'No fake contacts on this phone.');
+      await tapCreate(tester);
+      expect(snackBarText(tester), 'Created 4 fake contacts.');
+      expect(statusText(tester), '4 fake contacts on this phone.');
+    });
+
+    testWidgets('if the settings can\'t be opened, it says so',
+        (tester) async {
+      book.openSettingsError = Exception('no activity');
+      await pumpApp(tester, book);
+
+      await tapAndAnswer(tester, kCreateButton, 'Open settings');
+
+      expect(book.openSettingsCalls, 1);
+      expect(snackBarText(tester), "Couldn't open Settings.");
+      expect(buttonsEnabled(tester), isTrue);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    });
+
+    testWidgets('no spinner while the settings open: the app is going to '
+        'the background, not working', (tester) async {
+      final slow = _SlowSettings()
+        ..permission = PermissionAnswer.permanentlyDenied;
+      await pumpApp(tester, slow);
+      await tapAndOpenDialog(tester, kCreateButton);
+      await tester.tap(dialogButton('Open settings'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(slow.openSettingsCalls, 1);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      // Until the settings are in front, a second tap can't ask again.
+      expect(buttonsEnabled(tester), isFalse);
+      slow.opened.complete();
+      await tester.pumpAndSettle();
+      expectDone(tester);
+    });
+
+    testWidgets('if asking fails, it says so, and the app still works',
+        (tester) async {
+      final failing = _FailingPermission();
+      await pumpApp(tester, failing);
+
+      await tapExpectingNoDialog(tester, kCreateButton);
+
+      expect(snackBarText(tester),
+          "Couldn't ask for permission to access contacts. Try again.");
+      expect(buttonsEnabled(tester), isTrue);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(failing.getAllCalls, 0);
+      failing.fail = false;
+      await tapCreate(tester);
+      expect(snackBarText(tester), 'Created 4 fake contacts.');
+    });
+
+    testWidgets('a plain denial (Android may still ask) gets the message, '
+        'not the dialog', (tester) async {
+      book.permission = PermissionAnswer.denied;
+      await pumpApp(tester, book);
+      await tapExpectingNoDialog(tester, kCreateButton);
+      expect(snackBarText(tester), kDenied);
+      expect(book.openSettingsCalls, 0);
     });
   });
 }

@@ -256,9 +256,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// cancelled). The buttons are disabled meanwhile.
   bool _isBusy = false;
 
-  /// Set while the dialog asking to go ahead is open. No spinner then: the
-  /// app is waiting for the user, not working.
-  bool _isConfirming = false;
+  /// Set while one of the app's dialogs asks the user ([_confirm]), and
+  /// while the app's settings open for the user. No spinner then: the app
+  /// is waiting for the user, not working. (Android's own permission
+  /// dialog still has the spinner behind it.)
+  bool _waitingForUser = false;
 
   void _showResultSnackBar(String message) {
     if (!mounted) return;
@@ -268,7 +270,13 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
 
   /// Asks before going ahead. True only if the user taps the action button;
   /// Cancel, Back and tapping outside the dialog all count as no.
-  Future<bool> _confirm(Confirmation confirmation) async {
+  ///
+  /// With [keepWaiting], [_waitingForUser] stays set after a yes, for
+  /// whatever waits for the user next; finish() clears it.
+  Future<bool> _confirm(Confirmation confirmation,
+      {bool keepWaiting = false}) async {
+    if (!mounted) return false;
+    setState(() { _waitingForUser = true; });
     final bool? bConfirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -288,13 +296,21 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         ],
       ),
     );
-    return bConfirmed ?? false;
+    final bool bYes = bConfirmed ?? false;
+    if (mounted && !(keepWaiting && bYes)) {
+      setState(() { _waitingForUser = false; });
+    }
+    return bYes;
   }
 
   /// The steps Create and Delete share: ignore taps while busy, save the
   /// settings, ask for permission, work out what [action] would do
   /// ([preview]), ask the user to confirm that, run [action], and show the
   /// result.
+  ///
+  /// If Android no longer asks for the permission, the dialog
+  /// [permissionSettings] offers the app's settings instead; after it the
+  /// user taps the button again.
   ///
   /// [nothingToDo] gives the message to show instead of the dialog when the
   /// preview finds nothing to do, else null. [action] works everything out
@@ -305,6 +321,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   Future<void> _runContactsAction<P, R>({
     required String name,
     required String doing,
+    required Confirmation permissionSettings,
     required Future<P> Function(Settings settings) preview,
     required String? Function(Settings settings, P preview) nothingToDo,
     required Confirmation Function(P preview) confirmation,
@@ -332,15 +349,43 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       if (!mounted) return;
       setState(() {
         _isBusy = false;
-        _isConfirming = false;
+        _waitingForUser = false;
       });
       if (message != null) _showResultSnackBar(message);
       unawaited(_refreshStatus());
     }
 
     log("$name: about to request permission");
-    if (!await widget.contacts.requestPermission()) {
-      return finish(kPermissionDeniedMessage);
+    final PermissionAnswer permission;
+    try {
+      permission = await widget.contacts.requestPermission();
+    } catch (e) {
+      // E.g. the plugin's "no activity available" while the app's screen
+      // is being recreated.
+      log("$name: error requesting permission $e");
+      return finish(kPermissionRequestFailedMessage);
+    }
+    switch (permission) {
+      case PermissionAnswer.granted:
+        break;
+      case PermissionAnswer.denied:
+        return finish(kPermissionDeniedMessage);
+      case PermissionAnswer.permanentlyDenied:
+        // The buttons stay disabled until the settings have been started,
+        // so a quick second tap can't ask again; no spinner meanwhile.
+        if (!await _confirm(permissionSettings, keepWaiting: true)) {
+          log("$name: settings not opened");
+          return finish(null);
+        }
+        String? sFailed;
+        try {
+          await widget.contacts.openSettings();
+        } catch (e) {
+          log("$name: error opening settings $e");
+          sFailed = kOpenSettingsFailedMessage;
+        }
+        // The status line is updated again when the user comes back.
+        return finish(sFailed);
     }
 
     final P planned;
@@ -354,14 +399,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     final sNothingToDo = nothingToDo(settings, planned);
     if (sNothingToDo != null) return finish(sNothingToDo);
 
-    if (!mounted) return;
-    setState(() { _isConfirming = true; });
     if (!await _confirm(confirmation(planned))) {
       log("$name: cancelled");
       return finish(null);
     }
     if (!mounted) return;
-    setState(() { _isConfirming = false; });
 
     final R? result;
     try {
@@ -376,6 +418,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   Future<void> _createAllContacts() => _runContactsAction(
         name: "_createAllContacts",
         doing: "creating",
+        permissionSettings: permissionSettingsConfirmation("create"),
         preview: (settings) =>
             previewCreate(widget.contacts, widget.ledgerStore, settings),
         nothingToDo: (settings, preview) => preview.toCreate == 0
@@ -391,6 +434,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   Future<void> _deleteAllContacts() => _runContactsAction(
         name: "_deleteAllContacts",
         doing: "deleting",
+        permissionSettings: permissionSettingsConfirmation("delete"),
         preview: (settings) =>
             previewDelete(widget.contacts, widget.ledgerStore, settings),
         nothingToDo: (_, preview) =>
@@ -662,7 +706,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                   SizedBox(
                     height: 72,
                     child: Center(
-                      child: ((_isBusy && !_isConfirming) || !_settingsLoaded)
+                      child: ((_isBusy && !_waitingForUser) || !_settingsLoaded)
                           ? const CircularProgressIndicator()
                           : null,
                     ),

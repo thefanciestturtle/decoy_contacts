@@ -9,6 +9,26 @@ const int kManyFakeContacts = 10000;
 const String kPermissionDeniedMessage =
     "Permission to access contacts was denied.";
 
+/// The dialog when Android no longer asks for the contacts permission
+/// (permanently denied), so it can only be allowed in the app's settings.
+/// [verb] is "create" or "delete".
+Confirmation permissionSettingsConfirmation(String verb) => (
+      title: "Contacts access is off",
+      // The steps fit every Android version the app runs on: before
+      // Android 10, Contacts is a switch on the Permissions screen.
+      body: "To $verb fake contacts, this app needs access to your contacts."
+          " In Settings, tap Permissions and allow Contacts.",
+      action: "Open settings",
+    );
+
+/// Shown if the app's settings couldn't be opened from that dialog.
+const String kOpenSettingsFailedMessage = "Couldn't open Settings.";
+
+/// Shown if asking for the contacts permission failed (rather than being
+/// answered), e.g. while the app's screen was being recreated.
+const String kPermissionRequestFailedMessage =
+    "Couldn't ask for permission to access contacts. Try again.";
+
 /// [doing] is "reading", "creating" or "deleting".
 String errorMessage(String doing, Object error) =>
     "Error while $doing contacts: $error";

@@ -20,13 +20,14 @@ class InMemoryContactsGateway implements ContactsGateway {
   int _nextRawId = 1;
 
   /// What [requestPermission] answers.
-  bool permissionGranted = true;
+  PermissionAnswer permission = PermissionAnswer.granted;
 
   /// Whether the permission is already granted, for [hasPermission]. Null
-  /// means "as [permissionGranted] says"; [requestPermission] sets it.
+  /// means "as [permission] says"; [requestPermission] sets it.
   bool? alreadyGranted;
 
   /// When set, the matching call throws it.
+  Object? openSettingsError;
   Object? getAllError;
   Object? createAllError;
   Object? deleteAllError;
@@ -38,6 +39,7 @@ class InMemoryContactsGateway implements ContactsGateway {
 
   int permissionRequests = 0;
   int permissionChecks = 0;
+  int openSettingsCalls = 0;
   int getAllCalls = 0;
   final List<List<NewContact>> createAllCalls = [];
   final List<List<String>> deleteAllCalls = [];
@@ -105,16 +107,22 @@ class InMemoryContactsGateway implements ContactsGateway {
   }
 
   @override
-  Future<bool> requestPermission() async {
+  Future<PermissionAnswer> requestPermission() async {
     permissionRequests++;
-    alreadyGranted = permissionGranted;
-    return permissionGranted;
+    alreadyGranted = permission == PermissionAnswer.granted;
+    return permission;
+  }
+
+  @override
+  Future<void> openSettings() async {
+    openSettingsCalls++;
+    if (openSettingsError != null) throw openSettingsError!;
   }
 
   @override
   Future<bool> hasPermission() async {
     permissionChecks++;
-    return alreadyGranted ?? permissionGranted;
+    return alreadyGranted ?? permission == PermissionAnswer.granted;
   }
 
   @override

@@ -3,6 +3,9 @@
 #
 #   tool/integration_test.sh [--wipe-contacts] [extra `flutter test` args]
 #
+# The extra arguments go to the main run only, not to
+# integration_test/permission_test.dart (see below).
+#
 # The tests create and delete contacts in the device's real address book, so
 # this script refuses to run on anything but an emulator. The tests need an
 # empty address book and stop if it isn't; --wipe-contacts empties it first
@@ -12,7 +15,10 @@
 # Permission: the app is installed and granted the contacts permission with
 # `pm grant` before the tests run, so nobody has to tap the system dialog.
 # `flutter test` then reinstalls the app with `adb install -r`, which keeps
-# runtime permissions that were already granted.
+# runtime permissions that were already granted. After them,
+# integration_test/permission_test.dart runs with the permission
+# permanently denied instead (revoked and "user fixed", as two "Don't allow"
+# taps leave it), which also needs no tap.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -39,4 +45,23 @@ if $wipe; then
 fi
 
 echo "== Running the tests"
-flutter test integration_test -d "$serial" "$@"
+tests=()
+for file in integration_test/*_test.dart; do
+  [[ "$file" == integration_test/permission_test.dart ]] || tests+=("$file")
+done
+flutter test "${tests[@]}" -d "$serial" "$@"
+
+echo "== Running the tests with the contacts permission permanently denied"
+# `flutter test` uninstalled the app at the end.
+adb_ install -r -t "$APK"
+for permission in READ_CONTACTS WRITE_CONTACTS; do
+  adb_ shell pm revoke "$APP_ID" "android.permission.$permission"
+  adb_ shell pm set-permission-flags "$APP_ID" \
+    "android.permission.$permission" user-set user-fixed
+done
+# Without the extra arguments: they are meant for the tests above (e.g. a
+# --plain-name filter, which would match nothing here). The run above
+# already got the packages, if it was going to.
+flutter test integration_test/permission_test.dart -d "$serial" --no-pub
+# It ends with the app's settings in front; leave the home screen instead.
+adb_ shell input keyevent KEYCODE_HOME
