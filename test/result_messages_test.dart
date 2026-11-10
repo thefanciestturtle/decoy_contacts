@@ -241,6 +241,9 @@ void main() {
           ' storage.');
       expect(deleteFailedMessage(Exception(sFull)),
           "Couldn't delete fake contacts: your phone's storage is full.");
+      expect(deleteFailedMessage(stopped(null, 4, cause: Exception(sFull))),
+          "Couldn't finish deleting fake contacts: your phone's storage is"
+          " full.");
       expect(deleteFailedMessage(stopped(900, 2000, cause: Exception(sFull))),
           'Deleted 900 of 2000 fake contacts before your phone ran out of'
           ' storage.');

@@ -87,6 +87,10 @@ AddressBook addressBookOf(List<StoredContact> contacts) => {
 Set<String> fingerprintsOfContact(StoredContact c) =>
     fingerprintsOf(c.displayName, c.phones, c.emails).toSet();
 
+/// Contact ID -> its fingerprints (see [fingerprintsOfContact]).
+Map<String, Set<String>> fingerprintsByContactOf(List<StoredContact> contacts) =>
+    {for (final c in contacts) c.id: fingerprintsOfContact(c)};
+
 /// One fake contact as Create would make it: its name, phone number and
 /// email address ('' if it gets none).
 typedef FakeSample = ({String name, String phone, String email});
@@ -337,9 +341,7 @@ Future<({int count, bool saved})?> _recordCreatedBeforeFailure(
       planned: entries,
       before: plan.before,
       after: after,
-      fingerprintsByContact: {
-        for (final c in everyone) c.id: fingerprintsOfContact(c),
-      },
+      fingerprintsByContact: fingerprintsByContactOf(everyone),
     );
   } catch (e, st) {
     logError("createFakeContacts, finding what was created", e, st);
@@ -384,9 +386,7 @@ Future<_DeleteCheck> _planDelete(
     ContactsGateway contacts, Ledger stored, Settings? settings) async {
   final everyone = await contacts.getAll();
   final book = addressBookOf(everyone);
-  final fingerprintsByContact = {
-    for (final c in everyone) c.id: fingerprintsOfContact(c),
-  };
+  final fingerprintsByContact = fingerprintsByContactOf(everyone);
   final nameOnly = _nameOnlyEntries(stored);
   final current = (nameOnly == 0 || settings == null)
       ? const <String, LedgerEntry>{}
@@ -420,7 +420,15 @@ DeletePreview _previewOf(DeletePlan plan) => DeletePreview(
 Future<DeletePreview> previewDelete(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings) async {
   final check = await _planDelete(contacts, await ledgerStore.load(), settings);
-  if (check.detailsFilledIn > 0) await ledgerStore.save(check.withDetails);
+  if (check.detailsFilledIn > 0) {
+    try {
+      await ledgerStore.save(check.withDetails);
+    } catch (e, st) {
+      // Not written (say, with the storage full), but kept in memory while
+      // the app stays open, so Delete checks them against the same details.
+      logError("previewDelete, saving the ledger", e, st);
+    }
+  }
   return _previewOf(check.plan);
 }
 
@@ -456,8 +464,8 @@ Future<DeletePreview> countFakeContacts(
 /// returns null.
 ///
 /// If deleting fails, reads the address book again and throws
-/// [StoppedPartway] saying how far it got. If only saving the ledger
-/// fails, that is logged: all were deleted. An error before it starts
+/// [StoppedPartway] saying how far it got, unless all were deleted after
+/// all. If only saving the ledger fails, that is logged: all were deleted. An error before it starts
 /// deleting is thrown as it is.
 Future<DeleteResult?> deleteFakeContacts(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings,
@@ -478,8 +486,15 @@ Future<DeleteResult?> deleteFakeContacts(
     await contacts.deleteAll(plan.contactIdsToDelete);
   } catch (e, st) {
     final done = await _countDeletedBeforeFailure(contacts, check);
-    throw StoppedPartway(
-        done: done, planned: plan.rawContactsDeleted, cause: e, stackTrace: st);
+    if (done != plan.rawContactsDeleted) {
+      throw StoppedPartway(
+          done: done,
+          planned: plan.rawContactsDeleted,
+          cause: e,
+          stackTrace: st);
+    }
+    // All were deleted before it failed.
+    logError("deleteFakeContacts, recovered", e, st);
   }
   try {
     await ledgerStore.save(plan.remaining);

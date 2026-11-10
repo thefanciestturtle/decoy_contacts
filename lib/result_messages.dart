@@ -71,8 +71,9 @@ String createFailedMessage(Object error) => switch (error) {
 /// Shown if Delete failed: how far it got if it stopped partway (see
 /// [StoppedPartway]).
 String deleteFailedMessage(Object error) => switch (error) {
-      StoppedPartway(done: null) =>
-        "Couldn't finish deleting fake contacts. Try again.",
+      StoppedPartway(done: null) => storageFull(error)
+          ? "Couldn't finish deleting fake contacts: $_kStorageFull."
+          : "Couldn't finish deleting fake contacts. Try again.",
       StoppedPartway(:final int done, :final planned) when done > 0 =>
         storageFull(error)
             ? "Deleted ${_doneOf(done, planned)} before your phone ran out of"

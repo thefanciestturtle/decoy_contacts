@@ -162,6 +162,39 @@ void main() {
     expect(storageFull(stopped), isTrue);
   });
 
+  test('Delete: everything deleted, then the call failed', () async {
+    await createFakeContacts(book, const LedgerStore(), kSettings);
+    book.deleteAllError = Exception('provider gone');
+    book.deleteAllStopsAfter = 4;
+
+    final result =
+        await deleteFakeContacts(book, const LedgerStore(), kSettings);
+
+    expect(result!.deleted, 4);
+    expect(book.all, isEmpty);
+    expect((await stored()).isEmpty, isTrue);
+    expect(logged.single, contains('recovered: Exception: provider gone'));
+  });
+
+  test("Delete's preview: a failed save of old entries' details does no "
+      'harm', () async {
+    // A fake from an older version, which recorded only the name.
+    final e = entryFor(const FakeName('Zoe', 'Zen'), kDefaultPhoneTemplate,
+        kDefaultEmailTemplate);
+    final zoe = book.add('Zoe Zen', phones: [e.phone!], emails: [e.email!]);
+    await const LedgerStore()
+        .save(Ledger({book.rawIdsOf(zoe).single: const LedgerEntry.nameOnly('Zoe Zen')}));
+    final store = FailingLedgerStore(1);
+
+    final preview = await previewDelete(book, store, kSettings);
+
+    expect(preview.toDelete, 1);
+    expect(logged.single, contains('previewDelete, saving the ledger'));
+    final result = await deleteFakeContacts(book, store, kSettings);
+    expect(result!.deleted, 1);
+    expect(book.all, isEmpty);
+  });
+
   test('Delete: if saving the ledger fails, all were still deleted', () async {
     await createFakeContacts(book, const LedgerStore(), kSettings);
 
