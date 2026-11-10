@@ -53,6 +53,20 @@ class _EmptyAfterCreateFails extends InMemoryContactsGateway {
       _broken ? [] : await super.getAll(ids: ids);
 }
 
+/// Lets the first [succeeding] saves through; after that, saves fail and
+/// write nothing, as with the storage full once the app has restarted.
+class _WritesNothingWhenFull extends LedgerStore {
+  _WritesNothingWhenFull({required this.succeeding});
+
+  int succeeding;
+
+  @override
+  Future<void> save(Ledger ledger, {PendingCreate? pending}) async {
+    if (succeeding-- <= 0) throw const LedgerNotSaved();
+    await super.save(ledger, pending: pending);
+  }
+}
+
 /// While [empty] is set, the address book reads as empty, as when the
 /// contacts provider is missing.
 class _ReadsEmpty extends InMemoryContactsGateway {
@@ -89,9 +103,9 @@ void main() {
     expect(book.createAllCalls, isEmpty);
   });
 
-  test("Create: if the ledger can't be saved at the end, it says they "
-      "aren't recorded, without reading the address book again; Delete can "
-      'still remove them meanwhile', () async {
+  test("Create: if the ledger can't be saved at the end, it stops, without "
+      'reading the address book again; Delete can still remove them '
+      'meanwhile', () async {
     final store = FailingLedgerStore(1, succeeding: 1);
     final error = await createFakeContacts(book, store, kSettings)
         .then<Object?>((_) => null, onError: (Object e) => e);
@@ -100,7 +114,6 @@ void main() {
     final stopped = error! as StoppedPartway;
     expect(stopped.done, 4);
     expect(stopped.planned, 4);
-    expect(stopped.recorded, isFalse);
     expect(stopped.cause, isA<LedgerNotSaved>());
     expect(book.all, hasLength(4));
     // Plan, then look up the new ones; no third read.
@@ -142,7 +155,7 @@ void main() {
         .then<Object?>((_) => null, onError: (Object e) => e);
 
     final stopped = error! as StoppedPartway;
-    expect((stopped.done, stopped.planned, stopped.recorded), (4, 4, false));
+    expect((stopped.done, stopped.planned), (4, 4));
   });
 
   test('Create: a re-read that lost one contact from before is trusted',
@@ -203,7 +216,7 @@ void main() {
         .then<Object?>((_) => null, onError: (Object e) => e);
 
     final stopped = error! as StoppedPartway;
-    expect((stopped.done, stopped.planned, stopped.recorded), (2, 4, false));
+    expect((stopped.done, stopped.planned), (2, 4));
     expect(storageFull(stopped), isTrue);
   });
 
@@ -251,6 +264,31 @@ void main() {
     expect(book.all, isEmpty);
     expect(logged.single, contains('deleteFakeContacts, saving the ledger'));
     expect(logged.single, contains('LedgerNotSaved'));
+  });
+
+  /// Like Android with the storage full after a restart: a failed save
+  /// leaves what was saved before.
+  test("Create: when a save fails, what is on disk still lets Delete find "
+      'every fake', () async {
+    final store = _WritesNothingWhenFull(succeeding: 2);
+    final error = await createFakeContacts(book, store, kSettings,
+            chunkSize: 2)
+        .then<Object?>((_) => null, onError: (Object e) => e);
+    final stopped = error! as StoppedPartway;
+    expect((stopped.done, stopped.planned), (4, 4));
+    expect(createFailedMessage(stopped).text,
+        'Created 4 fake contacts before your phone ran out of storage.');
+
+    // On disk: the first chunk, and the second as a pending record.
+    final onDisk = await const LedgerStore().loadWithPending();
+    expect(onDisk.ledger.length, 2);
+    expect(onDisk.pending!.entries, hasLength(2));
+    final preview = await previewDelete(book, const LedgerStore(), kSettings);
+    expect(preview.toDelete, 4);
+    final deleted =
+        await deleteFakeContacts(book, const LedgerStore(), kSettings);
+    expect(deleted!.deleted, 4);
+    expect(book.all, isEmpty);
   });
 
   group('in chunks (U8)', () {
@@ -341,7 +379,7 @@ void main() {
           .then<Object?>((_) => null, onError: (Object e) => e);
 
       final stopped = error! as StoppedPartway;
-      expect((stopped.done, stopped.planned, stopped.recorded), (3, 4, true));
+      expect((stopped.done, stopped.planned), (3, 4));
       final stored = await storedWithPending();
       expect(stored.ledger.length, 3);
       expect(stored.pending, isNull);
@@ -373,7 +411,7 @@ void main() {
           .then<Object?>((_) => null, onError: (Object e) => e);
 
       final stopped = error! as StoppedPartway;
-      expect((stopped.done, stopped.planned, stopped.recorded), (2, 4, false));
+      expect((stopped.done, stopped.planned), (2, 4));
       expect(storageFull(stopped), isTrue);
       expect(book.createAllCalls, hasLength(1));
     });
@@ -575,7 +613,7 @@ void main() {
           .then<Object?>((_) => null, onError: (Object e) => e);
 
       final stopped = error! as StoppedPartway;
-      expect((stopped.done, stopped.planned, stopped.recorded), (2, 4, true));
+      expect((stopped.done, stopped.planned), (2, 4));
       final stored = await storedWithPending();
       expect(stored.ledger.length, 2);
       expect(stored.pending!.entries, hasLength(2));
@@ -634,7 +672,7 @@ void main() {
           .then<Object?>((_) => null, onError: (Object e) => e);
 
       final stopped = error! as StoppedPartway;
-      expect((stopped.done, stopped.recorded), (0, true));
+      expect(stopped.done, 0);
       expect(createFailedMessage(stopped).text,
           "Couldn't create fake contacts: your phone's storage is full.");
     });

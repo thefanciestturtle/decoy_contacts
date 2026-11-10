@@ -87,17 +87,16 @@ String _createFailedText(Object error) => switch (error) {
       StoppedPartway(done: null) => storageFull(error)
           ? "Couldn't finish creating fake contacts: $_kStorageFull."
           : "Couldn't finish creating fake contacts. Try again.",
-      // Delete still finds them while the app stays open.
-      StoppedPartway(:final int done, :final planned, recorded: false) =>
-        "Created ${_doneOf(done, planned)}, but couldn't save"
-            "${done == 1 ? " a record of it. Delete it" : " the list of them. Delete them"}"
-            " now, or this app may not be able to later.",
+      // (Also when only saving the ledger failed: what was made is still
+      // recorded, the last chunk as a pending record.)
       StoppedPartway(:final int done, :final planned) when done > 0 =>
         storageFull(error)
             ? "Created ${_doneOf(done, planned)} before your phone ran out of"
                 " storage."
-            : "Created ${_doneOf(done, planned)}, then something went wrong."
-                " Try again to create the rest.",
+            : done == planned
+                ? "Created ${_fakeContacts(done)}, then something went wrong."
+                : "Created ${_doneOf(done, planned)}, then something went"
+                    " wrong. Try again to create the rest.",
       _ => storageFull(error)
           ? "Couldn't create fake contacts: $_kStorageFull."
           : "Couldn't create fake contacts. Try again.",

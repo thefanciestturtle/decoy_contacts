@@ -55,12 +55,6 @@ class StoppedPartway implements Exception {
   /// How many it set out to create or delete.
   final int planned;
 
-  /// False if the fakes a Create made were found but the ledger couldn't
-  /// be saved (say, with the phone's storage full). Until the app is
-  /// closed, the ledger still holds them (see [LedgerStore.save]), so
-  /// Delete can still remove them.
-  final bool recorded;
-
   /// What stopped it, and where.
   final Object cause;
   final StackTrace stackTrace;
@@ -68,13 +62,12 @@ class StoppedPartway implements Exception {
   const StoppedPartway(
       {required this.done,
       required this.planned,
-      this.recorded = true,
       required this.cause,
       required this.stackTrace});
 
   /// How far it got, for the log.
-  String get progress => 'stopped after ${done ?? "an unknown number"} of'
-      ' $planned${recorded ? '' : ', not recorded'}';
+  String get progress =>
+      'stopped after ${done ?? "an unknown number"} of $planned';
 
   @override
   String toString() => 'StoppedPartway: $progress: $cause';
@@ -305,9 +298,12 @@ Future<CreatePreview> previewCreate(
 /// the whole chunk was created after all (say, only looking up the new
 /// contacts failed), and then it goes on. If that can't be found out, the
 /// pending record stays for the next Create or Delete, and
-/// [StoppedPartway.done] counts the chunks before (null if none). If saving the ledger
-/// fails once something was created, it stops: [StoppedPartway.recorded]
-/// is false. An error before it creates anything is thrown as it is.
+/// [StoppedPartway.done] counts what the chunks before created (null if
+/// none). If saving the ledger fails once something was created, it stops
+/// with [StoppedPartway]: what it made is still recorded, as the save
+/// before the chunk is on disk (the chunk as a pending record), and the
+/// ledger stays in memory while the app is open (see [LedgerStore.save]).
+/// An error before it creates anything is thrown as it is.
 Future<CreateResult?> createFakeContacts(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings,
     {int? atMost,
@@ -357,12 +353,9 @@ Future<CreateResult?> createFakeContacts(
           pending: pending);
     } catch (e, st) {
       if (done == 0) rethrow; // nothing created yet
+      // The save before the last chunk holds it as a pending record.
       throw StoppedPartway(
-          done: done,
-          planned: total,
-          recorded: false,
-          cause: e,
-          stackTrace: st);
+          done: done, planned: total, cause: e, stackTrace: st);
     }
     final newContacts = [
       for (final (name, entry) in chunk)
@@ -412,10 +405,8 @@ Future<CreateResult?> createFakeContacts(
     } catch (e, st) {
       // What this chunk created isn't known: work it out from the address
       // book.
-      // (Recorded fakes should be there too, unless deleted by hand.)
-      final recovered = await _findCreatedAfterFailure(
-          contacts, known, pending,
-          untouched: {...known, ...plan.stored.entries.keys});
+      final recovered =
+          await _findCreatedAfterFailure(contacts, known, pending);
       if (recovered == null) {
         // The pending record stays: the next Create or Delete looks again.
         // What the chunks before created is known (and recorded).
@@ -428,22 +419,15 @@ Future<CreateResult?> createFakeContacts(
       found = recovered.created;
       final count = found.values.toSet().length;
       if (count != entries.length) {
-        var bSaved = true;
         try {
           await ledgerStore
               .save(Ledger({...plan.stored.entries, ...created, ...found}));
         } catch (e2, st2) {
+          // The save before the chunk still holds it as a pending record.
           logError("createFakeContacts, recording what was created", e2, st2);
-          // With none found there was nothing to add (the save before the
-          // chunk holds the rest), only the pending record to drop.
-          bSaved = found.isEmpty;
         }
         throw StoppedPartway(
-            done: done + count,
-            planned: total,
-            recorded: bSaved,
-            cause: e,
-            stackTrace: st);
+            done: done + count, planned: total, cause: e, stackTrace: st);
       }
       // The whole chunk was created; only the step after it failed (e.g.
       // looking up the new contacts).
@@ -460,13 +444,10 @@ Future<CreateResult?> createFakeContacts(
     await ledgerStore.save(Ledger({...plan.ledger.entries, ...created}));
   } catch (e, st) {
     // All were created, but the ledger couldn't be saved (with the storage
-    // full); it still holds them while the app stays open.
+    // full). The save before the last chunk holds that one as a pending
+    // record, and the ledger stays in memory while the app is open.
     throw StoppedPartway(
-        done: done,
-        planned: total,
-        recorded: false,
-        cause: e,
-        stackTrace: st);
+        done: done, planned: total, cause: e, stackTrace: st);
   }
   log("createFakeContacts: nCreated $done");
   return CreateResult(
@@ -516,16 +497,15 @@ bool _plausibleAfterFailure(Set<String> untouched, AddressBook after) {
 /// the fakes of [pending] it created (see [createdByPending]; [known] are
 /// the raw contacts known to exist before the call), and every raw contact
 /// found; null if the address book couldn't be read, or the read can't be
-/// trusted (see [_plausibleAfterFailure]; [untouched] are the raw contacts
-/// that must still be there).
+/// trusted (see [_plausibleAfterFailure]: [known] must still be there).
 Future<({Map<String, LedgerEntry> created, Set<String> present})?>
     _findCreatedAfterFailure(ContactsGateway contacts, Set<String> known,
-        PendingCreate pending,
-        {required Set<String> untouched}) async {
+        PendingCreate pending) async {
   try {
     final everyone = await contacts.getAll();
     final after = addressBookOf(everyone);
-    if (!_plausibleAfterFailure(untouched, after)) {
+    // (Those of the ledger that are still there are among [known].)
+    if (!_plausibleAfterFailure(known, after)) {
       throw StateError("all contacts that were there before are missing");
     }
     return (

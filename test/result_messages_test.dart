@@ -1,4 +1,5 @@
 import 'package:fake_contacts/contact_actions.dart';
+import 'package:fake_contacts/settings_store.dart' show LedgerNotSaved;
 import 'package:fake_contacts/result_messages.dart' as messages;
 import 'package:fake_contacts/result_messages.dart'
     hide
@@ -217,11 +218,10 @@ void main() {
   group('errors', () {
     /// Stopped after [done] of [planned], because of [cause].
     StoppedPartway stopped(int? done, int planned,
-            {Object cause = 'provider gone', bool recorded = true}) =>
+            {Object cause = 'provider gone'}) =>
         StoppedPartway(
             done: done,
             planned: planned,
-            recorded: recorded,
             cause: cause,
             stackTrace: StackTrace.empty);
 
@@ -262,16 +262,21 @@ void main() {
           ' Try again to delete the rest.');
     });
 
-    test("created, but the list of them couldn't be saved", () {
-      expect(createFailedMessage(stopped(200, 755, recorded: false)),
-          'Created 200 of 755 fake contacts, but couldn\'t save the list of'
-          ' them. Delete them now, or this app may not be able to later.');
-      // Also when the storage is full: deleting them matters more.
-      expect(
-          createFailedMessage(
-              stopped(1, 1, recorded: false, cause: Exception(sFull))),
-          'Created 1 fake contact, but couldn\'t save a record of it.'
-          ' Delete it now, or this app may not be able to later.');
+    test("the ledger couldn't be saved (U8): what was made is still "
+        'recorded, so it says the storage is full', () {
+      const notSaved = LedgerNotSaved();
+      expect(createFailedMessage(stopped(200, 755, cause: notSaved)),
+          'Created 200 of 755 fake contacts before your phone ran out of'
+          ' storage.');
+      expect(createFailedMessage(stopped(1, 1, cause: notSaved)),
+          'Created 1 fake contact before your phone ran out of storage.');
+      expect(createFailedMessage(notSaved),
+          "Couldn't create fake contacts: your phone's storage is full.");
+    });
+
+    test('all were created, then something else went wrong', () {
+      expect(createFailedMessage(stopped(4, 4)),
+          'Created 4 fake contacts, then something went wrong.');
     });
 
     test('storage full: no "Try again"', () {
@@ -321,7 +326,6 @@ void main() {
         Exception(sDetail),
         stopped(null, 4, cause: Exception(sDetail)),
         stopped(2, 4, cause: Exception(sDetail)),
-        stopped(2, 4, cause: Exception(sDetail), recorded: false),
         Exception(sFull),
         stopped(2, 4, cause: Exception(sFull)),
       ]) {

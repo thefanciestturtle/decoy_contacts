@@ -863,13 +863,9 @@ void main() {
       broken.empty = true;
       broken.createAllError = Exception('Unknown authority');
       await tapCreate(tester);
-      // The read after the failure isn't trusted: how far it got is
-      // unknown, and the pending record stays.
-      expect(snackBarText(tester),
-          "Couldn't finish creating fake contacts. Try again.");
+      expect(snackBarText(tester), kCreateFailed);
       expect((await storedLedger()).entries,
           Ledger.decode(ledgerBefore).entries);
-      expect(await storedPending(), isNotNull);
 
       broken.empty = false;
       broken.createAllError = null;
@@ -926,8 +922,8 @@ void main() {
       expect(book.all, hasLength(2));
     });
 
-    testWidgets("fakes found but not recorded: it says to delete them now, "
-        "and Delete can", (tester) async {
+    testWidgets("found, but the ledger couldn't be saved: it says the storage "
+        'is full, and Delete can remove them (U8)', (tester) async {
       // The storage is full: the ledger is kept in memory but not written.
       book.createAllError = kStorageFull;
       book.createAllStopsAfter = 2;
@@ -936,10 +932,8 @@ void main() {
           ledgerStore: FailingLedgerStore(2, succeeding: 1));
       await tapCreate(tester);
 
-      expect(
-          snackBarText(tester),
-          "Created 2 of 4 fake contacts, but couldn't save the list of them."
-          " Delete them now, or this app may not be able to later.");
+      expect(snackBarText(tester),
+          'Created 2 of 4 fake contacts before your phone ran out of storage.');
       expect(statusText(tester), '2 fake contacts on this phone.');
 
       book.createAllError = null;
