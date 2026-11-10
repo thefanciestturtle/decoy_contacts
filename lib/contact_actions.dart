@@ -1,11 +1,27 @@
 // The Create and Delete operations: address book plus ledger, no UI.
 
 import 'dart:developer';
+import 'dart:math' as math;
 
 import 'app_log.dart';
 import 'contacts_gateway.dart';
 import 'fake_contacts_core.dart';
 import 'settings_store.dart';
+
+/// How many contacts Create makes per call to the address book. Measured on
+/// an emulator (API 36), 10,000 took 34 s in chunks of 100 and 36 s in one
+/// call, ledger saves included: small enough for progress about three
+/// times a second and a quick Stop, with nothing lost in speed.
+const int kCreateChunkSize = 100;
+
+/// How many contacts Delete deletes per call. 10,000 took 4 s in chunks of
+/// 200 (2 to 8 s in chunks of 900, 6 s in chunks of 50).
+const int kDeleteChunkSize = 200;
+
+/// Told how many of [total] contacts a Create or Delete has done so far: 0
+/// before it starts, then after each chunk. Only for one of more than one
+/// chunk; a smaller one is over too soon to show progress.
+typedef ProgressCallback = void Function(int done, int total);
 
 class CreateResult {
   final int created;
@@ -14,11 +30,19 @@ class CreateResult {
   /// Created, but their raw contact IDs couldn't be found to record them.
   final int untracked;
 
+  /// How many it set out to create; more than [created] only if [stopped].
+  final int planned;
+
+  /// The user stopped it before it was done.
+  final bool stopped;
+
   const CreateResult({
     required this.created,
     required this.alreadyExisted,
     required this.untracked,
-  });
+    int? planned,
+    this.stopped = false,
+  }) : planned = planned ?? created;
 }
 
 /// A Create or Delete that failed after it may have changed the address
@@ -58,9 +82,14 @@ class StoppedPartway implements Exception {
 
 /// Whether [error] (for a [StoppedPartway], what stopped it, which its text
 /// includes) says the phone's storage is full: SQLite's "database or disk
-/// is full", which the contacts provider passes on. Newer Android versions
-/// add "(code 13 SQLITE_FULL)".
+/// is full", which the contacts provider passes on (newer Android versions
+/// add "(code 13 SQLITE_FULL)"), or the ledger couldn't be written, which in
+/// practice means the same.
 bool storageFull(Object error) {
+  if (error is LedgerNotSaved ||
+      (error is StoppedPartway && error.cause is LedgerNotSaved)) {
+    return true;
+  }
   final text = error.toString();
   return text.contains('SQLITE_FULL') ||
       text.contains('database or disk is full');
@@ -71,11 +100,19 @@ class DeleteResult {
   final int skippedMerged;
   final int skippedChanged;
 
+  /// How many it set out to delete; more than [deleted] only if [stopped].
+  final int planned;
+
+  /// The user stopped it before it was done.
+  final bool stopped;
+
   const DeleteResult({
     required this.deleted,
     required this.skippedMerged,
     required this.skippedChanged,
-  });
+    int? planned,
+    this.stopped = false,
+  }) : planned = planned ?? deleted;
 }
 
 /// Contact ID -> raw contact IDs (Android only).
@@ -161,11 +198,37 @@ class DeletePreview {
   });
 }
 
+/// The ledger as [stored], with the fakes of a Create that was cut short
+/// added (see [createdByPending]), if it left a [PendingCreate]; and
+/// whether it did. Only adds to the ledger, and saves nothing.
+///
+/// If the address book reads as empty, as with the contacts provider
+/// missing, the pending record is left for later. (A Create run meanwhile
+/// replaces it, and its fakes then stay unrecorded; it would fail anyway.)
+({Ledger ledger, bool resolved}) _withPendingResolved(
+    ({Ledger ledger, PendingCreate? pending}) stored,
+    List<StoredContact> everyone,
+    Map<String, Set<String>> fingerprintsByContact) {
+  final pending = stored.pending;
+  if (pending == null || everyone.isEmpty) {
+    return (ledger: stored.ledger, resolved: false);
+  }
+  final found = createdByPending(pending,
+      recorded: stored.ledger.entries.keys.toSet(),
+      after: addressBookOf(everyone),
+      fingerprintsByContact: fingerprintsByContact);
+  log("found ${found.length} of ${pending.entries.length} fake(s) from an"
+      " unfinished Create");
+  return (ledger: Ledger({...stored.ledger.entries, ...found}), resolved: true);
+}
+
 /// The address book, the ledger and what Create would add to them.
 class _CreatePlan {
   final AddressBook before;
 
-  /// The ledger, checked against [before].
+  /// The ledger as stored, with the fakes of an unfinished Create (see
+  /// [_withPendingResolved]); and the same checked against [before].
+  final Ledger stored;
   final Ledger ledger;
 
   final int wanted;
@@ -173,7 +236,7 @@ class _CreatePlan {
   /// Each name to create, with its ledger entry.
   final List<(FakeName, LedgerEntry)> toCreate;
 
-  _CreatePlan(this.before, this.ledger, this.wanted, this.toCreate);
+  _CreatePlan(this.before, this.stored, this.ledger, this.wanted, this.toCreate);
 
   int get alreadyExisted => wanted - toCreate.length;
 }
@@ -182,17 +245,21 @@ Future<_CreatePlan> _planCreate(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings) async {
   final everyone = await contacts.getAll();
   final before = addressBookOf(everyone);
+  final fingerprintsByContact = fingerprintsByContactOf(everyone);
   final existingFingerprints = {
-    for (final c in everyone) ...fingerprintsOfContact(c),
+    for (final fingerprints in fingerprintsByContact.values) ...fingerprints,
   };
-  final ledger = (await ledgerStore.load()).prunedTo(allRawIds(before));
+  final stored = _withPendingResolved(
+          await ledgerStore.loadWithPending(), everyone, fingerprintsByContact)
+      .ledger;
+  final ledger = stored.prunedTo(allRawIds(before));
   final wanted = allCombinations(settings.firstNames, settings.lastNames);
   LedgerEntry entryOf(FakeName n) =>
       entryFor(n, settings.phoneTemplate, settings.emailTemplate);
   final toCreate = namesToCreate(wanted, ledger, before,
       existingFingerprints: existingFingerprints,
       fingerprintOf: (n) => entryOf(n).fingerprint!);
-  return _CreatePlan(before, ledger, wanted.length,
+  return _CreatePlan(before, stored, ledger, wanted.length,
       [for (final n in toCreate) (n, entryOf(n))]);
 }
 
@@ -215,15 +282,28 @@ Future<CreatePreview> previewCreate(
 /// [atMost] contacts (the number the user agreed to), creates nothing and
 /// returns null.
 ///
-/// If creating fails, reads the address book again to record what was
-/// created, and throws [StoppedPartway] saying how far it got; unless it
-/// got everything done after all (say, only looking up the new contacts
-/// failed). If only saving the ledger fails, throws [StoppedPartway] with
-/// [StoppedPartway.recorded] false. An error before it starts creating is
-/// thrown as it is.
+/// Creates them [chunkSize] at a time, telling [onProgress] how far it got
+/// after each chunk. Once [stopRequested] says so, it stops after the chunk
+/// it is on ([CreateResult.stopped]).
+///
+/// Before each chunk it saves the ledger, with what it recorded so far and
+/// the chunk it is about to create (a [PendingCreate]): if the app is killed
+/// meanwhile, the next Create, Delete or count finds that chunk's fakes. At
+/// the end it saves the ledger without entries whose raw contacts are gone.
+///
+/// If creating fails, reads the address book again to record what that
+/// chunk created, and throws [StoppedPartway] saying how far it got; unless
+/// the whole chunk was created after all (say, only looking up the new
+/// contacts failed), and then it goes on. If that can't be found out, the
+/// pending record stays for the next Create or Delete. If saving the ledger
+/// fails once something was created, it stops: [StoppedPartway.recorded]
+/// is false. An error before it creates anything is thrown as it is.
 Future<CreateResult?> createFakeContacts(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings,
-    {int? atMost}) async {
+    {int? atMost,
+    int chunkSize = kCreateChunkSize,
+    ProgressCallback? onProgress,
+    bool Function()? stopRequested}) async {
   final plan = await _planCreate(contacts, ledgerStore, settings);
   final toCreate = plan.toCreate;
   if (atMost != null && toCreate.length > atMost) {
@@ -232,7 +312,8 @@ Future<CreateResult?> createFakeContacts(
   }
   if (toCreate.isEmpty) {
     try {
-      // Only drops entries whose raw contacts are gone.
+      // Only drops entries whose raw contacts are gone (and adds those of
+      // an unfinished Create).
       await ledgerStore.save(plan.ledger);
     } catch (e, st) {
       logError("createFakeContacts, saving the ledger", e, st);
@@ -240,67 +321,120 @@ Future<CreateResult?> createFakeContacts(
     return CreateResult(
         created: 0, alreadyExisted: plan.alreadyExisted, untracked: 0);
   }
-  final newContacts = [
-    for (final (name, entry) in toCreate)
-      NewContact(
-        first: name.first,
-        last: name.last,
-        phone: entry.phone!,
-        email: entry.email!,
-      ),
-  ];
-  final entries = [for (final (_, entry) in toCreate) entry];
-  // From here on, contacts may have been created, so an error must not lose
-  // track of them.
-  final List<String> ids;
-  final Map<String, LedgerEntry> created;
-  try {
-    log("createFakeContacts: about to call createAll for ${newContacts.length} contact(s)");
-    ids = await contacts.createAll(newContacts);
-    final after = addressBookOf(await contacts.getAll(ids: ids));
-    created = newlyCreatedRawIds(
-        created: entries,
-        createdContactIds: ids,
-        before: plan.before,
-        after: after);
-  } catch (e, st) {
-    // What was created isn't known: work it out from the address book.
-    final found = await _recordCreatedBeforeFailure(
-        contacts, ledgerStore, plan, entries);
-    if (found != null && found.saved && found.count == entries.length) {
-      // Everything was created and is now recorded; only the step after
-      // failed (e.g. looking up the new contacts).
-      logError("createFakeContacts, recovered", e, st);
-      return CreateResult(
-          created: entries.length,
-          alreadyExisted: plan.alreadyExisted,
-          untracked: 0);
+  final total = toCreate.length;
+  final bChunked = total > chunkSize;
+  // What this Create recorded so far, and every raw contact known to exist:
+  // those from before, and those it created.
+  final created = <String, LedgerEntry>{};
+  final known = allRawIds(plan.before);
+  var done = 0;
+  var untracked = 0;
+  var bStopped = false;
+  if (bChunked) onProgress?.call(0, total);
+  for (var start = 0; start < total; start += chunkSize) {
+    if (start > 0 && (stopRequested?.call() ?? false)) {
+      log("createFakeContacts: stopped after $done of $total");
+      bStopped = true;
+      break;
     }
-    throw StoppedPartway(
-        done: found?.count,
-        planned: entries.length,
-        // (If nothing could be read, [done] is null and this is moot.)
-        recorded: found?.saved ?? true,
-        cause: e,
-        stackTrace: st);
+    final chunk = toCreate.sublist(start, math.min(start + chunkSize, total));
+    final entries = [for (final (_, entry) in chunk) entry];
+    final pending =
+        PendingCreate(maxRawId: maxRawIdOf(known), entries: entries);
+    try {
+      // Only adds to the ledger as stored: entries are dropped at the end.
+      await ledgerStore.save(Ledger({...plan.stored.entries, ...created}),
+          pending: pending);
+    } catch (e, st) {
+      if (done == 0) rethrow; // nothing created yet
+      throw StoppedPartway(
+          done: done,
+          planned: total,
+          recorded: false,
+          cause: e,
+          stackTrace: st);
+    }
+    final newContacts = [
+      for (final (name, entry) in chunk)
+        NewContact(
+          first: name.first,
+          last: name.last,
+          phone: entry.phone!,
+          email: entry.email!,
+        ),
+    ];
+    // From here on, contacts may have been created, so an error must not
+    // lose track of them.
+    Map<String, LedgerEntry> found;
+    try {
+      log("createFakeContacts: about to call createAll for ${newContacts.length} contact(s)");
+      final ids = await contacts.createAll(newContacts);
+      final after = addressBookOf(await contacts.getAll(ids: ids));
+      found = newlyCreatedRawIds(
+          created: entries,
+          createdContactIds: ids,
+          oldRawIds: known,
+          after: after);
+      known.addAll(allRawIds(after));
+      done += ids.length;
+      untracked += math.max(0, ids.length - found.length);
+    } catch (e, st) {
+      // What this chunk created isn't known: work it out from the address
+      // book.
+      final recovered =
+          await _findCreatedAfterFailure(contacts, plan.before, known, pending);
+      if (recovered == null) {
+        // The pending record stays: the next Create or Delete looks again.
+        throw StoppedPartway(
+            done: null, planned: total, cause: e, stackTrace: st);
+      }
+      found = recovered.created;
+      final count = found.values.toSet().length;
+      if (count != entries.length) {
+        var bSaved = true;
+        try {
+          await ledgerStore
+              .save(Ledger({...plan.stored.entries, ...created, ...found}));
+        } catch (e2, st2) {
+          logError("createFakeContacts, recording what was created", e2, st2);
+          bSaved = false;
+        }
+        throw StoppedPartway(
+            done: done + count,
+            planned: total,
+            recorded: bSaved,
+            cause: e,
+            stackTrace: st);
+      }
+      // The whole chunk was created; only the step after it failed (e.g.
+      // looking up the new contacts).
+      logError("createFakeContacts, recovered", e, st);
+      known.addAll(recovered.present);
+      done += count;
+    }
+    created.addAll(found);
+    if (bChunked) onProgress?.call(done, total);
   }
   try {
+    // Drops entries whose raw contacts are gone, and the pending record.
     await ledgerStore.save(Ledger({...plan.ledger.entries, ...created}));
   } catch (e, st) {
     // All were created, but the ledger couldn't be saved (with the storage
     // full); it still holds them while the app stays open.
     throw StoppedPartway(
-        done: ids.length,
-        planned: entries.length,
+        done: done,
+        planned: total,
         recorded: false,
         cause: e,
         stackTrace: st);
   }
-  log("createFakeContacts: nCreated ${ids.length}");
+  log("createFakeContacts: nCreated $done");
   return CreateResult(
-    created: ids.length,
+    created: done,
     alreadyExisted: plan.alreadyExisted,
-    untracked: ids.length - created.length,
+    untracked: untracked,
+    planned: total,
+    stopped: bStopped,
   );
 }
 
@@ -318,47 +452,30 @@ bool _plausibleAfterFailure(AddressBook before, AddressBook after,
   return untouched.isEmpty || untouched.any(present.contains);
 }
 
-/// After creating failed: reads the address book again, records in the
-/// ledger the fakes from [entries] that were created (see
-/// [createdBeforeFailure]), and returns how many, and whether saving them
-/// worked; null if the address book couldn't be read.
-///
-/// Only adds to the ledger as stored. Nothing is dropped for not being
-/// found, in case that read was wrong too: with the contacts provider
-/// missing, reads find no contacts at all rather than failing. Such a read
-/// counts as not read (see [_plausibleAfterFailure]).
-Future<({int count, bool saved})?> _recordCreatedBeforeFailure(
-    ContactsGateway contacts,
-    LedgerStore ledgerStore,
-    _CreatePlan plan,
-    List<LedgerEntry> entries) async {
-  final Map<String, LedgerEntry> created;
+/// After a create call failed: reads the address book again and returns
+/// the fakes of [pending] it created (see [createdByPending]; [known] are
+/// the raw contacts known to exist before the call), and every raw contact
+/// found; null if the address book couldn't be read, or the read can't be
+/// trusted (see [_plausibleAfterFailure]).
+Future<({Map<String, LedgerEntry> created, Set<String> present})?>
+    _findCreatedAfterFailure(ContactsGateway contacts, AddressBook before,
+        Set<String> known, PendingCreate pending) async {
   try {
     final everyone = await contacts.getAll();
     final after = addressBookOf(everyone);
-    if (!_plausibleAfterFailure(plan.before, after)) {
+    if (!_plausibleAfterFailure(before, after)) {
       throw StateError("all contacts that were there before are missing");
     }
-    created = createdBeforeFailure(
-      planned: entries,
-      before: plan.before,
-      after: after,
-      fingerprintsByContact: fingerprintsByContactOf(everyone),
+    return (
+      created: createdByPending(pending,
+          recorded: known,
+          after: after,
+          fingerprintsByContact: fingerprintsByContactOf(everyone)),
+      present: allRawIds(after),
     );
   } catch (e, st) {
     logError("createFakeContacts, finding what was created", e, st);
     return null;
-  }
-  // Each planned fake is recorded with all of its new raw contacts.
-  final count = created.values.toSet().length;
-  if (created.isEmpty) return (count: 0, saved: true);
-  try {
-    final stored = await ledgerStore.load();
-    await ledgerStore.save(Ledger({...stored.entries, ...created}));
-    return (count: count, saved: true);
-  } catch (e, st) {
-    logError("createFakeContacts, recording what was created", e, st);
-    return (count: count, saved: false);
   }
 }
 
@@ -367,28 +484,39 @@ Future<({int count, bool saved})?> _recordCreatedBeforeFailure(
 class _DeleteCheck {
   final DeletePlan plan;
 
-  /// The stored ledger (not pruned), with old name-only entries given the
-  /// details they were checked against, and how many of them got any.
+  /// The stored ledger (not pruned), with the fakes of an unfinished Create
+  /// added (see [_withPendingResolved]) and old name-only entries given the
+  /// details they were checked against; how many of those got any; and
+  /// whether there was an unfinished Create.
   final Ledger withDetails;
   final int detailsFilledIn;
+  final bool pendingResolved;
 
   /// The address book the plan was made from.
   final AddressBook book;
 
-  _DeleteCheck(this.plan, this.withDetails, this.detailsFilledIn, this.book);
+  _DeleteCheck(this.plan, this.withDetails, this.detailsFilledIn,
+      this.pendingResolved, this.book);
+
+  /// Whether [withDetails] has anything the stored ledger doesn't.
+  bool get changedLedger => detailsFilledIn > 0 || pendingResolved;
 }
 
 int _nameOnlyEntries(Ledger ledger) =>
     ledger.entries.values.where((e) => !e.hasDetails).length;
 
-/// Plans a Delete against the [stored] ledger. Old name-only entries get
-/// the details the current [settings] would give a fake with that name; with
-/// no [settings] they stay name-only, so they are never deleted or counted.
-Future<_DeleteCheck> _planDelete(
-    ContactsGateway contacts, Ledger stored, Settings? settings) async {
+/// Plans a Delete against the [stored] ledger (with the fakes of an
+/// unfinished Create added; see [_withPendingResolved]). Old name-only
+/// entries get the details the current [settings] would give a fake with
+/// that name; with no [settings] they stay name-only, so they are never
+/// deleted or counted.
+Future<_DeleteCheck> _planDelete(ContactsGateway contacts,
+    ({Ledger ledger, PendingCreate? pending}) loaded, Settings? settings) async {
   final everyone = await contacts.getAll();
   final book = addressBookOf(everyone);
   final fingerprintsByContact = fingerprintsByContactOf(everyone);
+  final (ledger: stored, :resolved) =
+      _withPendingResolved(loaded, everyone, fingerprintsByContact);
   final nameOnly = _nameOnlyEntries(stored);
   final current = (nameOnly == 0 || settings == null)
       ? const <String, LedgerEntry>{}
@@ -400,8 +528,8 @@ Future<_DeleteCheck> _planDelete(
   final withDetails = stored.withDetailsForNameOnly((name) => current[name]);
   final plan = planDelete(
       withDetails.prunedTo(allRawIds(book)), book, fingerprintsByContact);
-  return _DeleteCheck(
-      plan, withDetails, nameOnly - _nameOnlyEntries(withDetails), book);
+  return _DeleteCheck(plan, withDetails,
+      nameOnly - _nameOnlyEntries(withDetails), resolved, book);
 }
 
 DeletePreview _previewOf(DeletePlan plan) => DeletePreview(
@@ -412,17 +540,19 @@ DeletePreview _previewOf(DeletePlan plan) => DeletePreview(
 
 /// Works out what [deleteFakeContacts] would do with the same arguments.
 ///
-/// Deletes nothing, and changes the ledger in one way only, the same way
-/// Delete does: old name-only entries are saved with the phone and email
+/// Deletes nothing, and changes the ledger in two ways only, the same ways
+/// Delete does. Old name-only entries are saved with the phone and email
 /// they were checked against. That happens even if the user then cancels or
 /// there is nothing to delete, so they are never checked again against
 /// different settings. (Otherwise, after the templates were changed to give
 /// exactly a real contact's details, Delete would offer to delete it.) A
-/// wrong guess only means that contact is always left alone.
+/// wrong guess only means that contact is always left alone. And the fakes
+/// of a Create that was cut short are recorded (see [createdByPending]).
 Future<DeletePreview> previewDelete(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings) async {
-  final check = await _planDelete(contacts, await ledgerStore.load(), settings);
-  if (check.detailsFilledIn > 0) {
+  final check = await _planDelete(
+      contacts, await ledgerStore.loadWithPending(), settings);
+  if (check.changedLedger) {
     try {
       await ledgerStore.save(check.withDetails);
     } catch (e, st) {
@@ -442,15 +572,18 @@ Future<DeletePreview> previewDelete(
 /// see [planDelete]), and old name-only entries (no guessing from the
 /// settings here, so the count doesn't depend on what is being typed).
 ///
+/// The fakes of a Create that was cut short are counted too (see
+/// [createdByPending]), but only recorded by the next Create or Delete.
+///
 /// Changes nothing, not even the ledger, and doesn't read the address book
-/// if the ledger is empty.
+/// if the ledger is empty (with no Create cut short).
 Future<DeletePreview> countFakeContacts(
     ContactsGateway contacts, LedgerStore ledgerStore) async {
-  final stored = await ledgerStore.load();
-  if (stored.isEmpty) {
+  final loaded = await ledgerStore.loadWithPending();
+  if (loaded.ledger.isEmpty && loaded.pending == null) {
     return const DeletePreview(toDelete: 0, skippedMerged: 0, skippedChanged: 0);
   }
-  return _previewOf((await _planDelete(contacts, stored, null)).plan);
+  return _previewOf((await _planDelete(contacts, loaded, null)).plan);
 }
 
 /// Deletes the fake contacts this app created and recorded in the ledger.
@@ -465,48 +598,80 @@ Future<DeletePreview> countFakeContacts(
 /// more than [atMost] (the number the user agreed to), deletes nothing and
 /// returns null.
 ///
+/// Deletes them [chunkSize] contacts at a time, telling [onProgress] how
+/// far it got after each chunk. Once [stopRequested] says so, it stops
+/// after the chunk it is on ([DeleteResult.stopped]).
+///
 /// If deleting fails, reads the address book again and throws
-/// [StoppedPartway] saying how far it got, unless all were deleted after
-/// all. If only saving the ledger fails, that is logged: all were deleted.
+/// [StoppedPartway] saying how far it got, unless all of that chunk were
+/// deleted after all, and then it goes on. If only saving the ledger
+/// fails, that is logged: entries whose raw contacts are gone do no harm.
 /// An error before it starts deleting is thrown as it is.
 Future<DeleteResult?> deleteFakeContacts(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings,
-    {int? atMost}) async {
-  final check = await _planDelete(contacts, await ledgerStore.load(), settings);
+    {int? atMost,
+    int chunkSize = kDeleteChunkSize,
+    ProgressCallback? onProgress,
+    bool Function()? stopRequested}) async {
+  final check = await _planDelete(
+      contacts, await ledgerStore.loadWithPending(), settings);
   final plan = check.plan;
-  if (atMost != null && plan.rawContactsDeleted > atMost) {
-    log("deleteFakeContacts: ${plan.rawContactsDeleted} to delete, more than $atMost");
+  final total = plan.rawContactsDeleted;
+  if (atMost != null && total > atMost) {
+    log("deleteFakeContacts: $total to delete, more than $atMost");
     return null;
   }
-  final result = DeleteResult(
-    deleted: plan.rawContactsDeleted,
-    skippedMerged: plan.skippedMerged,
-    skippedChanged: plan.skippedChanged,
-  );
-  try {
-    log("deleteFakeContacts: about to call deleteAll for ${plan.contactIdsToDelete.length} contact(s)");
-    await contacts.deleteAll(plan.contactIdsToDelete);
-  } catch (e, st) {
-    final done = await _countDeletedBeforeFailure(contacts, check);
-    if (done != plan.rawContactsDeleted) {
-      throw StoppedPartway(
-          done: done,
-          planned: plan.rawContactsDeleted,
-          cause: e,
-          stackTrace: st);
+  final ids = plan.contactIdsToDelete;
+  final bChunked = ids.length > chunkSize;
+  // Each contact to delete is made of tracked raw contacts only.
+  int rawContactsOf(Iterable<String> contactIds) =>
+      contactIds.fold(0, (n, id) => n + check.book[id]!.length);
+  var done = 0;
+  var deletedUpTo = 0; // contacts in [ids]
+  if (bChunked) onProgress?.call(0, total);
+  for (var start = 0; start < ids.length; start += chunkSize) {
+    if (start > 0 && (stopRequested?.call() ?? false)) {
+      log("deleteFakeContacts: stopped after $done of $total");
+      break;
     }
-    // All were deleted before it failed.
-    logError("deleteFakeContacts, recovered", e, st);
+    final chunk = ids.sublist(start, math.min(start + chunkSize, ids.length));
+    final chunkRaws = rawContactsOf(chunk);
+    try {
+      log("deleteFakeContacts: about to call deleteAll for ${chunk.length} contact(s)");
+      await contacts.deleteAll(chunk);
+    } catch (e, st) {
+      final gone = await _countDeletedBeforeFailure(contacts, check);
+      if (gone == null || gone < done + chunkRaws) {
+        throw StoppedPartway(
+            done: gone, planned: total, cause: e, stackTrace: st);
+      }
+      // All of them were deleted before it failed.
+      logError("deleteFakeContacts, recovered", e, st);
+    }
+    done += chunkRaws;
+    deletedUpTo = start + chunk.length;
+    if (bChunked) onProgress?.call(done, total);
   }
+  final bStopped = deletedUpTo < ids.length;
   try {
-    await ledgerStore.save(plan.remaining);
+    // The entries of those it left alone, or didn't get to.
+    await ledgerStore.save(Ledger({
+      ...plan.remaining.entries,
+      for (final contactId in ids.skip(deletedUpTo))
+        for (final raw in check.book[contactId]!)
+          raw: check.withDetails.entries[raw]!,
+    }));
   } catch (e, st) {
-    // All were deleted. No harm done: entries whose raw contacts are gone
-    // are dropped when next read.
     logError("deleteFakeContacts, saving the ledger", e, st);
   }
-  log("deleteFakeContacts: nDeleted ${plan.rawContactsDeleted}");
-  return result;
+  log("deleteFakeContacts: nDeleted $done");
+  return DeleteResult(
+    deleted: done,
+    skippedMerged: plan.skippedMerged,
+    skippedChanged: plan.skippedChanged,
+    planned: total,
+    stopped: bStopped,
+  );
 }
 
 /// After deleting failed: reads the address book again, and returns how

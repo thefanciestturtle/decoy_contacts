@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'contact_actions.dart';
 import 'contacts_gateway.dart';
 import 'flutter_contacts_gateway.dart';
 import 'home_page.dart';
@@ -14,6 +15,8 @@ class MyApp extends StatelessWidget {
     super.key,
     this.contacts = const FlutterContactsGateway(),
     this.ledgerStore = const LedgerStore(),
+    this.createChunkSize = kCreateChunkSize,
+    this.deleteChunkSize = kDeleteChunkSize,
   });
 
   /// The address book; tests pass an in-memory one.
@@ -21,6 +24,11 @@ class MyApp extends StatelessWidget {
 
   /// Where the ledger is kept; tests can pass one that fails.
   final LedgerStore ledgerStore;
+
+  /// How many contacts Create and Delete handle per call; tests use small
+  /// ones.
+  final int createChunkSize;
+  final int deleteChunkSize;
 
   // This widget is the root of your application.
   @override
@@ -32,7 +40,11 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
       ),
       home: MyHomePage(
-          title: 'Fake Contacts', contacts: contacts, ledgerStore: ledgerStore),
+          title: 'Fake Contacts',
+          contacts: contacts,
+          ledgerStore: ledgerStore,
+          createChunkSize: createChunkSize,
+          deleteChunkSize: deleteChunkSize),
     );
   }
 }

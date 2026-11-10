@@ -6,8 +6,35 @@ import 'contact_actions.dart';
 /// More fake contacts than this get a warning in the preview.
 const int kManyFakeContacts = 10000;
 
-const String kPermissionDeniedMessage =
-    "Permission to access contacts was denied.";
+/// A message shown after Create or Delete, or instead of them.
+class ResultMessage {
+  final String text;
+
+  /// Not a plain success: an error, a result that is only partial (it
+  /// failed or was stopped partway), or a note about fake contacts left
+  /// alone or not recorded. Such a message is longer, or calls for action,
+  /// so it shows longer and can be closed.
+  final bool needsAttention;
+
+  const ResultMessage(this.text) : needsAttention = false;
+  const ResultMessage.attention(this.text) : needsAttention = true;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ResultMessage &&
+      other.text == text &&
+      other.needsAttention == needsAttention;
+
+  @override
+  int get hashCode => Object.hash(text, needsAttention);
+
+  @override
+  String toString() =>
+      'ResultMessage(${needsAttention ? 'attention: ' : ''}$text)';
+}
+
+const ResultMessage kPermissionDeniedMessage =
+    ResultMessage("Permission to access contacts was denied.");
 
 /// The dialog when Android no longer asks for the contacts permission
 /// (permanently denied), so it can only be allowed in the app's settings.
@@ -22,12 +49,13 @@ Confirmation permissionSettingsConfirmation(String verb) => (
     );
 
 /// Shown if the app's settings couldn't be opened from that dialog.
-const String kOpenSettingsFailedMessage = "Couldn't open Settings.";
+const ResultMessage kOpenSettingsFailedMessage =
+    ResultMessage.attention("Couldn't open Settings.");
 
 /// Shown if asking for the contacts permission failed (rather than being
 /// answered), e.g. while the app's screen was being recreated.
-const String kPermissionRequestFailedMessage =
-    "Couldn't ask for permission to access contacts. Try again.";
+const ResultMessage kPermissionRequestFailedMessage = ResultMessage.attention(
+    "Couldn't ask for permission to access contacts. Try again.");
 
 // The error messages below are plain sentences; the error itself goes to
 // the log (see logError). The app can't tell a passing failure from a
@@ -38,7 +66,8 @@ const String kPermissionRequestFailedMessage =
 
 /// Shown if reading the address book failed before Create or Delete
 /// changed anything.
-const String kReadFailedMessage = "Couldn't read your contacts. Try again.";
+const ResultMessage kReadFailedMessage =
+    ResultMessage.attention("Couldn't read your contacts. Try again.");
 
 const String _kStorageFull = "your phone's storage is full";
 
@@ -49,9 +78,15 @@ String _doneOf(int done, int planned) =>
 
 /// Shown if Create failed: how far it got if it stopped partway (see
 /// [StoppedPartway]).
-String createFailedMessage(Object error) => switch (error) {
-      StoppedPartway(done: null) => "Couldn't finish creating fake contacts."
-          " Some may have been added that this app can't delete.",
+ResultMessage createFailedMessage(Object error) =>
+    ResultMessage.attention(_createFailedText(error));
+
+String _createFailedText(Object error) => switch (error) {
+      // What the last chunk created is still pending in the ledger, and
+      // the next Create or Delete records it.
+      StoppedPartway(done: null) => storageFull(error)
+          ? "Couldn't finish creating fake contacts: $_kStorageFull."
+          : "Couldn't finish creating fake contacts. Try again.",
       // Delete still finds them while the app stays open.
       StoppedPartway(:final int done, :final planned, recorded: false) =>
         "Created ${_doneOf(done, planned)}, but couldn't save"
@@ -70,7 +105,10 @@ String createFailedMessage(Object error) => switch (error) {
 
 /// Shown if Delete failed: how far it got if it stopped partway (see
 /// [StoppedPartway]).
-String deleteFailedMessage(Object error) => switch (error) {
+ResultMessage deleteFailedMessage(Object error) =>
+    ResultMessage.attention(_deleteFailedText(error));
+
+String _deleteFailedText(Object error) => switch (error) {
       StoppedPartway(done: null) => storageFull(error)
           ? "Couldn't finish deleting fake contacts: $_kStorageFull."
           : "Couldn't finish deleting fake contacts. Try again.",
@@ -87,8 +125,8 @@ String deleteFailedMessage(Object error) => switch (error) {
 
 /// Shown when, after the user said yes, Create or Delete would do more than
 /// the dialog said, because the address book changed while it was open.
-const String kChangedMeanwhileMessage =
-    "Your contacts changed meanwhile, so nothing was done. Try again.";
+const ResultMessage kChangedMeanwhileMessage = ResultMessage.attention(
+    "Your contacts changed meanwhile, so nothing was done. Try again.");
 
 /// What a dialog that asks before Create or Delete says. [action] is the
 /// label of the button that goes ahead.
@@ -238,24 +276,32 @@ String statusMessage(DeletePreview found) {
 /// is what the settings Create used make (see previewSettings), to say
 /// which name list is empty, as the preview does. (Create is disabled while
 /// a name list is empty, so that case is only a fallback.)
-String nothingToCreateMessage(CreatePreview preview, SettingsPreview settings) {
+ResultMessage nothingToCreateMessage(
+    CreatePreview preview, SettingsPreview settings) {
   final existed = preview.alreadyExisted;
   if (existed == 0) {
     // Create makes every combination that doesn't exist yet, so making none
     // with none existing means a name list is empty.
-    return "Nothing to create. ${enterNamesHint(settings)}";
+    return ResultMessage("Nothing to create. ${enterNamesHint(settings)}");
   }
-  return "Nothing to create. ${_fakeContacts(existed)}"
-      " ${existed == 1 ? "already exists" : "already exist"}.";
+  return ResultMessage("Nothing to create. ${_fakeContacts(existed)}"
+      " ${existed == 1 ? "already exists" : "already exist"}.");
 }
 
 /// Shown instead of the dialog when Delete has nothing to delete.
-String nothingToDeleteMessage(DeletePreview preview) =>
-    "No fake contacts to delete."
-    "${_leftAlone(preview.skippedMerged, preview.skippedChanged, done: true)}";
+ResultMessage nothingToDeleteMessage(DeletePreview preview) {
+  final skipped = preview.skippedMerged + preview.skippedChanged;
+  final text = "No fake contacts to delete."
+      "${_leftAlone(preview.skippedMerged, preview.skippedChanged, done: true)}";
+  return skipped > 0 ? ResultMessage.attention(text) : ResultMessage(text);
+}
 
-String createdMessage(CreateResult result) {
-  var sMessage = "Created ${_fakeContacts(result.created)}.";
+/// What Create did; if the user stopped it, how far it got.
+ResultMessage createdMessage(CreateResult result) {
+  var sMessage = result.stopped
+      ? "Stopped after creating ${result.created} of"
+          " ${_fakeContacts(result.planned)}."
+      : "Created ${_fakeContacts(result.created)}.";
   if (result.alreadyExisted > 0) {
     sMessage += " ${result.alreadyExisted} already existed.";
   }
@@ -263,9 +309,25 @@ String createdMessage(CreateResult result) {
     sMessage += " Warning: ${result.untracked}"
         " could not be recorded and must be deleted by hand.";
   }
-  return sMessage;
+  return result.stopped || result.untracked > 0
+      ? ResultMessage.attention(sMessage)
+      : ResultMessage(sMessage);
 }
 
-String deletedMessage(DeleteResult result) =>
-    "Deleted ${_fakeContacts(result.deleted)}."
-    "${_leftAlone(result.skippedMerged, result.skippedChanged, done: true)}";
+/// What Delete did; if the user stopped it, how far it got.
+ResultMessage deletedMessage(DeleteResult result) {
+  final text = (result.stopped
+          ? "Stopped after deleting ${result.deleted} of"
+              " ${_fakeContacts(result.planned)}."
+          : "Deleted ${_fakeContacts(result.deleted)}.") +
+      _leftAlone(result.skippedMerged, result.skippedChanged, done: true);
+  return result.stopped || result.skippedMerged + result.skippedChanged > 0
+      ? ResultMessage.attention(text)
+      : ResultMessage(text);
+}
+
+/// How far a Create or Delete of more than one chunk has got, shown under
+/// the buttons while it runs, e.g. "Created 312 of 756".
+String progressText({required bool creating, required int done,
+        required int total}) =>
+    "${creating ? "Created" : "Deleted"} $done of $total";

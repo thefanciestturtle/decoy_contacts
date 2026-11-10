@@ -1,6 +1,8 @@
 // Create and Delete when saving the ledger fails, e.g. with the phone's
 // storage full. (The flow tests can't make saving fail.)
 
+import 'dart:async';
+
 import 'package:fake_contacts/app_log.dart';
 import 'package:fake_contacts/contact_actions.dart';
 import 'package:fake_contacts/contacts_gateway.dart';
@@ -50,6 +52,16 @@ class _EmptyAfterCreateFails extends InMemoryContactsGateway {
       _broken ? [] : await super.getAll(ids: ids);
 }
 
+/// While [empty] is set, the address book reads as empty, as when the
+/// contacts provider is missing.
+class _ReadsEmpty extends InMemoryContactsGateway {
+  bool empty = false;
+
+  @override
+  Future<List<StoredContact>> getAll({List<String>? ids}) async =>
+      empty ? [] : await super.getAll(ids: ids);
+}
+
 void main() {
   late InMemoryContactsGateway book;
   late List<String> logged;
@@ -65,10 +77,21 @@ void main() {
 
   Future<Ledger> stored() => const LedgerStore().load();
 
-  test("Create: if the ledger can't be saved, it says they aren't recorded, "
-      "without reading the address book again; Delete can still remove "
-      "them meanwhile", () async {
+  test("Create: if the ledger can't be saved before it starts, it creates "
+      'nothing', () async {
     final store = FailingLedgerStore(1);
+    final error = await createFakeContacts(book, store, kSettings)
+        .then<Object?>((_) => null, onError: (Object e) => e);
+
+    expect(error, isA<LedgerNotSaved>());
+    expect(storageFull(error!), isTrue);
+    expect(book.createAllCalls, isEmpty);
+  });
+
+  test("Create: if the ledger can't be saved at the end, it says they "
+      "aren't recorded, without reading the address book again; Delete can "
+      'still remove them meanwhile', () async {
+    final store = FailingLedgerStore(1, succeeding: 1);
     final error = await createFakeContacts(book, store, kSettings)
         .then<Object?>((_) => null, onError: (Object e) => e);
 
@@ -114,7 +137,7 @@ void main() {
     book.createAllError = Exception('provider gone');
     book.createAllStopsAfter = 4;
     final error = await createFakeContacts(
-            book, FailingLedgerStore(1), kSettings)
+            book, FailingLedgerStore(1, succeeding: 1), kSettings)
         .then<Object?>((_) => null, onError: (Object e) => e);
 
     final stopped = error! as StoppedPartway;
@@ -175,7 +198,7 @@ void main() {
     book.createAllError = Exception('database or disk is full');
     book.createAllStopsAfter = 2;
     final error = await createFakeContacts(
-            book, FailingLedgerStore(1), kSettings)
+            book, FailingLedgerStore(1, succeeding: 1), kSettings)
         .then<Object?>((_) => null, onError: (Object e) => e);
 
     final stopped = error! as StoppedPartway;
@@ -227,5 +250,287 @@ void main() {
     expect(book.all, isEmpty);
     expect(logged.single, contains('deleteFakeContacts, saving the ledger'));
     expect(logged.single, contains('LedgerNotSaved'));
+  });
+
+  group('in chunks (U8)', () {
+    Future<({Ledger ledger, PendingCreate? pending})> storedWithPending() =>
+        const LedgerStore().loadWithPending();
+
+    test('Create: one call per chunk, with progress before and after each',
+        () async {
+      final progress = <(int, int)>[];
+      final result = await createFakeContacts(
+          book, const LedgerStore(), kSettings,
+          chunkSize: 3, onProgress: (done, total) => progress.add((done, total)));
+
+      expect(result!.created, 4);
+      expect(result.planned, 4);
+      expect(result.stopped, isFalse);
+      expect([for (final c in book.createAllCalls) c.length], [3, 1]);
+      expect(progress, [(0, 4), (3, 4), (4, 4)]);
+      final stored = await storedWithPending();
+      expect(stored.ledger.length, 4);
+      expect(stored.pending, isNull);
+    });
+
+    test('Create: no progress when it fits in one chunk', () async {
+      final progress = <(int, int)>[];
+      await createFakeContacts(book, const LedgerStore(), kSettings,
+          chunkSize: 4, onProgress: (done, total) => progress.add((done, total)));
+
+      expect(book.createAllCalls, hasLength(1));
+      expect(progress, isEmpty);
+    });
+
+    test('Create: before each call, the ledger holds what was created so far '
+        'and the chunk about to be created', () async {
+      final seen = <({Ledger ledger, PendingCreate? pending})>[];
+      book.beforeCreateAll = (_) async => seen.add(await storedWithPending());
+      await createFakeContacts(book, const LedgerStore(), kSettings,
+          chunkSize: 2);
+
+      expect([for (final s in seen) s.ledger.length], [0, 2]);
+      expect([for (final s in seen) s.pending!.entries.map((e) => e.name)], [
+        ['Zoe Zen', 'Zach Zen'],
+        ['Zoe Zima', 'Zach Zima'],
+      ]);
+      // The highest raw ID before each call: none, then the first chunk's.
+      expect(seen[0].pending!.maxRawId, isNull);
+      expect(seen[1].pending!.maxRawId,
+          maxRawIdOf([for (final c in book.all.take(2)) ...c.rawContactIds]));
+    });
+
+    test('Create: Stop stops after the chunk it is on, with the ledger saved',
+        () async {
+      var bStop = false;
+      final result = await createFakeContacts(
+          book, const LedgerStore(), kSettings,
+          chunkSize: 1,
+          onProgress: (done, _) => bStop = done == 2,
+          stopRequested: () => bStop);
+
+      expect(result!.stopped, isTrue);
+      expect((result.created, result.planned), (2, 4));
+      expect(book.createAllCalls, hasLength(2));
+      final stored = await storedWithPending();
+      expect(stored.ledger.length, 2);
+      expect(stored.pending, isNull);
+    });
+
+    test("Create: Stop isn't asked about before the first chunk",
+        () async {
+      final result = await createFakeContacts(
+          book, const LedgerStore(), kSettings,
+          chunkSize: 2, stopRequested: () => true);
+
+      expect(result!.stopped, isTrue);
+      expect(result.created, 2);
+    });
+
+    test('Create: a chunk that stops partway: only that chunk is looked for',
+        () async {
+      book.beforeCreateAll = (call) async {
+        if (call == 1) {
+          book.createAllError = Exception('provider gone');
+          book.createAllStopsAfter = 1;
+        }
+      };
+      final error = await createFakeContacts(
+              book, const LedgerStore(), kSettings, chunkSize: 2)
+          .then<Object?>((_) => null, onError: (Object e) => e);
+
+      final stopped = error! as StoppedPartway;
+      expect((stopped.done, stopped.planned, stopped.recorded), (3, 4, true));
+      final stored = await storedWithPending();
+      expect(stored.ledger.length, 3);
+      expect(stored.pending, isNull);
+      expect(book.all, hasLength(3));
+    });
+
+    test('Create: a chunk that was all created before its call failed: it '
+        'goes on', () async {
+      book.beforeCreateAll = (call) async {
+        book.createAllError = call == 0 ? Exception('provider gone') : null;
+        book.createAllStopsAfter = call == 0 ? 2 : null;
+      };
+      final progress = <int>[];
+      final result = await createFakeContacts(
+          book, const LedgerStore(), kSettings,
+          chunkSize: 2, onProgress: (done, _) => progress.add(done));
+
+      expect(result!.created, 4);
+      expect(progress, [0, 2, 4]);
+      expect((await storedWithPending()).ledger.length, 4);
+      expect(logged.single, contains('recovered: Exception: provider gone'));
+    });
+
+    test("Create: if the ledger can't be saved before a later chunk, it stops "
+        'there', () async {
+      final store = FailingLedgerStore(1, succeeding: 1);
+      final error = await createFakeContacts(book, store, kSettings,
+              chunkSize: 2)
+          .then<Object?>((_) => null, onError: (Object e) => e);
+
+      final stopped = error! as StoppedPartway;
+      expect((stopped.done, stopped.planned, stopped.recorded), (2, 4, false));
+      expect(storageFull(stopped), isTrue);
+      expect(book.createAllCalls, hasLength(1));
+    });
+
+    test('Create: killed during a call, the next count, Delete and Create '
+        'find what it made', () async {
+      final real = book.add('Alice Example', phones: ['+15555550103']);
+      // The second call creates its contacts, then the app is gone.
+      book.afterCreateAll =
+          (call) => call == 1 ? Completer<void>().future : Future.value();
+      unawaited(createFakeContacts(book, const LedgerStore(), kSettings,
+          chunkSize: 2));
+      await pumpEventQueue();
+      expect(book.all, hasLength(5));
+      final killed = await storedWithPending();
+      expect(killed.ledger.length, 2);
+      expect(killed.pending!.entries, hasLength(2));
+
+      // Counting finds all four, but changes nothing.
+      final count = await countFakeContacts(book, const LedgerStore());
+      expect(count.toDelete, 4);
+      expect((await storedWithPending()).pending, isNotNull);
+
+      // So does a second Create: nothing left to create.
+      book.afterCreateAll = null;
+      final created =
+          await createFakeContacts(book, const LedgerStore(), kSettings);
+      expect((created!.created, created.alreadyExisted), (0, 4));
+      final stored = await storedWithPending();
+      expect(stored.ledger.length, 4);
+      expect(stored.pending, isNull);
+
+      final deleted =
+          await deleteFakeContacts(book, const LedgerStore(), kSettings);
+      expect(deleted!.deleted, 4);
+      expect(book.all.map((c) => c.id), [real]);
+    });
+
+    test("Delete's preview records the fakes of a Create that was killed",
+        () async {
+      book.afterCreateAll =
+          (call) => call == 0 ? Completer<void>().future : Future.value();
+      unawaited(createFakeContacts(book, const LedgerStore(), kSettings,
+          chunkSize: 4));
+      await pumpEventQueue();
+      expect((await storedWithPending()).ledger.isEmpty, isTrue);
+
+      // An empty ledger with a pending record is still counted.
+      expect(
+          (await countFakeContacts(book, const LedgerStore())).toDelete, 4);
+      final preview = await previewDelete(book, const LedgerStore(), kSettings);
+      expect(preview.toDelete, 4);
+      final stored = await storedWithPending();
+      expect(stored.ledger.length, 4);
+      expect(stored.pending, isNull);
+    });
+
+    test('a pending Create is kept while the address book reads as empty',
+        () async {
+      final broken = _ReadsEmpty();
+      broken.afterCreateAll =
+          (call) => call == 0 ? Completer<void>().future : Future.value();
+      unawaited(createFakeContacts(broken, const LedgerStore(), kSettings));
+      await pumpEventQueue();
+      final killed = await storedWithPending();
+
+      // As with the contacts provider missing: nothing is found, and nothing
+      // is given up.
+      broken.empty = true;
+      final none = await previewDelete(broken, const LedgerStore(), kSettings);
+      expect(none.toDelete, 0);
+      final kept = await storedWithPending();
+      expect(kept.pending!.entries, killed.pending!.entries);
+
+      broken.empty = false;
+      final preview =
+          await previewDelete(broken, const LedgerStore(), kSettings);
+      expect(preview.toDelete, 4);
+      expect((await storedWithPending()).pending, isNull);
+    });
+
+    test('killed during the first call while the address book reads as '
+        'empty: the ledger on disk still holds what was recorded', () async {
+      final broken = _ReadsEmpty();
+      await createFakeContacts(broken, const LedgerStore(), kSettings);
+      final before = await storedWithPending();
+      expect(before.ledger.length, 4);
+
+      broken.empty = true;
+      broken.afterCreateAll =
+          (call) => call == 1 ? Completer<void>().future : Future.value();
+      unawaited(createFakeContacts(broken, const LedgerStore(), kSettings));
+      await pumpEventQueue();
+      final killed = await storedWithPending();
+      expect(killed.pending, isNotNull);
+      expect(killed.ledger.entries, before.ledger.entries);
+    });
+
+    test('Delete: one call per chunk, with progress, and Stop keeps the rest '
+        'in the ledger', () async {
+      await createFakeContacts(book, const LedgerStore(), kSettings);
+      final progress = <(int, int)>[];
+      var bStop = false;
+      final result = await deleteFakeContacts(
+          book, const LedgerStore(), kSettings,
+          chunkSize: 1,
+          onProgress: (done, total) {
+            progress.add((done, total));
+            bStop = done == 3;
+          },
+          stopRequested: () => bStop);
+
+      expect(result!.stopped, isTrue);
+      expect((result.deleted, result.planned), (3, 4));
+      expect(progress, [(0, 4), (1, 4), (2, 4), (3, 4)]);
+      expect([for (final c in book.deleteAllCalls) c.length], [1, 1, 1]);
+      expect(book.all, hasLength(1));
+      final ledger = await const LedgerStore().load();
+      expect(ledger.entries.keys, book.all.single.rawContactIds);
+
+      final rest = await deleteFakeContacts(book, const LedgerStore(), kSettings,
+          chunkSize: 1);
+      expect((rest!.deleted, rest.stopped), (1, false));
+      expect(book.all, isEmpty);
+    });
+
+    test('Delete: a chunk that fails says how many it deleted in all',
+        () async {
+      await createFakeContacts(book, const LedgerStore(), kSettings);
+      book.beforeDeleteAll = (call) async {
+        if (call == 1) {
+          book.deleteAllError = Exception('provider gone');
+          book.deleteAllStopsAfter = 1;
+        }
+      };
+      final error = await deleteFakeContacts(
+              book, const LedgerStore(), kSettings, chunkSize: 2)
+          .then<Object?>((_) => null, onError: (Object e) => e);
+
+      final stopped = error! as StoppedPartway;
+      expect((stopped.done, stopped.planned), (3, 4));
+      expect(book.all, hasLength(1));
+    });
+
+    test('Delete: a chunk all deleted before its call failed: it goes on',
+        () async {
+      await createFakeContacts(book, const LedgerStore(), kSettings);
+      book.beforeDeleteAll = (call) async {
+        book.deleteAllError = call == 0 ? Exception('provider gone') : null;
+        book.deleteAllStopsAfter = call == 0 ? 2 : null;
+      };
+      final result = await deleteFakeContacts(
+          book, const LedgerStore(), kSettings,
+          chunkSize: 2);
+
+      expect((result!.deleted, result.stopped), (4, false));
+      expect(book.all, isEmpty);
+      expect((await const LedgerStore().load()).isEmpty, isTrue);
+    });
   });
 }

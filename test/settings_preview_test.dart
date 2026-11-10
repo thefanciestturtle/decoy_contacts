@@ -87,7 +87,8 @@ void main() {
         expect(result!.created, previewSettings(s).combinations);
 
         final sample = previewSettings(s).sample!;
-        final first = book.createAllCalls.single.first;
+        // The first call of the first chunk.
+        final first = book.createAllCalls.first.first;
         expect(
             (
               name: '${first.first} ${first.last}',

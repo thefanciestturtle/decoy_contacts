@@ -16,6 +16,10 @@ const String kDefaultEmailTemplate = 'FIRST.LAST@example.com';
 /// SharedPreferences key holding the ledger of raw contacts this app created.
 const String kLedgerPrefsKey = 'fakeRawContactLedgerV1';
 
+/// Where in the ledger's JSON a [PendingCreate] is kept. Not a number, so
+/// never a raw contact ID; older versions skip it (it has no name).
+const String kPendingCreateKey = 'pendingCreate';
+
 /// Splits a comma-separated list of names, trimming whitespace and dropping
 /// empty entries and duplicates (keeping first-seen order).
 List<String> parseNames(String csv) {
@@ -171,24 +175,35 @@ class Ledger {
   bool get isEmpty => entries.isEmpty;
   int get length => entries.length;
 
-  String encode() =>
-      jsonEncode({for (final e in entries.entries) e.key: e.value.toJson()});
+  /// The ledger as JSON, with [pending] (see [PendingCreate]) if given.
+  String encode({PendingCreate? pending}) => jsonEncode({
+        for (final e in entries.entries) e.key: e.value.toJson(),
+        if (pending != null) kPendingCreateKey: pending.toJson(),
+      });
 
   /// Reads both the current format and the old one, which mapped each raw
   /// contact ID straight to a name.
-  static Ledger decode(String? json) {
-    if (json == null || json.isEmpty) return Ledger();
+  static Ledger decode(String? json) => decodeWithPending(json).ledger;
+
+  /// [decode], and the [PendingCreate] saved with it, if any.
+  static ({Ledger ledger, PendingCreate? pending}) decodeWithPending(
+      String? json) {
+    if (json == null || json.isEmpty) return (ledger: Ledger(), pending: null);
     try {
       final map = jsonDecode(json);
-      if (map is! Map) return Ledger();
+      if (map is! Map) return (ledger: Ledger(), pending: null);
       final entries = <String, LedgerEntry>{};
       for (final e in map.entries) {
+        if (e.key == kPendingCreateKey) continue;
         final entry = LedgerEntry.fromJson(e.value);
         if (e.key is String && entry != null) entries[e.key as String] = entry;
       }
-      return Ledger(entries);
+      return (
+        ledger: Ledger(entries),
+        pending: PendingCreate.fromJson(map[kPendingCreateKey]),
+      );
     } on FormatException {
-      return Ledger();
+      return (ledger: Ledger(), pending: null);
     }
   }
 
@@ -269,18 +284,17 @@ List<FakeName> namesToCreate(
 /// [created] are the entries for the contacts passed to the create call, and
 /// [createdContactIds] the contact IDs it returned, in the same order. Android
 /// may have merged a new raw contact into an existing contact, so only raw IDs
-/// that weren't in [before] are recorded.
+/// that aren't in [oldRawIds] (those that existed before) are recorded.
 Map<String, LedgerEntry> newlyCreatedRawIds({
   required List<LedgerEntry> created,
   required List<String> createdContactIds,
-  required AddressBook before,
+  required Set<String> oldRawIds,
   required AddressBook after,
 }) {
-  final old = allRawIds(before);
   final result = <String, LedgerEntry>{};
   for (var i = 0; i < created.length && i < createdContactIds.length; i++) {
     for (final raw in after[createdContactIds[i]] ?? const <String>[]) {
-      if (!old.contains(raw) && !result.containsKey(raw)) {
+      if (!oldRawIds.contains(raw) && !result.containsKey(raw)) {
         result[raw] = created[i];
       }
     }
@@ -293,10 +307,10 @@ Map<String, LedgerEntry> newlyCreatedRawIds({
 ///
 /// [planned] are the entries for the contacts passed to the create call.
 /// A contact in [after] (with its fingerprints in [fingerprintsByContact])
-/// that holds raw contacts which weren't in [before] is taken for the fake
-/// of a planned entry if it has exactly that entry's name, phone and email
-/// (see [fingerprintsOf]); its new raw contacts are recorded with that
-/// entry, as [newlyCreatedRawIds] does.
+/// that holds raw contacts which aren't in [oldRawIds] (those that existed
+/// before) is taken for the fake of a planned entry if it has exactly that
+/// entry's name, phone and email (see [fingerprintsOf]); its new raw
+/// contacts are recorded with that entry, as [newlyCreatedRawIds] does.
 ///
 /// It is left out if it matches several planned entries, or if another new
 /// contact matches the same entry (say, a copy synced from another phone
@@ -304,11 +318,10 @@ Map<String, LedgerEntry> newlyCreatedRawIds({
 /// is only skipped by Create and never deleted.
 Map<String, LedgerEntry> createdBeforeFailure({
   required List<LedgerEntry> planned,
-  required AddressBook before,
+  required Set<String> oldRawIds,
   required AddressBook after,
   required Map<String, Set<String>> fingerprintsByContact,
 }) {
-  final old = allRawIds(before);
   final byFingerprint = {
     for (final e in planned)
       if (e.fingerprint != null) e.fingerprint!: e,
@@ -318,7 +331,7 @@ Map<String, LedgerEntry> createdBeforeFailure({
   final matches = <String, List<String>>{};
   final newContacts = <String, (List<String>, List<String>)>{};
   after.forEach((contactId, raws) {
-    final added = [for (final r in raws) if (!old.contains(r)) r];
+    final added = [for (final r in raws) if (!oldRawIds.contains(r)) r];
     if (added.isEmpty) return;
     final found = [
       for (final f in fingerprintsByContact[contactId] ?? const <String>{})
@@ -334,6 +347,86 @@ Map<String, LedgerEntry> createdBeforeFailure({
       if (found.length == 1 && matches[found.single]!.length == 1)
         for (final raw in added) raw: byFingerprint[found.single]!,
   };
+}
+
+/// The highest of [rawIds] as a number, or null if there are none (or none
+/// is a number).
+int? maxRawIdOf(Iterable<String> rawIds) {
+  int? max;
+  for (final r in rawIds) {
+    final n = int.tryParse(r);
+    if (n != null && (max == null || n > max)) max = n;
+  }
+  return max;
+}
+
+/// The fakes a Create is about to make in one create call, saved with the
+/// ledger before the call (see LedgerStore.save). If the app is killed
+/// meanwhile, Android still finishes the call, but the app never learns
+/// which raw contacts it made; the next Create, Delete or count finds them
+/// with [createdByPending].
+class PendingCreate {
+  /// The highest raw contact ID in the address book before the call, as far
+  /// as the app knows; null if there were none.
+  final int? maxRawId;
+
+  final List<LedgerEntry> entries;
+
+  const PendingCreate({required this.maxRawId, required this.entries});
+
+  Object toJson() => {
+        'maxRawId': maxRawId,
+        'entries': [for (final e in entries) e.toJson()],
+      };
+
+  /// Null if [json] isn't one (entries without details are dropped: they
+  /// couldn't be matched).
+  static PendingCreate? fromJson(Object? json) {
+    if (json is! Map || json['entries'] is! List) return null;
+    final max = json['maxRawId'];
+    return PendingCreate(
+      maxRawId: max is int ? max : null,
+      entries: [
+        for (final e in json['entries'] as List)
+          if (LedgerEntry.fromJson(e) case final entry? when entry.hasDetails)
+            entry,
+      ],
+    );
+  }
+}
+
+/// The raw contacts in [after] that [pending]'s create call made, by the
+/// rule of [createdBeforeFailure]. Raw contacts in [recorded] (the ledger)
+/// and those not newer than [PendingCreate.maxRawId] existed before it, so
+/// they are never taken for its fakes. (A raw contact ID that isn't a number
+/// counts as old.)
+///
+/// Raw contact IDs only grow (SQLite's AUTOINCREMENT); if they didn't, a
+/// fake could look old and only be left unrecorded, never the other way
+/// round: every raw contact that existed before the call has an ID up to
+/// [PendingCreate.maxRawId].
+Map<String, LedgerEntry> createdByPending(
+  PendingCreate pending, {
+  required Set<String> recorded,
+  required AddressBook after,
+  required Map<String, Set<String>> fingerprintsByContact,
+}) {
+  final max = pending.maxRawId;
+  bool isNew(String raw) {
+    final n = int.tryParse(raw);
+    return n != null && (max == null || n > max);
+  }
+
+  return createdBeforeFailure(
+    planned: pending.entries,
+    oldRawIds: {
+      ...recorded,
+      for (final r in allRawIds(after))
+        if (!isNew(r)) r,
+    },
+    after: after,
+    fingerprintsByContact: fingerprintsByContact,
+  );
 }
 
 class DeletePlan {

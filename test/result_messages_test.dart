@@ -1,12 +1,55 @@
 import 'package:fake_contacts/contact_actions.dart';
-import 'package:fake_contacts/result_messages.dart';
+import 'package:fake_contacts/result_messages.dart' as messages;
+import 'package:fake_contacts/result_messages.dart'
+    hide
+        createdMessage,
+        deletedMessage,
+        createFailedMessage,
+        deleteFailedMessage,
+        nothingToCreateMessage,
+        nothingToDeleteMessage,
+        kPermissionDeniedMessage,
+        kOpenSettingsFailedMessage,
+        kPermissionRequestFailedMessage,
+        kReadFailedMessage,
+        kChangedMeanwhileMessage;
 import 'package:flutter_test/flutter_test.dart';
 
-CreateResult created(int n, {int alreadyExisted = 0, int untracked = 0}) =>
-    CreateResult(created: n, alreadyExisted: alreadyExisted, untracked: untracked);
+// The texts of the result messages; whether each needs attention is tested
+// in the group 'which results need attention'.
+String createdMessage(CreateResult r) => messages.createdMessage(r).text;
+String deletedMessage(DeleteResult r) => messages.deletedMessage(r).text;
+String createFailedMessage(Object e) => messages.createFailedMessage(e).text;
+String deleteFailedMessage(Object e) => messages.deleteFailedMessage(e).text;
+String nothingToCreateMessage(CreatePreview p, SettingsPreview s) =>
+    messages.nothingToCreateMessage(p, s).text;
+String nothingToDeleteMessage(DeletePreview p) =>
+    messages.nothingToDeleteMessage(p).text;
+final String kPermissionDeniedMessage =
+    messages.kPermissionDeniedMessage.text;
+final String kOpenSettingsFailedMessage =
+    messages.kOpenSettingsFailedMessage.text;
+final String kPermissionRequestFailedMessage =
+    messages.kPermissionRequestFailedMessage.text;
+final String kReadFailedMessage = messages.kReadFailedMessage.text;
+final String kChangedMeanwhileMessage = messages.kChangedMeanwhileMessage.text;
 
-DeleteResult deleted(int n, {int merged = 0, int changed = 0}) =>
-    DeleteResult(deleted: n, skippedMerged: merged, skippedChanged: changed);
+CreateResult created(int n,
+        {int alreadyExisted = 0, int untracked = 0, int? stoppedOf}) =>
+    CreateResult(
+        created: n,
+        alreadyExisted: alreadyExisted,
+        untracked: untracked,
+        planned: stoppedOf,
+        stopped: stoppedOf != null);
+
+DeleteResult deleted(int n, {int merged = 0, int changed = 0, int? stoppedOf}) =>
+    DeleteResult(
+        deleted: n,
+        skippedMerged: merged,
+        skippedChanged: changed,
+        planned: stoppedOf,
+        stopped: stoppedOf != null);
 
 CreatePreview toCreate(int n, {int alreadyExisted = 0}) =>
     CreatePreview(toCreate: n, alreadyExisted: alreadyExisted);
@@ -261,9 +304,13 @@ void main() {
     });
 
     test("how far it got isn't known", () {
+      // The next Create or Delete records what it made (see
+      // PendingCreate).
       expect(createFailedMessage(stopped(null, 4)),
-          "Couldn't finish creating fake contacts. Some may have been added"
-          " that this app can't delete.");
+          "Couldn't finish creating fake contacts. Try again.");
+      expect(createFailedMessage(stopped(null, 4, cause: Exception(sFull))),
+          "Couldn't finish creating fake contacts: your phone's storage is"
+          " full.");
       expect(deleteFailedMessage(stopped(null, 4)),
           "Couldn't finish deleting fake contacts. Try again.");
     });
@@ -424,6 +471,73 @@ void main() {
       expect(nothingToDeleteMessage(toDelete(0, merged: 1, changed: 3)),
           'No fake contacts to delete. 1 was merged with another contact and '
           'was left alone. 3 $kChanged and were left alone.');
+    });
+  });
+
+  group('stopped by the user (U8)', () {
+    test('says how far it got, and anything else as usual', () {
+      expect(createdMessage(created(312, stoppedOf: 756)),
+          'Stopped after creating 312 of 756 fake contacts.');
+      expect(createdMessage(created(100, alreadyExisted: 4, stoppedOf: 200)),
+          'Stopped after creating 100 of 200 fake contacts. 4 already existed.');
+      expect(deletedMessage(deleted(300, stoppedOf: 756)),
+          'Stopped after deleting 300 of 756 fake contacts.');
+      expect(deletedMessage(deleted(200, merged: 1, stoppedOf: 400)),
+          'Stopped after deleting 200 of 400 fake contacts. 1 was merged with'
+          ' another contact and was left alone.');
+    });
+  });
+
+  test('progress (U8)', () {
+    expect(progressText(creating: true, done: 312, total: 756),
+        'Created 312 of 756');
+    expect(progressText(creating: false, done: 0, total: 1000),
+        'Deleted 0 of 1000');
+  });
+
+  group('which results need attention (U8)', () {
+    StoppedPartway stopped(int? done) => StoppedPartway(
+        done: done,
+        planned: 4,
+        cause: 'provider gone',
+        stackTrace: StackTrace.empty);
+
+    test('plain successes and answers the user gave: no', () {
+      for (final message in [
+        messages.createdMessage(created(4)),
+        messages.createdMessage(created(2, alreadyExisted: 2)),
+        messages.deletedMessage(deleted(4)),
+        messages.nothingToCreateMessage(
+            toCreate(0, alreadyExisted: 4), settingsMake(2, 2)),
+        messages.nothingToCreateMessage(toCreate(0), settingsMake(0, 2)),
+        messages.nothingToDeleteMessage(toDelete(0)),
+        messages.kPermissionDeniedMessage,
+      ]) {
+        expect(message.needsAttention, isFalse, reason: message.text);
+      }
+    });
+
+    test('errors, partial or stopped results, and notes about fakes left '
+        'alone or not recorded: yes', () {
+      for (final message in [
+        messages.createdMessage(created(2, stoppedOf: 4)),
+        messages.deletedMessage(deleted(2, stoppedOf: 4)),
+        messages.createdMessage(created(4, untracked: 1)),
+        messages.deletedMessage(deleted(3, merged: 1)),
+        messages.deletedMessage(deleted(3, changed: 1)),
+        messages.nothingToDeleteMessage(toDelete(0, merged: 1)),
+        messages.createFailedMessage(Exception('x')),
+        messages.createFailedMessage(stopped(2)),
+        messages.createFailedMessage(stopped(null)),
+        messages.deleteFailedMessage(Exception('x')),
+        messages.deleteFailedMessage(stopped(2)),
+        messages.kReadFailedMessage,
+        messages.kChangedMeanwhileMessage,
+        messages.kPermissionRequestFailedMessage,
+        messages.kOpenSettingsFailedMessage,
+      ]) {
+        expect(message.needsAttention, isTrue, reason: message.text);
+      }
     });
   });
 }
