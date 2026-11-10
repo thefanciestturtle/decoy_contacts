@@ -1,7 +1,32 @@
+import 'package:fake_contacts/app_log.dart';
 import 'package:fake_contacts/fake_contacts_core.dart';
 import 'package:fake_contacts/settings_store.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+
+/// Writes fail as on Android: with [error] set they throw it; otherwise
+/// they return false (as `commit()` does, e.g. with the storage full).
+class _FailingStore extends InMemorySharedPreferencesStore {
+  _FailingStore() : super.empty();
+
+  Object? error;
+  int writes = 0;
+
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) async {
+    writes++;
+    if (error != null) throw error!;
+    return false;
+  }
+}
+
+/// Makes SharedPreferences use [store].
+void useStore(SharedPreferencesStorePlatform store) {
+  SharedPreferencesStorePlatform.instance = store;
+  SharedPreferences.resetStatic();
+}
 
 void main() {
   const store = SettingsStore();
@@ -79,6 +104,59 @@ void main() {
     );
     await store.save(s);
     expect(await store.load(), s);
+  });
+
+  group('failed writes', () {
+    late List<String> logged;
+    late _FailingStore failing;
+
+    setUp(() {
+      logged = [];
+      final previous = errorLogSink;
+      errorLogSink = logged.add;
+      addTearDown(() => errorLogSink = previous);
+      failing = _FailingStore();
+      useStore(failing);
+    });
+
+    test('LedgerStore.save throws when Android reports the write failed; '
+        'until a restart, the ledger is still there', () async {
+      const ledgers = LedgerStore();
+      final ledger = Ledger({'7': const LedgerEntry('Zoe Zen', '+1', 'z@x')});
+
+      await expectLater(ledgers.save(ledger), throwsA(isA<LedgerNotSaved>()));
+      expect(failing.writes, 1);
+      // The plugin keeps it in memory, as on Android.
+      expect((await ledgers.load()).entries, ledger.entries);
+      // A restart reads what was written: nothing.
+      useStore(InMemorySharedPreferencesStore.empty());
+      expect((await ledgers.load()).isEmpty, isTrue);
+    });
+
+    test('LedgerStore.save passes on an error', () async {
+      failing.error = StateError('channel gone');
+      await expectLater(
+          const LedgerStore().save(Ledger()), throwsA(isA<StateError>()));
+    });
+
+    test('SettingsStore.save logs a failed write and tries every key',
+        () async {
+      await store.save(Settings.defaults);
+
+      expect(failing.writes, 4);
+      expect(logged.single,
+          contains('SettingsStore.save: Android could not write the settings'));
+      // Still in memory meanwhile.
+      expect(await store.load(), Settings.defaults);
+    });
+
+    test('SettingsStore.save logs an error instead of throwing it', () async {
+      failing.error = PlatformException(code: 'channel-error');
+      await store.save(Settings.defaults);
+
+      expect(logged.single,
+          contains('SettingsStore.save: PlatformException(channel-error'));
+    });
   });
 
   test('LedgerStore round-trips and reads a missing ledger as empty', () async {
