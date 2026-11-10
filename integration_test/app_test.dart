@@ -295,6 +295,8 @@ void main() {
       for (final c in book.values)
         if (!real.containsKey(c.id)) ...rawIdsOf(c),
     ]));
+    // The two it didn't find stay pending, in case that read was wrong (U8).
+    expect(await storedPending(), isNotNull);
 
     gateway.stop = false;
     expect(
@@ -375,7 +377,8 @@ void main() {
         timeout: const Duration(seconds: 3),
         failOnTimeout: false);
     expect(await readAddressBook(), hasLength(real.length + 4));
-    expect(await storedLedger(), hasLength(3)); // two, and the pending record
+    expect(await storedLedger(), hasLength(2));
+    expect(await storedPending(), isNotNull);
 
     // A new start of the app.
     await tester.pumpWidget(const SizedBox.shrink());
@@ -387,6 +390,7 @@ void main() {
         'Deleted 4 fake contacts.');
     expect(describeAll(await readAddressBook()), describeAll(real));
     expect(await storedLedger(), isEmpty);
+    expect(await storedPending(), isNull);
   });
 
   testWidgets('S1: a ledger whose raw IDs point at real contacts deletes '
@@ -662,8 +666,15 @@ Future<Map<String, Contact>> readAddressBook() async {
   return {for (final c in contacts) c.id!: c};
 }
 
-/// The ledger the app stored, decoded from JSON.
-Future<Map<String, Object?>> storedLedger() async {
+/// The ledger the app stored, decoded from JSON, without the pending
+/// record of a Create (see [storedPending]).
+Future<Map<String, Object?>> storedLedger() async =>
+    {...await _storedJson()}..remove(kPendingCreateKey);
+
+/// The pending record of a Create stored with the ledger, or null.
+Future<Object?> storedPending() async => (await _storedJson())[kPendingCreateKey];
+
+Future<Map<String, Object?>> _storedJson() async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.reload();
   final json = prefs.getString(kLedgerPrefsKey);

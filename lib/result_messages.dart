@@ -93,10 +93,8 @@ String _createFailedText(Object error) => switch (error) {
         storageFull(error)
             ? "Created ${_doneOf(done, planned)} before your phone ran out of"
                 " storage."
-            : done == planned
-                ? "Created ${_fakeContacts(done)}, then something went wrong."
-                : "Created ${_doneOf(done, planned)}, then something went"
-                    " wrong. Try again to create the rest.",
+            : "Created ${_doneOf(done, planned)}, then something went wrong."
+                " Try again to create the rest.",
       _ => storageFull(error)
           ? "Couldn't create fake contacts: $_kStorageFull."
           : "Couldn't create fake contacts. Try again.",

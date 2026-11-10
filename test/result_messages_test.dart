@@ -274,11 +274,6 @@ void main() {
           "Couldn't create fake contacts: your phone's storage is full.");
     });
 
-    test('all were created, then something else went wrong', () {
-      expect(createFailedMessage(stopped(4, 4)),
-          'Created 4 fake contacts, then something went wrong.');
-    });
-
     test('storage full: no "Try again"', () {
       expect(createFailedMessage(Exception(sFull)),
           "Couldn't create fake contacts: your phone's storage is full.");

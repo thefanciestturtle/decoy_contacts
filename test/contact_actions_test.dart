@@ -61,7 +61,7 @@ class _WritesNothingWhenFull extends LedgerStore {
   int succeeding;
 
   @override
-  Future<void> save(Ledger ledger, {PendingCreate? pending}) async {
+  Future<void> save(Ledger ledger, {required PendingCreate? pending}) async {
     if (succeeding-- <= 0) throw const LedgerNotSaved();
     await super.save(ledger, pending: pending);
   }
@@ -237,7 +237,8 @@ void main() {
         kDefaultEmailTemplate);
     final zoe = book.add('Zoe Zen', phones: [e.phone!], emails: [e.email!]);
     await const LedgerStore()
-        .save(Ledger({book.rawIdsOf(zoe).single: const LedgerEntry.nameOnly('Zoe Zen')}));
+        .save(Ledger({book.rawIdsOf(zoe).single: const LedgerEntry.nameOnly('Zoe Zen')}),
+            pending: null);
     final store = FailingLedgerStore(1);
 
     final preview = await previewDelete(book, store, kSettings);

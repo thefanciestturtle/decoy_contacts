@@ -144,13 +144,15 @@ class LedgerStore {
     return Ledger.decodeWithPending(prefs.getString(kLedgerPrefsKey));
   }
 
-  /// Saves [ledger] with [pending], in one write; without [pending], one
-  /// saved earlier is dropped.
+  /// Saves [ledger] with [pending], in one write; with none, one saved
+  /// earlier is dropped. ([pending] is required, so no caller drops one by
+  /// leaving it out: see the pending records the Create and Delete plans
+  /// keep.)
   ///
   /// Throws [LedgerNotSaved] if it couldn't be written. (Until the app is
   /// restarted, [load] then still returns it: the plugin keeps it in memory
   /// either way.)
-  Future<void> save(Ledger ledger, {PendingCreate? pending}) async {
+  Future<void> save(Ledger ledger, {required PendingCreate? pending}) async {
     final prefs = await SharedPreferences.getInstance();
     // Android reports a failed write as false rather than as an error.
     if (!await prefs.setString(

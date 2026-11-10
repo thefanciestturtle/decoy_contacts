@@ -124,7 +124,8 @@ void main() {
       const ledgers = LedgerStore();
       final ledger = Ledger({'7': const LedgerEntry('Zoe Zen', '+1', 'z@x')});
 
-      await expectLater(ledgers.save(ledger), throwsA(isA<LedgerNotSaved>()));
+      await expectLater(
+          ledgers.save(ledger, pending: null), throwsA(isA<LedgerNotSaved>()));
       expect(failing.writes, 1);
       // The plugin keeps it in memory, as on Android.
       expect((await ledgers.load()).entries, ledger.entries);
@@ -136,7 +137,8 @@ void main() {
     test('LedgerStore.save passes on an error', () async {
       failing.error = StateError('channel gone');
       await expectLater(
-          const LedgerStore().save(Ledger()), throwsA(isA<StateError>()));
+          const LedgerStore().save(Ledger(), pending: null),
+          throwsA(isA<StateError>()));
     });
 
     test('SettingsStore.save logs a failed write and tries every key',
@@ -164,7 +166,19 @@ void main() {
     const ledgers = LedgerStore();
     expect((await ledgers.load()).isEmpty, isTrue);
     final ledger = Ledger({'7': const LedgerEntry('Zoe Zen', '+1', 'z@x')});
-    await ledgers.save(ledger);
+    await ledgers.save(ledger, pending: null);
     expect((await ledgers.load()).entries, ledger.entries);
+
+    // With a pending Create, in the same write; a save without one drops
+    // it.
+    const pending = PendingCreate(
+        maxRawId: 7, entries: [LedgerEntry('Zach Zen', '+1', 'y@x')]);
+    await ledgers.save(ledger, pending: pending);
+    final loaded = await ledgers.loadWithPending();
+    expect(loaded.ledger.entries, ledger.entries);
+    expect(loaded.pending!.entries, pending.entries);
+    expect((await ledgers.load()).entries, ledger.entries);
+    await ledgers.save(ledger, pending: null);
+    expect((await ledgers.loadWithPending()).pending, isNull);
   });
 }

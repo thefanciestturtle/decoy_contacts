@@ -14,7 +14,7 @@ class FailingLedgerStore extends LedgerStore {
   int saves = 0;
 
   @override
-  Future<void> save(Ledger ledger, {PendingCreate? pending}) async {
+  Future<void> save(Ledger ledger, {required PendingCreate? pending}) async {
     saves++;
     await super.save(ledger, pending: pending);
     if (succeeding > 0) {

@@ -380,11 +380,7 @@ Future<CreateResult?> createFakeContacts(
           oldRawIds: known,
           after: after);
       done += ids.length;
-      final foundEntries = found.values.toSet();
-      final missing = [
-        for (final entry in entries)
-          if (!foundEntries.contains(entry)) entry,
-      ];
+      final missing = _notFound(entries, found);
       if (missing.isNotEmpty) {
         // Not under the contact IDs the call gave (say, Android linked one
         // with another contact meanwhile, which changes its ID): look for
@@ -398,7 +394,7 @@ Future<CreateResult?> createFakeContacts(
       final seen = {...allRawIds(after), ...found.keys};
       known.addAll(seen);
       maxRawId = _higher(maxRawId, maxRawIdOf(seen));
-      untracked += entries.length - found.values.toSet().length;
+      untracked += _notFound(entries, found).length;
     } catch (e, st) {
       // What this chunk created isn't known: work it out from the address
       // book.
@@ -419,11 +415,7 @@ Future<CreateResult?> createFakeContacts(
       if (count != entries.length) {
         // Those not found stay pending, in case this read was wrong: the
         // next Create or Delete looks again.
-        final foundEntries = found.values.toSet();
-        final unfound = [
-          for (final entry in entries)
-            if (!foundEntries.contains(entry)) entry,
-        ];
+        final unfound = _notFound(entries, found);
         try {
           await ledgerStore.save(
               Ledger({...plan.stored.entries, ...created, ...found}),
@@ -448,7 +440,8 @@ Future<CreateResult?> createFakeContacts(
   }
   try {
     // Drops entries whose raw contacts are gone, and the pending record.
-    await ledgerStore.save(Ledger({...plan.ledger.entries, ...created}));
+    await ledgerStore.save(Ledger({...plan.ledger.entries, ...created}),
+        pending: null);
   } catch (e, st) {
     // No harm done: the save before the last chunk holds that one as a
     // pending record (the next Create or Delete records it), and the
@@ -463,6 +456,17 @@ Future<CreateResult?> createFakeContacts(
     planned: total,
     stopped: bStopped,
   );
+}
+
+/// The entries of [entries] that no raw contact in [found] was recorded
+/// with.
+List<LedgerEntry> _notFound(
+    List<LedgerEntry> entries, Map<String, LedgerEntry> found) {
+  final foundEntries = found.values.toSet();
+  return [
+    for (final entry in entries)
+      if (!foundEntries.contains(entry)) entry,
+  ];
 }
 
 /// The higher of two raw contact IDs, either of which may be missing.

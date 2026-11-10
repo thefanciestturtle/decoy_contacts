@@ -203,10 +203,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       final bWasInBackground = _inBackground;
       _inBackground = false;
-      // The accessibility timeout may have been changed meanwhile. (A held
-      // result doesn't wait for it: that would make it hang on a platform
-      // call; a new timeout applies from the next result.)
-      unawaited(_updateMessageDurations());
+      // The accessibility timeout may have been changed meanwhile, in the
+      // settings. (A held result doesn't wait for it: that would make it
+      // hang on a platform call; a new timeout applies from the next
+      // result.)
+      if (bWasInBackground) unawaited(_updateMessageDurations());
       final held = _heldMessage;
       _heldMessage = null;
       if (held != null) _showResultSnackBar(held);
