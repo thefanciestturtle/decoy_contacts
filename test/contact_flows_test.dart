@@ -287,12 +287,18 @@ class _LookupFails extends InMemoryContactsGateway {
 }
 
 /// Can't find the first new contact when looking them up after creating
-/// them, so its raw contact can't be recorded.
+/// them (as when Android links it with another contact meanwhile, which
+/// changes its contact ID); with [hideEverywhere], not in any read.
 class _LosesFirstNewContact extends InMemoryContactsGateway {
+  bool hideEverywhere = false;
+  String? _lost;
+
   @override
   Future<List<StoredContact>> getAll({List<String>? ids}) async {
     final found = await super.getAll(ids: ids);
-    return ids == null ? found : found.where((c) => c.id != ids.first).toList();
+    if (ids != null) _lost ??= ids.first;
+    if (ids == null && !hideEverywhere) return found;
+    return found.where((c) => c.id != _lost).toList();
   }
 }
 
@@ -404,9 +410,20 @@ void main() {
       expect(ledger.entries[raws[1]], fakeEntry('Zoe', 'Zen'));
     });
 
-    testWidgets('warns about created contacts it could not record',
-        (tester) async {
+    testWidgets('a new contact not found under its contact ID is found by '
+        'its details (U8)', (tester) async {
       final lossy = _LosesFirstNewContact();
+      await pumpApp(tester, lossy);
+      await tapCreate(tester);
+
+      expect(snackBarText(tester), 'Created 4 fake contacts.');
+      expect((await storedLedger()).length, 4);
+    });
+
+    testWidgets("warns about created contacts it couldn't record",
+        (tester) async {
+      // Hidden from every read, so not even its details find it.
+      final lossy = _LosesFirstNewContact()..hideEverywhere = true;
       await pumpApp(tester, lossy);
       await tapCreate(tester);
 
@@ -846,8 +863,13 @@ void main() {
       broken.empty = true;
       broken.createAllError = Exception('Unknown authority');
       await tapCreate(tester);
-      expect(snackBarText(tester), kCreateFailed);
-      expect(await storedLedgerJson(), ledgerBefore);
+      // The read after the failure isn't trusted: how far it got is
+      // unknown, and the pending record stays.
+      expect(snackBarText(tester),
+          "Couldn't finish creating fake contacts. Try again.");
+      expect((await storedLedger()).entries,
+          Ledger.decode(ledgerBefore).entries);
+      expect(await storedPending(), isNotNull);
 
       broken.empty = false;
       broken.createAllError = null;

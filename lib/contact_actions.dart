@@ -385,15 +385,37 @@ Future<CreateResult?> createFakeContacts(
           createdContactIds: ids,
           oldRawIds: known,
           after: after);
-      known.addAll(allRawIds(after));
-      maxRawId = _higher(maxRawId, maxRawIdOf(allRawIds(after)));
       done += ids.length;
-      untracked += math.max(0, ids.length - found.length);
+      final foundEntries = found.values.toSet();
+      final missing = [
+        for (final entry in entries)
+          if (!foundEntries.contains(entry)) entry,
+      ];
+      if (missing.isNotEmpty) {
+        // Not under the contact IDs the call gave (say, Android linked one
+        // with another contact meanwhile, which changes its ID): look for
+        // them by their details, as after a failure. Raw contacts already
+        // recorded with another entry aren't taken (in case Android linked
+        // two new fakes and shows the second one's name).
+        found = {
+          ...found,
+          ...await _findByDetails(
+              contacts,
+              {...known, ...found.keys},
+              PendingCreate(maxRawId: pending.maxRawId, entries: missing)),
+        };
+      }
+      final seen = {...allRawIds(after), ...found.keys};
+      known.addAll(seen);
+      maxRawId = _higher(maxRawId, maxRawIdOf(seen));
+      untracked += entries.length - found.values.toSet().length;
     } catch (e, st) {
       // What this chunk created isn't known: work it out from the address
       // book.
-      final recovered =
-          await _findCreatedAfterFailure(contacts, plan.before, known, pending);
+      // (Recorded fakes should be there too, unless deleted by hand.)
+      final recovered = await _findCreatedAfterFailure(
+          contacts, known, pending,
+          untouched: {...known, ...plan.stored.entries.keys});
       if (recovered == null) {
         // The pending record stays: the next Create or Delete looks again.
         // What the chunks before created is known (and recorded).
@@ -412,7 +434,9 @@ Future<CreateResult?> createFakeContacts(
               .save(Ledger({...plan.stored.entries, ...created, ...found}));
         } catch (e2, st2) {
           logError("createFakeContacts, recording what was created", e2, st2);
-          bSaved = false;
+          // With none found there was nothing to add (the save before the
+          // chunk holds the rest), only the pending record to drop.
+          bSaved = found.isEmpty;
         }
         throw StoppedPartway(
             done: done + count,
@@ -454,21 +478,37 @@ Future<CreateResult?> createFakeContacts(
   );
 }
 
+/// Reads the address book and returns the fakes of [pending] in it (see
+/// [createdByPending]; [recorded] are raw contacts not to be taken for
+/// them); none if it can't be read.
+Future<Map<String, LedgerEntry>> _findByDetails(ContactsGateway contacts,
+    Set<String> recorded, PendingCreate pending) async {
+  try {
+    final everyone = await contacts.getAll();
+    return createdByPending(pending,
+        recorded: recorded,
+        after: addressBookOf(everyone),
+        fingerprintsByContact: fingerprintsByContactOf(everyone));
+  } catch (e, st) {
+    logError("createFakeContacts, looking for new contacts by their details",
+        e, st);
+    return const {};
+  }
+}
+
 /// The higher of two raw contact IDs, either of which may be missing.
 int? _higher(int? a, int? b) =>
     a == null ? b : (b == null ? a : (a > b ? a : b));
 
 /// Whether a read of the address book made after a failed Create or Delete
-/// ([after]) can be trusted: unless the action touched them all, some of
-/// the raw contacts from [before] that it left alone are still there
-/// ([touched] are those it may have deleted). With the contacts provider
+/// ([after]) can be trusted: unless there are none, some of the raw
+/// contacts that must still be there ([untouched]: those from before that
+/// it left alone, and those it created) are. With the contacts provider
 /// gone, reads find nothing instead of failing, which would look like
 /// everything was deleted, or nothing created. (Some may be gone for other
 /// reasons, say deleted by a sync meanwhile.)
-bool _plausibleAfterFailure(AddressBook before, AddressBook after,
-    {Set<String> touched = const {}}) {
+bool _plausibleAfterFailure(Set<String> untouched, AddressBook after) {
   final present = allRawIds(after);
-  final untouched = allRawIds(before).difference(touched);
   return untouched.isEmpty || untouched.any(present.contains);
 }
 
@@ -476,14 +516,16 @@ bool _plausibleAfterFailure(AddressBook before, AddressBook after,
 /// the fakes of [pending] it created (see [createdByPending]; [known] are
 /// the raw contacts known to exist before the call), and every raw contact
 /// found; null if the address book couldn't be read, or the read can't be
-/// trusted (see [_plausibleAfterFailure]).
+/// trusted (see [_plausibleAfterFailure]; [untouched] are the raw contacts
+/// that must still be there).
 Future<({Map<String, LedgerEntry> created, Set<String> present})?>
-    _findCreatedAfterFailure(ContactsGateway contacts, AddressBook before,
-        Set<String> known, PendingCreate pending) async {
+    _findCreatedAfterFailure(ContactsGateway contacts, Set<String> known,
+        PendingCreate pending,
+        {required Set<String> untouched}) async {
   try {
     final everyone = await contacts.getAll();
     final after = addressBookOf(everyone);
-    if (!_plausibleAfterFailure(before, after)) {
+    if (!_plausibleAfterFailure(untouched, after)) {
       throw StateError("all contacts that were there before are missing");
     }
     return (
@@ -663,7 +705,8 @@ Future<DeleteResult?> deleteFakeContacts(
       log("deleteFakeContacts: about to call deleteAll for ${chunk.length} contact(s)");
       await contacts.deleteAll(chunk);
     } catch (e, st) {
-      final gone = await _countDeletedBeforeFailure(contacts, check, chunk);
+      final gone = await _countDeletedBeforeFailure(
+          contacts, check, ids.sublist(0, start + chunk.length), chunk);
       if (gone == null || gone < chunkRaws) {
         // What the chunks before deleted is known.
         throw StoppedPartway(
@@ -705,20 +748,23 @@ Future<DeleteResult?> deleteFakeContacts(
 /// returns how many of its raw contacts are gone; null if that failed.
 /// (Only that chunk's: a contact of a later chunk deleted meanwhile, say by
 /// a sync, mustn't make up for one of this chunk that is still there.)
+/// [touched] are the contacts it may have deleted so far, [chunk]
+/// included; those of later chunks must still be there (see
+/// [_plausibleAfterFailure]).
 ///
 /// The ledger is left as it was. Its entries for the deleted ones do no
 /// harm (they are dropped when next read), and pruning it to what this
 /// read finds could lose the rest if the read was wrong too (see
 /// [_plausibleAfterFailure]).
-Future<int?> _countDeletedBeforeFailure(
-    ContactsGateway contacts, _DeleteCheck check, List<String> chunk) async {
+Future<int?> _countDeletedBeforeFailure(ContactsGateway contacts,
+    _DeleteCheck check, List<String> touched, List<String> chunk) async {
   try {
     final after = addressBookOf(await contacts.getAll());
-    final planned = {
-      for (final contactId in check.plan.contactIdsToDelete)
-        ...check.book[contactId]!,
+    final touchedRaws = {
+      for (final contactId in touched) ...check.book[contactId]!,
     };
-    if (!_plausibleAfterFailure(check.book, after, touched: planned)) {
+    if (!_plausibleAfterFailure(
+        allRawIds(check.book).difference(touchedRaws), after)) {
       throw StateError("all contacts that weren't to be deleted are missing");
     }
     final present = allRawIds(after);

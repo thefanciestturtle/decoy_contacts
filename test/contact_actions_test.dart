@@ -7,6 +7,7 @@ import 'package:fake_contacts/app_log.dart';
 import 'package:fake_contacts/contact_actions.dart';
 import 'package:fake_contacts/contacts_gateway.dart';
 import 'package:fake_contacts/fake_contacts_core.dart';
+import 'package:fake_contacts/result_messages.dart';
 import 'package:fake_contacts/settings_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -621,6 +622,83 @@ void main() {
       await deleteFakeContacts(broken, const LedgerStore(), kSettings);
       stored = await storedWithPending();
       expect(stored.pending!.entries, pending.entries);
+    });
+
+    test('Create: the first chunk fails with the storage full and nothing '
+        "made: it says so, not that a list couldn't be saved", () async {
+      book.createAllError =
+          Exception('database or disk is full (code 13 SQLITE_FULL)');
+      final error = await createFakeContacts(
+              book, FailingLedgerStore(1, succeeding: 1), kSettings,
+              chunkSize: 2)
+          .then<Object?>((_) => null, onError: (Object e) => e);
+
+      final stopped = error! as StoppedPartway;
+      expect((stopped.done, stopped.recorded), (0, true));
+      expect(createFailedMessage(stopped).text,
+          "Couldn't create fake contacts: your phone's storage is full.");
+    });
+
+    test("Create: a re-read that lost the fakes of earlier chunks isn't "
+        'trusted, even with no contacts before', () async {
+      final broken = _ReadsEmpty();
+      broken.beforeCreateAll = (call) async {
+        if (call == 1) {
+          broken.empty = true;
+          broken.createAllError = Exception('provider gone');
+        }
+      };
+      final error = await createFakeContacts(
+              broken, const LedgerStore(), kSettings, chunkSize: 2)
+          .then<Object?>((_) => null, onError: (Object e) => e);
+
+      expect((error! as StoppedPartway).done, 2);
+      expect(logged.last, contains('are missing'));
+      // So the pending record stays for later.
+      broken.empty = false;
+      expect((await storedWithPending()).pending, isNotNull);
+    });
+
+    test("Delete: a re-read that lost the fakes of later chunks isn't "
+        'trusted, even with only fakes in the address book', () async {
+      final broken = _ReadsEmpty();
+      await createFakeContacts(broken, const LedgerStore(), kSettings);
+      final ledgerBefore = await const LedgerStore().load();
+      broken.beforeDeleteAll = (call) async {
+        broken.empty = true;
+        broken.deleteAllError = Exception('provider gone');
+        broken.deleteAllStopsAfter = 0;
+      };
+      final error = await deleteFakeContacts(
+              broken, const LedgerStore(), kSettings, chunkSize: 2)
+          .then<Object?>((_) => null, onError: (Object e) => e);
+
+      expect((error! as StoppedPartway).done, isNull);
+      broken.empty = false;
+      expect(broken.all, hasLength(4));
+      expect((await const LedgerStore().load()).entries, ledgerBefore.entries);
+    });
+
+    test('Create: two new fakes Android linked into one contact keep the '
+        'entry they were recorded with', () async {
+      // Zach Zen is linked into the contact Zoe Zen was just created as.
+      String? zoeContact;
+      book.mergeInto = (c) {
+        if (c.first == 'Zoe' && c.last == 'Zen') return null;
+        return c.first == 'Zach' && c.last == 'Zen' ? zoeContact : null;
+      };
+      book.beforeCreateAll = (call) async {
+        if (call == 1) zoeContact = book.idOf('Zoe Zen');
+      };
+      await createFakeContacts(book, const LedgerStore(), kSettings,
+          chunkSize: 1);
+
+      final ledger = await const LedgerStore().load();
+      final raws = book.rawIdsOf(book.idOf('Zoe Zen'));
+      expect(raws, hasLength(2));
+      // Recorded when the first chunk was looked up; the second chunk's
+      // lookup doesn't take it again.
+      expect(ledger.entries[raws.first]!.name, 'Zoe Zen');
     });
 
     test('Delete: a chunk all deleted before its call failed: it goes on',

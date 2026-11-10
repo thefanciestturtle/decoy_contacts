@@ -16,10 +16,11 @@ import 'settings_store.dart';
 /// How long to wait after the last keystroke before saving the settings.
 const Duration kSaveDelay = Duration(milliseconds: 500);
 
-/// How long a result shows: a plain success briefly (Material's default),
-/// one that needs attention ([ResultMessage.needsAttention]) as long as
-/// Material allows, with a close button. Either longer if the user's
-/// accessibility timeout asks for more (see recommendedTimeout).
+/// How long a result shows: a plain success briefly (Flutter's default),
+/// one that needs attention ([ResultMessage.needsAttention]) for the
+/// longest Material's guidelines suggest for snack bars (4 to 10 s), with
+/// a close button. Either longer if the user's accessibility timeout asks
+/// for more (see recommendedTimeout).
 const Duration kShortMessageDuration = Duration(seconds: 4);
 const Duration kLongMessageDuration = Duration(seconds: 10);
 
@@ -202,7 +203,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     }
     if (state == AppLifecycleState.resumed) {
       _inBackground = false;
-      // The accessibility timeout may have been changed meanwhile.
+      // The accessibility timeout may have been changed meanwhile. (A held
+      // result doesn't wait for it: that would make it hang on a platform
+      // call; a new timeout applies from the next result.)
       unawaited(_updateMessageDurations());
       final held = _heldMessage;
       _heldMessage = null;
