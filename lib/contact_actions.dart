@@ -279,7 +279,8 @@ Future<CreateResult?> createFakeContacts(
     throw StoppedPartway(
         done: found?.count,
         planned: entries.length,
-        recorded: found?.saved ?? false,
+        // (If nothing could be read, [done] is null and this is moot.)
+        recorded: found?.saved ?? true,
         cause: e,
         stackTrace: st);
   }
