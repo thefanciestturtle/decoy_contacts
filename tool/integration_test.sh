@@ -3,6 +3,9 @@
 #
 #   tool/integration_test.sh [--wipe-contacts] [extra `flutter test` args]
 #
+# The extra arguments go to the main run only, not to
+# integration_test/permission_test.dart (see below).
+#
 # The tests create and delete contacts in the device's real address book, so
 # this script refuses to run on anything but an emulator. The tests need an
 # empty address book and stop if it isn't; --wipe-contacts empties it first
@@ -56,4 +59,6 @@ for permission in READ_CONTACTS WRITE_CONTACTS; do
   adb_ shell pm set-permission-flags "$APP_ID" \
     "android.permission.$permission" user-set user-fixed
 done
-flutter test integration_test/permission_test.dart -d "$serial" "$@"
+# Without the extra arguments: they are meant for the tests above (e.g. a
+# --plain-name filter, which would match nothing here).
+flutter test integration_test/permission_test.dart -d "$serial"

@@ -256,9 +256,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// cancelled). The buttons are disabled meanwhile.
   bool _isBusy = false;
 
-  /// Set while a dialog asks the user ([_confirm]). No spinner then: the
-  /// app is waiting for the user, not working.
-  bool _isConfirming = false;
+  /// Set while a dialog asks the user ([_confirm]), and while the app's
+  /// settings open for the user. No spinner then: the app is waiting for
+  /// the user, not working.
+  bool _waitingForUser = false;
 
   void _showResultSnackBar(String message) {
     if (!mounted) return;
@@ -270,7 +271,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// Cancel, Back and tapping outside the dialog all count as no.
   Future<bool> _confirm(Confirmation confirmation) async {
     if (!mounted) return false;
-    setState(() { _isConfirming = true; });
+    setState(() { _waitingForUser = true; });
     final bool? bConfirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -290,7 +291,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         ],
       ),
     );
-    if (mounted) setState(() { _isConfirming = false; });
+    if (mounted) setState(() { _waitingForUser = false; });
     return bConfirmed ?? false;
   }
 
@@ -338,7 +339,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
 
     void finish(String? message) {
       if (!mounted) return;
-      setState(() { _isBusy = false; });
+      setState(() {
+        _isBusy = false;
+        _waitingForUser = false;
+      });
       if (message != null) _showResultSnackBar(message);
       unawaited(_refreshStatus());
     }
@@ -358,21 +362,23 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       case PermissionAnswer.denied:
         return finish(kPermissionDeniedMessage);
       case PermissionAnswer.permanentlyDenied:
-        final bOpen = await _confirm(permissionSettings);
-        // Done before the settings open, so no spinner shows meanwhile.
-        finish(null);
-        if (!bOpen) {
+        if (!await _confirm(permissionSettings)) {
           log("$name: settings not opened");
-          return;
+          return finish(null);
         }
+        if (!mounted) return;
+        // The buttons stay disabled until the settings have been started,
+        // so a quick second tap can't ask again; no spinner meanwhile.
+        setState(() { _waitingForUser = true; });
+        String? sFailed;
         try {
           await widget.contacts.openSettings();
         } catch (e) {
           log("$name: error opening settings $e");
-          _showResultSnackBar(kOpenSettingsFailedMessage);
+          sFailed = kOpenSettingsFailedMessage;
         }
         // The status line is updated again when the user comes back.
-        return;
+        return finish(sFailed);
     }
 
     final P planned;
@@ -693,7 +699,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                   SizedBox(
                     height: 72,
                     child: Center(
-                      child: ((_isBusy && !_isConfirming) || !_settingsLoaded)
+                      child: ((_isBusy && !_waitingForUser) || !_settingsLoaded)
                           ? const CircularProgressIndicator()
                           : null,
                     ),

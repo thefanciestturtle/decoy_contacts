@@ -17,9 +17,7 @@ class FlutterContactsGateway implements ContactsGateway {
         await FlutterContacts.permissions.request(PermissionType.readWrite);
     // The plugin says "granted" for a request Android cut short (with no
     // answers at all), so make sure.
-    if (after == PermissionStatus.granted &&
-        await FlutterContacts.permissions.check(PermissionType.readWrite) !=
-            PermissionStatus.granted) {
+    if (after == PermissionStatus.granted && !await hasPermission()) {
       after = PermissionStatus.denied;
     }
     if (after != PermissionStatus.granted) {

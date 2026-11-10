@@ -1457,6 +1457,8 @@ void main() {
 
       expect(slow.openSettingsCalls, 1);
       expect(find.byType(CircularProgressIndicator), findsNothing);
+      // Until the settings are in front, a second tap can't ask again.
+      expect(buttonsEnabled(tester), isFalse);
       slow.opened.complete();
       await tester.pumpAndSettle();
       expectDone(tester);
