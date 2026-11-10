@@ -121,6 +121,27 @@ void main() {
     expect((stopped.done, stopped.planned, stopped.recorded), (4, 4, false));
   });
 
+  test('Create: a re-read that lost one contact from before is trusted',
+      () async {
+    // Say, a sync deleted a real contact meanwhile.
+    final bob = book.add('Bob Example');
+    final bobRaw = book.rawIdsOf(bob).single;
+    book.add('Alice Example');
+    book.createAllError = Exception('provider gone');
+    book.createAllStopsAfter = 2;
+    // While creating.
+    book.mergeInto = (_) {
+      if (book.contactOfRaw(bobRaw) != null) book.deleteAll([bob]);
+      return null;
+    };
+    final error = await createFakeContacts(
+            book, const LedgerStore(), kSettings)
+        .then<Object?>((_) => null, onError: (Object e) => e);
+
+    expect((error! as StoppedPartway).done, 2);
+    expect((await stored()).length, 2);
+  });
+
   test("Create: a re-read that lost contacts from before isn't trusted",
       () async {
     // With the provider gone, reads find nothing rather than failing.

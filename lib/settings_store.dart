@@ -98,21 +98,27 @@ class SettingsStore {
   }
 
   /// A failed write (Android reports it as false, e.g. with the storage
-  /// full) is only logged: the settings stay in memory meanwhile, and the
-  /// next save tries again.
+  /// full) or an error is only logged: the settings stay in memory
+  /// meanwhile, and the next save tries again.
   Future<void> save(Settings settings) async {
     log("SettingsStore.save: called");
-    final prefs = await SharedPreferences.getInstance();
-    var bSaved = true;
-    for (final (key, value) in [
-      (kLastNamesKey, settings.lastNamesText),
-      (kFirstNamesKey, settings.firstNamesText),
-      (kPhoneTemplateKey, settings.phoneTemplateText),
-      (kEmailTemplateKey, settings.emailTemplateText),
-    ]) {
-      if (!await prefs.setString(key, value)) bSaved = false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      var bSaved = true;
+      for (final (key, value) in [
+        (kLastNamesKey, settings.lastNamesText),
+        (kFirstNamesKey, settings.firstNamesText),
+        (kPhoneTemplateKey, settings.phoneTemplateText),
+        (kEmailTemplateKey, settings.emailTemplateText),
+      ]) {
+        if (!await prefs.setString(key, value)) bSaved = false;
+      }
+      if (!bSaved) {
+        logError("SettingsStore.save", "Android could not write the settings");
+      }
+    } catch (e, st) {
+      logError("SettingsStore.save", e, st);
     }
-    if (!bSaved) logError("SettingsStore.save", "Android could not write the settings");
   }
 }
 

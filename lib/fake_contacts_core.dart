@@ -313,9 +313,10 @@ Map<String, LedgerEntry> createdBeforeFailure({
     for (final e in planned)
       if (e.fingerprint != null) e.fingerprint!: e,
   };
-  // Planned fingerprint -> the new contacts that have it.
+  // Planned fingerprint -> the new contacts that have it, and new contact
+  // -> its new raw contacts and the planned fingerprints it has.
   final matches = <String, List<String>>{};
-  final newRaws = <String, List<String>>{};
+  final newContacts = <String, (List<String>, List<String>)>{};
   after.forEach((contactId, raws) {
     final added = [for (final r in raws) if (!old.contains(r)) r];
     if (added.isEmpty) return;
@@ -323,15 +324,15 @@ Map<String, LedgerEntry> createdBeforeFailure({
       for (final f in fingerprintsByContact[contactId] ?? const <String>{})
         if (byFingerprint.containsKey(f)) f,
     ];
-    if (found.length != 1) return;
-    newRaws[contactId] = added;
-    (matches[found.single] ??= []).add(contactId);
+    newContacts[contactId] = (added, found);
+    for (final f in found) {
+      (matches[f] ??= []).add(contactId);
+    }
   });
   return {
-    for (final MapEntry(key: fingerprint, value: contactIds) in matches.entries)
-      if (contactIds.length == 1)
-        for (final raw in newRaws[contactIds.single]!)
-          raw: byFingerprint[fingerprint]!,
+    for (final (added, found) in newContacts.values)
+      if (found.length == 1 && matches[found.single]!.length == 1)
+        for (final raw in added) raw: byFingerprint[found.single]!,
   };
 }
 

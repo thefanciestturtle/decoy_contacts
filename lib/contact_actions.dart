@@ -230,8 +230,6 @@ Future<CreateResult?> createFakeContacts(
     log("createFakeContacts: ${toCreate.length} to create, more than $atMost");
     return null;
   }
-  final nothingCreated = CreateResult(
-      created: 0, alreadyExisted: plan.alreadyExisted, untracked: 0);
   if (toCreate.isEmpty) {
     try {
       // Only drops entries whose raw contacts are gone.
@@ -239,7 +237,8 @@ Future<CreateResult?> createFakeContacts(
     } catch (e, st) {
       logError("createFakeContacts, saving the ledger", e, st);
     }
-    return nothingCreated;
+    return CreateResult(
+        created: 0, alreadyExisted: plan.alreadyExisted, untracked: 0);
   }
   final newContacts = [
     for (final (name, entry) in toCreate)
@@ -305,15 +304,17 @@ Future<CreateResult?> createFakeContacts(
 }
 
 /// Whether a read of the address book made after a failed Create or Delete
-/// ([after]) can be trusted: it still has every raw contact from [before]
-/// that the action left alone ([touched] are those it may have deleted).
-/// With the contacts provider gone, reads find nothing instead of failing,
-/// which would look like everything was deleted, or nothing created.
+/// ([after]) can be trusted: unless the action touched them all, some of
+/// the raw contacts from [before] that it left alone are still there
+/// ([touched] are those it may have deleted). With the contacts provider
+/// gone, reads find nothing instead of failing, which would look like
+/// everything was deleted, or nothing created. (Some may be gone for other
+/// reasons, say deleted by a sync meanwhile.)
 bool _plausibleAfterFailure(AddressBook before, AddressBook after,
     {Set<String> touched = const {}}) {
   final present = allRawIds(after);
-  return allRawIds(before)
-      .every((raw) => touched.contains(raw) || present.contains(raw));
+  final untouched = allRawIds(before).difference(touched);
+  return untouched.isEmpty || untouched.any(present.contains);
 }
 
 /// After creating failed: reads the address book again, records in the
@@ -335,7 +336,7 @@ Future<({int count, bool saved})?> _recordCreatedBeforeFailure(
     final everyone = await contacts.getAll();
     final after = addressBookOf(everyone);
     if (!_plausibleAfterFailure(plan.before, after)) {
-      throw StateError("contacts that were there before are missing");
+      throw StateError("all contacts that were there before are missing");
     }
     created = createdBeforeFailure(
       planned: entries,
@@ -465,8 +466,8 @@ Future<DeletePreview> countFakeContacts(
 ///
 /// If deleting fails, reads the address book again and throws
 /// [StoppedPartway] saying how far it got, unless all were deleted after
-/// all. If only saving the ledger fails, that is logged: all were deleted. An error before it starts
-/// deleting is thrown as it is.
+/// all. If only saving the ledger fails, that is logged: all were deleted.
+/// An error before it starts deleting is thrown as it is.
 Future<DeleteResult?> deleteFakeContacts(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings,
     {int? atMost}) async {
@@ -524,7 +525,7 @@ Future<int?> _countDeletedBeforeFailure(
         ...check.book[contactId]!,
     };
     if (!_plausibleAfterFailure(check.book, after, touched: planned)) {
-      throw StateError("contacts that weren't to be deleted are missing");
+      throw StateError("all contacts that weren't to be deleted are missing");
     }
     final present = allRawIds(after);
     return planned.where((raw) => !present.contains(raw)).length;

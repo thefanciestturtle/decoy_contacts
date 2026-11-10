@@ -295,6 +295,23 @@ void main() {
       );
     });
 
+    test('a contact that matches two fakes makes both ambiguous', () {
+      // c20 has the details of both; c21 only Zoe's. Either could be the
+      // Zoe Zen this app created.
+      expect(
+        createdBeforeFailure(
+          planned: [zoe, zach],
+          before: const {},
+          after: {'c20': ['20'], 'c21': ['21']},
+          fingerprintsByContact: {
+            'c20': {...fingerprintsMatching(zoe), ...fingerprintsMatching(zach)},
+            'c21': fingerprintsMatching(zoe),
+          },
+        ),
+        isEmpty,
+      );
+    });
+
     test('records nothing for a contact that matches two fakes', () {
       expect(
         createdBeforeFailure(
