@@ -38,16 +38,23 @@ ButtonStyle destructiveButtonStyle(ColorScheme colors) =>
 /// With [inward], the ring is drawn just inside the edge of all of [child]
 /// instead, as Material 3 does for a menu item (see [RingedMenuItem]), which
 /// has no edge of its own and fills the menu's width.
+///
+/// With [focusNode], the ring shows while that node itself has the focus,
+/// not while something inside it has: for an area that takes the focus
+/// and holds buttons of its own. (It can change to another node, but not
+/// to or from none.)
 class FocusRing extends StatefulWidget {
   const FocusRing(
       {super.key,
       required this.child,
       this.shape = const StadiumBorder(),
-      this.inward = false});
+      this.inward = false,
+      this.focusNode});
 
   final Widget child;
   final OutlinedBorder shape;
   final bool inward;
+  final FocusNode? focusNode;
 
   /// How far outside the button's edge the ring ends: a 2 dp gap, then the
   /// ring, 3 dp wide.
@@ -64,12 +71,35 @@ class _FocusRingState extends State<FocusRing> {
   void initState() {
     super.initState();
     FocusManager.instance.addHighlightModeListener(_highlightModeChanged);
+    widget.focusNode?.addListener(_nodeChanged);
+    _bFocused = widget.focusNode?.hasPrimaryFocus ?? false;
+  }
+
+  @override
+  void didUpdateWidget(FocusRing oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    assert((oldWidget.focusNode == null) == (widget.focusNode == null),
+        'A FocusRing can change its focusNode, but not to or from none.');
+    if (oldWidget.focusNode != widget.focusNode) {
+      oldWidget.focusNode?.removeListener(_nodeChanged);
+      widget.focusNode?.addListener(_nodeChanged);
+      _bFocused = widget.focusNode?.hasPrimaryFocus ?? false;
+    }
   }
 
   @override
   void dispose() {
     FocusManager.instance.removeHighlightModeListener(_highlightModeChanged);
+    widget.focusNode?.removeListener(_nodeChanged);
     super.dispose();
+  }
+
+  /// For [FocusRing.focusNode].
+  void _nodeChanged() {
+    final node = widget.focusNode;
+    if (node == null || node.hasPrimaryFocus == _bFocused) return;
+    if (!mounted) return;
+    setState(() => _bFocused = node.hasPrimaryFocus);
   }
 
   void _highlightModeChanged(FocusHighlightMode _) {
@@ -81,22 +111,26 @@ class _FocusRingState extends State<FocusRing> {
   Widget build(BuildContext context) {
     final bShow = _bFocused &&
         FocusManager.instance.highlightMode == FocusHighlightMode.traditional;
-    // Told when the button in it gets or loses the focus; never takes the
-    // focus itself, and adds nothing for TalkBack.
+    final painter = _FocusRingPainter(
+      inward: widget.inward,
+      shape: bShow
+          ? widget.shape.copyWith(
+              side: BorderSide(
+                  color: Theme.of(context).colorScheme.secondary, width: 3))
+          : null,
+      child: widget.child,
+    );
+    // Told when the button in it gets or loses the focus (unless it
+    // follows [FocusRing.focusNode] instead); never takes the focus itself,
+    // and adds nothing for TalkBack.
     return Focus(
       canRequestFocus: false,
       skipTraversal: true,
       includeSemantics: false,
-      onFocusChange: (bFocused) => setState(() => _bFocused = bFocused),
-      child: _FocusRingPainter(
-        inward: widget.inward,
-        shape: bShow
-            ? widget.shape.copyWith(
-                side: BorderSide(
-                    color: Theme.of(context).colorScheme.secondary, width: 3))
-            : null,
-        child: widget.child,
-      ),
+      onFocusChange: (bFocused) {
+        if (widget.focusNode == null) setState(() => _bFocused = bFocused);
+      },
+      child: painter,
     );
   }
 }

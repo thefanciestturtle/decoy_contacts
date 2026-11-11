@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 
+import 'about_page.dart';
 import 'app_log.dart';
 import 'app_theme.dart';
 import 'contact_actions.dart';
@@ -27,7 +28,7 @@ const Duration kSaveDelay = Duration(milliseconds: 500);
 const Duration kTalkBackRefocusTimeout = Duration(milliseconds: 1500);
 
 /// The items of the app bar's menu.
-enum _MenuAction { reset }
+enum _MenuAction { reset, about }
 
 class MyHomePage extends StatefulWidget {
   const MyHomePage({
@@ -68,6 +69,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   static const Key keyDelete = Key("Delete");
   static const Key keyMenu = Key("Menu");
   static const Key keyReset = Key("Reset");
+  static const Key keyAbout = Key("About");
 
   final TextEditingController lastNamesController = TextEditingController();
   final TextEditingController firstNamesController = TextEditingController();
@@ -755,6 +757,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     switch (action) {
       case _MenuAction.reset:
         unawaited(_resetToDefaults(field));
+      case _MenuAction.about:
+        // (The field isn't given its focus back afterwards: the user has
+        // been elsewhere.)
+        unawaited(Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const AboutPage())));
     }
   }
 
@@ -927,8 +934,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     key: keyMenu,
                     // Android's name for it.
                     tooltip: "More options",
-                    // Not while Create or Delete runs, which uses the
-                    // settings.
+                    // Not while Create or Delete runs: Reset would change
+                    // the settings it uses, and About would hide its
+                    // progress and its result.
                     enabled: bCanAct,
                     onOpened: _menuOpened,
                     onCanceled: _menuCanceled,
@@ -940,6 +948,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                         value: _MenuAction.reset,
                         enabled: _settings != Settings.defaults,
                         child: const Text("Reset to defaults"),
+                      ),
+                      const RingedMenuItem(
+                        key: keyAbout,
+                        value: _MenuAction.about,
+                        child: Text("About"),
                       ),
                     ],
                   ),

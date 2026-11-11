@@ -450,21 +450,25 @@ void main() {
       expect(find.text('Delete Fake Contacts').hitTestable(), findsOneWidget);
     });
 
-    testWidgets('Reset to defaults: the menu and its dialog fit, and the '
-        'message is scrolled into view (U9)', (WidgetTester tester) async {
+    testWidgets('Reset to defaults: the menu (with About) and its dialog '
+        'fit, and the message is scrolled into view (U9)', (WidgetTester tester) async {
       smallScreen(tester);
       await pumpMyApp(tester, MyApp(contacts: InMemoryContactsGateway()));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('Menu')));
       await tester.pumpAndSettle();
       final item = find.byKey(const Key('Reset'));
-      expect(item.hitTestable(), findsOneWidget);
-      // On screen (over the app bar, as Android's own menus are).
+      // Both items on screen (over the app bar, as Android's own menus are).
       final view = tester.view;
-      expect(
-          (Offset.zero & (view.physicalSize / view.devicePixelRatio))
-              .contains(tester.getRect(item).bottomRight - const Offset(1, 1)),
-          isTrue);
+      final screen = Offset.zero & (view.physicalSize / view.devicePixelRatio);
+      for (final key in ['Reset', 'About']) {
+        final found = find.byKey(Key(key));
+        expect(found.hitTestable(), findsOneWidget, reason: key);
+        final rect = tester.getRect(found);
+        expect(screen.contains(rect.topLeft), isTrue, reason: key);
+        expect(screen.contains(rect.bottomRight - const Offset(1, 1)), isTrue,
+            reason: key);
+      }
       await tester.tap(item);
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);

@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' show Tristate;
 
+import 'package:fake_contacts/about_page.dart' show AboutPage, kAppVersion;
 import 'package:fake_contacts/app_log.dart';
 import 'package:fake_contacts/app_theme.dart' show FocusRing, RenderFocusRing;
 import 'package:fake_contacts/contact_actions.dart'
@@ -349,6 +350,31 @@ void expectRingAround(WidgetTester tester, Finder button) {
   expect(shape.side.width, 3);
   expect(shape.side.color,
       Theme.of(tester.element(button)).colorScheme.secondary);
+}
+
+/// The app bar's menu button (⋮).
+final Finder menu = find.byKey(const Key('Menu'));
+
+/// Whether the keyboard focus is on the menu button.
+bool menuFocused(WidgetTester tester) {
+  final focused = FocusManager.instance.primaryFocus?.context;
+  if (focused == null) return false;
+  final button = tester.element(menu);
+  var bFound = false;
+  focused.visitAncestorElements((e) => !(bFound = e == button));
+  return bFound;
+}
+
+/// Expects one focus ring on screen, just inside the edge of [item].
+void expectRingInside(WidgetTester tester, Finder item) {
+  final shown = rings(tester);
+  expect(shown, hasLength(1));
+  final (rect, shape) = shown.single;
+  expect(rect, tester.getRect(item));
+  expect(shape, isA<RoundedRectangleBorder>());
+  expect(shape.side.width, 3);
+  expect(shape.side.color,
+      Theme.of(tester.element(item)).colorScheme.secondary);
 }
 
 FocusNode focusOf(WidgetTester tester, String key) =>
@@ -2639,7 +2665,6 @@ void main() {
   });
 
   group('reset to defaults (U9)', () {
-    final Finder menu = find.byKey(const Key('Menu'));
     final Finder resetItem = find.byKey(const Key('Reset'));
     const String kReset = 'Names and templates reset to the defaults.';
     const kFieldKeys = [
@@ -2688,28 +2713,6 @@ void main() {
       await tester.tap(resetItem);
       await tester.pumpAndSettle();
       expect(find.byType(AlertDialog), findsOneWidget);
-    }
-
-    /// Whether the keyboard focus is on the menu button.
-    bool menuFocused(WidgetTester tester) {
-      final focused = FocusManager.instance.primaryFocus?.context;
-      if (focused == null) return false;
-      final button = tester.element(menu);
-      var bFound = false;
-      focused.visitAncestorElements((e) => !(bFound = e == button));
-      return bFound;
-    }
-
-    /// Expects one focus ring on screen, just inside the edge of [item].
-    void expectRingInside(WidgetTester tester, Finder item) {
-      final shown = rings(tester);
-      expect(shown, hasLength(1));
-      final (rect, shape) = shown.single;
-      expect(rect, tester.getRect(item));
-      expect(shape, isA<RoundedRectangleBorder>());
-      expect(shape.side.width, 3);
-      expect(shape.side.color,
-          Theme.of(tester.element(item)).colorScheme.secondary);
     }
 
     testWidgets('puts the name lists and templates back and saves them at '
@@ -3157,6 +3160,115 @@ void main() {
           isSemantics(tooltip: 'More options', hasEnabledState: true,
               isEnabled: false, hasTapAction: false));
       slow.answer.complete(PermissionAnswer.denied);
+      await tester.pumpAndSettle();
+      handle.dispose();
+    });
+  });
+
+  group('About (U9)', () {
+    final Finder aboutItem = find.byKey(const Key('About'));
+
+    Future<void> openAbout(WidgetTester tester) async {
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      await tester.tap(aboutItem);
+      await tester.pumpAndSettle();
+      expect(find.byType(AboutPage), findsOneWidget);
+    }
+
+    testWidgets('opens from the menu, also while the fields hold the '
+        'defaults; Back returns to the page as it was, the result still '
+        'there', (tester) async {
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      final result = resultText(tester);
+      final settings = await SharedPreferences.getInstance();
+      final before = {for (final key in kSettings.keys) key: settings.get(key)};
+
+      await openAbout(tester);
+      expect(find.text('Version $kAppVersion'), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byType(AboutPage), findsNothing);
+      expect(resultText(tester), result);
+      expect({for (final key in kSettings.keys) key: settings.get(key)},
+          before);
+      // Create and Delete still work.
+      await tapDelete(tester);
+      expect(resultText(tester), 'Deleted 4 fake contacts.');
+
+      // With the defaults, Reset is greyed, but not About.
+      // (After the app is gone: it saves its settings as it goes.)
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      SharedPreferences.setMockInitialValues({});
+      await pumpApp(tester, book);
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      expect(
+          tester.widget<PopupMenuItem<Object?>>(find.byKey(const Key('Reset')))
+              .enabled,
+          isFalse);
+      expect(tester.widget<PopupMenuItem<Object?>>(aboutItem).enabled, isTrue);
+      await tester.tap(aboutItem);
+      await tester.pumpAndSettle();
+      expect(find.byType(AboutPage), findsOneWidget);
+    });
+
+    testWidgets("a text field being edited doesn't get the focus back "
+        "afterwards: its keyboard stays closed", (tester) async {
+      await pumpApp(tester, book);
+      await tester.tap(find.byKey(const Key('FirstNames')));
+      await tester.pump();
+      expect(tester.testTextInput.isVisible, isTrue);
+      await openAbout(tester);
+      expect(tester.testTextInput.isVisible, isFalse);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(tester.testTextInput.isVisible, isFalse);
+      expect(
+          FocusManager.instance.primaryFocus?.context
+              ?.findAncestorWidgetOfExactType<TextField>(),
+          isNull);
+    });
+
+    testWidgets('all by keyboard: Down twice to About, with its ring; Enter; '
+        'Back by Tab and Enter; the focus is back on the menu button',
+        (tester) async {
+      await pumpApp(tester, book);
+      Future<void> press(LogicalKeyboardKey key) async {
+        await tester.sendKeyEvent(key);
+        await tester.pumpAndSettle();
+      }
+
+      await press(LogicalKeyboardKey.tab);
+      expect(menuFocused(tester), isTrue);
+      await press(LogicalKeyboardKey.enter);
+      await press(LogicalKeyboardKey.arrowDown);
+      await press(LogicalKeyboardKey.arrowDown);
+      expectRingInside(tester, aboutItem);
+      await press(LogicalKeyboardKey.enter);
+      expect(find.byType(AboutPage), findsOneWidget);
+      await press(LogicalKeyboardKey.tab);
+      expect(
+          FocusManager.instance.primaryFocus?.context
+              ?.findAncestorWidgetOfExactType<BackButton>(),
+          isNotNull);
+      await press(LogicalKeyboardKey.enter);
+      expect(find.byType(AboutPage), findsNothing);
+      expect(menuFocused(tester), isTrue);
+      expectRingAround(tester, menu);
+    });
+
+    testWidgets('TalkBack hears the item as "About"', (tester) async {
+      final handle = tester.ensureSemantics();
+      await pumpApp(tester, book);
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      expect(tester.getSemantics(find.text('About')),
+          isSemantics(label: 'About', isButton: true, hasEnabledState: true,
+              isEnabled: true, hasTapAction: true));
+      await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       handle.dispose();
     });

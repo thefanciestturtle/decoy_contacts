@@ -61,6 +61,9 @@ void main() {
             Color.alphaBlend(theme.focusColor, colors.surfaceContainer), 4.5),
         ('the focus ring on a menu item', colors.secondary,
             Color.alphaBlend(theme.focusColor, colors.surfaceContainer), 3.0),
+        // The About page: its link, and the message if it can't be opened
+        // (the error colour, as above).
+        ('the link on About', colors.primary, background, 4.5),
       ]) {
         test('contrast: $what', () {
           expect(contrast(color, on), greaterThanOrEqualTo(minimum),
@@ -124,6 +127,54 @@ void main() {
       expect(ring.ringRect, const Rect.fromLTWH(0, 0, 100, 40));
       expect(ring.shape!.side.strokeAlign, BorderSide.strokeAlignInside);
       expect(ring.shape!.side.width, 3);
+    });
+
+    testWidgets('with focusNode: only while that node itself has the '
+        'focus; none once it follows another node', (tester) async {
+      final area = FocusNode();
+      final inner = FocusNode();
+      final another = FocusNode();
+      addTearDown(area.dispose);
+      addTearDown(inner.dispose);
+      addTearDown(another.dispose);
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      Widget app(FocusNode follows) => MaterialApp(
+            theme: appTheme(Brightness.light),
+            home: Column(mainAxisSize: MainAxisSize.min, children: [
+              FocusRing(
+                focusNode: follows,
+                inward: true,
+                shape: const RoundedRectangleBorder(),
+                child: Focus(
+                  focusNode: area,
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const SizedBox(width: 100, height: 40),
+                    Focus(focusNode: inner, child: const SizedBox(height: 10)),
+                  ]),
+                ),
+              ),
+            ]));
+      Future<RenderFocusRing> pump(FocusNode follows) async {
+        await tester.pumpWidget(app(follows));
+        await tester.pump();
+        return tester.renderObject<RenderFocusRing>(find.byType(FocusRing));
+      }
+
+      var ring = await pump(area);
+      area.requestFocus();
+      await tester.pump();
+      await tester.pump();
+      expect(ring.ringRect, isNotNull);
+      inner.requestFocus();
+      await tester.pump();
+      await tester.pump();
+      expect(ring.ringRect, isNull, reason: 'something inside has it');
+      area.requestFocus();
+      await tester.pump();
+      await tester.pump();
+      expect(ring.ringRect, isNotNull);
+      ring = await pump(another);
+      expect(ring.ringRect, isNull);
     });
 
     testWidgets('none without the focus', (tester) async {

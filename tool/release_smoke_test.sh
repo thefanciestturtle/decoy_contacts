@@ -19,6 +19,9 @@
 # no Dart error in the log. Contacts are not exercised: the app only touches
 # them when Create or Delete is tapped.
 #
+# It also checks that the app asks for no internet access: its privacy policy
+# says it has none. (Debug and profile builds do ask, for Flutter's tools.)
+#
 # Release builds can't be inspected with `run-as`, so this needs an emulator
 # image where `adb root` works (google_apis, not google_apis_playstore). The
 # app and its data are replaced, and the app is uninstalled at the end.
@@ -150,6 +153,17 @@ become_root || fail "adb root didn't work; use an emulator image without Play St
 echo "== Installing $apk"
 adb_ uninstall "$APP_ID" >/dev/null 2>&1 || true
 adb_ install "$apk" >/dev/null || fail "couldn't install $apk"
+
+echo "== The app should ask for no internet access"
+# Only the lines of that list: it ends at the next heading (a line ending
+# in a colon).
+requested="$(adb_ shell dumpsys package "$APP_ID" | tr -d '\r' |
+  awk '/requested permissions:/ { bIn = 1; next } /:$/ { bIn = 0 } bIn')"
+[[ "$requested" == *android.permission.READ_CONTACTS* ]] ||
+  fail "couldn't read the app's requested permissions"
+if [[ "$requested" == *android.permission.INTERNET* ]]; then
+  fail "the app asks for internet access (android.permission.INTERNET)"
+fi
 
 echo "== First start: the app should save its default settings"
 start_app
