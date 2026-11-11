@@ -398,9 +398,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// Cancel, Back and tapping outside the dialog all count as no.
   ///
   /// With [keepWaiting], [_waitingForUser] stays set after a yes, for
-  /// whatever waits for the user next; finish() clears it.
+  /// whatever waits for the user next; finish() clears it. With
+  /// [destructive], the button that goes ahead is in the error colour, as
+  /// the Delete button is.
   Future<bool> _confirm(Confirmation confirmation,
-      {bool keepWaiting = false}) async {
+      {bool keepWaiting = false, bool destructive = false}) async {
     if (!mounted) return false;
     setState(() { _waitingForUser = true; });
     final bool? bConfirmed = await showDialog<bool>(
@@ -420,6 +422,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
           FocusRing(
             child: TextButton(
               onPressed: () => Navigator.pop(context, true),
+              style: destructive
+                  ? TextButton.styleFrom(
+                      foregroundColor: Theme.of(context).colorScheme.error)
+                  : null,
               child: Text(confirmation.action),
             ),
           ),
@@ -448,10 +454,12 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// change while the dialog is open; it gets the preview so it can refuse
   /// (by returning null) to do more than the user agreed to. [failed] gives
   /// the message for an error in [action]. [name] is used in the log, which
-  /// also gets each error's details. [button] is the button tapped.
+  /// also gets each error's details. [button] is the button tapped;
+  /// [destructive] says whether [action] deletes contacts.
   Future<void> _runContactsAction<P, R>({
     required String name,
     required FocusNode button,
+    required bool destructive,
     required Confirmation permissionSettings,
     required Future<P> Function(Settings settings) preview,
     required ResultMessage? Function(Settings settings, P preview) nothingToDo,
@@ -576,7 +584,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     final sNothingToDo = nothingToDo(settings, planned);
     if (sNothingToDo != null) return finish(sNothingToDo);
 
-    if (!await _confirm(confirmation(planned))) {
+    if (!await _confirm(confirmation(planned), destructive: destructive)) {
       log("$name: cancelled");
       return finish(null);
     }
@@ -600,6 +608,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   Future<void> _createAllContacts() => _runContactsAction(
         name: "_createAllContacts",
         button: _createFocus,
+        destructive: false,
         permissionSettings: permissionSettingsConfirmation("create"),
         preview: (settings) =>
             previewCreate(widget.contacts, widget.ledgerStore, settings),
@@ -620,6 +629,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   Future<void> _deleteAllContacts() => _runContactsAction(
         name: "_deleteAllContacts",
         button: _deleteFocus,
+        destructive: true,
         permissionSettings: permissionSettingsConfirmation("delete"),
         preview: (settings) =>
             previewDelete(widget.contacts, widget.ledgerStore, settings),

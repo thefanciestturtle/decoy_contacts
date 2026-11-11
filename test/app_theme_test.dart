@@ -42,6 +42,8 @@ void main() {
             colors.surfaceContainerHigh, 4.5),
         ('the dialog\'s buttons', colors.primary, colors.surfaceContainerHigh,
             4.5),
+        ('the dialog\'s Delete', colors.error, colors.surfaceContainerHigh,
+            4.5),
         ('the focus ring in the dialog', colors.secondary,
             colors.surfaceContainerHigh, 3.0),
       ]) {

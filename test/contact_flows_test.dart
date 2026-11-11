@@ -2197,6 +2197,39 @@ void main() {
     });
   });
 
+  testWidgets("the dialog's Delete is in the error colour, as the Delete "
+      'button is; Create and Cancel are not (U7)', (tester) async {
+    await pumpApp(tester, book);
+    final colors =
+        Theme.of(tester.element(find.byType(Scaffold))).colorScheme;
+    Color? colorOf(String label) => tester
+        .widget<TextButton>(dialogButton(label))
+        .style
+        ?.foregroundColor
+        ?.resolve({});
+
+    await tapAndOpenDialog(tester, kCreateButton);
+    expect(colorOf('Create'), isNot(colors.error));
+    expect(colorOf('Cancel'), isNot(colors.error));
+    await tester.tap(dialogButton('Create'));
+    await tester.pumpAndSettle();
+
+    await tapAndOpenDialog(tester, kDeleteButton);
+    expect(colorOf('Delete'), colors.error);
+    expect(colorOf('Cancel'), isNot(colors.error));
+    // The text as drawn.
+    expect(
+        tester
+            .widget<RichText>(find.descendant(
+                of: dialogButton('Delete'), matching: find.byType(RichText)))
+            .text
+            .style
+            ?.color,
+        colors.error);
+    await tester.tap(dialogButton('Cancel'));
+    await tester.pumpAndSettle();
+  });
+
   group('results under the buttons (U7)', () {
     testWidgets('plain text; failures with an error icon, in the error colour',
         (tester) async {
