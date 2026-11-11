@@ -470,11 +470,13 @@ void main() {
     await tester.pumpAndSettle();
     expectDialog(tester, 'Reset to defaults?');
     await tester.tap(dialogButton('Reset'));
-    await pumpUntil(tester, () => resultFinder.evaluate().isNotEmpty,
+    // The message itself: until the next frame, Create's result is still
+    // on screen.
+    await pumpUntil(
+        tester,
+        () => resultText(tester) == 'Names and templates reset to the defaults.',
         'the reset message');
     await tester.pumpAndSettle();
-    expect(tester.widget<Text>(resultFinder).data,
-        'Names and templates reset to the defaults.');
 
     // On disk, not only in the plugin's memory.
     final prefs = await SharedPreferences.getInstance();
@@ -629,6 +631,11 @@ bool createButtonEnabled(WidgetTester tester) {
 
 /// The result under the buttons, if any.
 final Finder resultFinder = find.byKey(const Key('Result'));
+
+/// The result under the buttons, or null if there is none.
+String? resultText(WidgetTester tester) => resultFinder.evaluate().isEmpty
+    ? null
+    : tester.widget<Text>(resultFinder).data;
 
 /// Taps the button labelled [label] and returns the text of the result
 /// under the buttons. The app talks to the real contacts provider, so this
