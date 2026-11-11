@@ -135,6 +135,10 @@ class _AboutPageState extends State<AboutPage> {
 
   bool _bLinkFailed = false;
 
+  /// Set while the link is being opened: a second tap meanwhile does
+  /// nothing.
+  bool _bOpening = false;
+
   /// Where a scroll by key is heading, while it runs: the next key press
   /// goes on from there (a key held down repeats faster than the scroll).
   double? _scrollTarget;
@@ -171,6 +175,9 @@ class _AboutPageState extends State<AboutPage> {
     final double target = (from + step)
         .clamp(position.minScrollExtent, position.maxScrollExtent);
     if (target == from) {
+      // Not while it still scrolls there: a key held down waits for the
+      // end to be in view.
+      if (_scrollTarget != null) return KeyEventResult.handled;
       if (key == LogicalKeyboardKey.arrowDown) node.nextFocus();
       if (key == LogicalKeyboardKey.arrowUp) node.previousFocus();
       return KeyEventResult.handled;
@@ -187,6 +194,8 @@ class _AboutPageState extends State<AboutPage> {
   }
 
   Future<void> _openSource() async {
+    if (_bOpening) return;
+    _bOpening = true;
     setState(() => _bLinkFailed = false);
     bool bOpened;
     try {
@@ -194,6 +203,8 @@ class _AboutPageState extends State<AboutPage> {
     } catch (e, st) {
       logError('AboutPage, opening the link', e, st);
       bOpened = false;
+    } finally {
+      _bOpening = false;
     }
     if (!mounted) return;
     setState(() => _bLinkFailed = !bOpened);

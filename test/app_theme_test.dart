@@ -129,6 +129,51 @@ void main() {
       expect(ring.shape!.side.width, 3);
     });
 
+    testWidgets('with focusNode: only while that node itself has the '
+        'focus; none once it no longer follows it', (tester) async {
+      final area = FocusNode();
+      final inner = FocusNode();
+      addTearDown(area.dispose);
+      addTearDown(inner.dispose);
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      Future<RenderFocusRing> pump(FocusNode? follows) async {
+        await tester.pumpWidget(MaterialApp(
+            theme: appTheme(Brightness.light),
+            home: Column(mainAxisSize: MainAxisSize.min, children: [
+              FocusRing(
+                focusNode: follows,
+                inward: true,
+                shape: const RoundedRectangleBorder(),
+                child: Focus(
+                  focusNode: area,
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const SizedBox(width: 100, height: 40),
+                    Focus(focusNode: inner, child: const SizedBox(height: 10)),
+                  ]),
+                ),
+              ),
+            ])));
+        await tester.pump();
+        return tester.renderObject<RenderFocusRing>(find.byType(FocusRing));
+      }
+
+      var ring = await pump(area);
+      area.requestFocus();
+      await tester.pump();
+      await tester.pump();
+      expect(ring.ringRect, isNotNull);
+      inner.requestFocus();
+      await tester.pump();
+      await tester.pump();
+      expect(ring.ringRect, isNull, reason: 'something inside has it');
+      area.requestFocus();
+      await tester.pump();
+      await tester.pump();
+      expect(ring.ringRect, isNotNull);
+      ring = await pump(null);
+      expect(ring.ringRect, isNull);
+    });
+
     testWidgets('none without the focus', (tester) async {
       final ring = await pumpRing(tester, inward: true);
       other.requestFocus();

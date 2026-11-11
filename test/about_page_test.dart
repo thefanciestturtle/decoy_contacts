@@ -236,6 +236,27 @@ void main() {
       expect(linkFailed, findsOneWidget);
     });
 
+    testWidgets('a second tap while it opens does nothing', (tester) async {
+      final browser = FakeBrowser();
+      await pumpAbout(tester, browser);
+      await tester.ensureVisible(link);
+      await tester.pumpAndSettle();
+      final opening = Completer<bool>();
+      browser.pending = opening;
+      await tester.tap(link);
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(link);
+      await tester.pump();
+      expect(browser.opened, [kSourceUrl]);
+      opening.complete(true);
+      await tester.pumpAndSettle();
+      expect(linkFailed, findsNothing);
+      // Once it has opened, a tap opens it again.
+      await tester.tap(link);
+      await tester.pumpAndSettle();
+      expect(browser.opened, [kSourceUrl, kSourceUrl]);
+    });
+
     testWidgets('an error opening it is logged, and said', (tester) async {
       final logged = <String>[];
       final previous = errorLogSink;
@@ -339,6 +360,30 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowDown);
       await tester.pumpAndSettle();
       expect(position(tester).pixels, 4 * kArrowScrollStep);
+    });
+
+    testWidgets('a key held down at the end waits for the end to be in '
+        'view before it moves on', (tester) async {
+      await pumpAbout(tester, FakeBrowser());
+      textFocus(tester).requestFocus();
+      await tester.pumpAndSettle();
+      final scroll = position(tester);
+      scroll.jumpTo(scroll.maxScrollExtent - kArrowScrollStep / 2);
+      await tester.pump();
+      // The first press scrolls to the end; the repeats come before it
+      // gets there.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowDown);
+      for (var i = 0; i < 3; i++) {
+        await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowDown);
+      }
+      expect(textFocus(tester).hasPrimaryFocus, isTrue);
+      await tester.pumpAndSettle();
+      expect(scroll.pixels, scroll.maxScrollExtent);
+      expect(textFocus(tester).hasPrimaryFocus, isTrue);
+      await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowDown);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+      expect(focusOf(tester, link).hasPrimaryFocus, isTrue);
     });
 
     testWidgets("on the link or Licenses, the arrows move the focus as "

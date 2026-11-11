@@ -155,8 +155,10 @@ adb_ uninstall "$APP_ID" >/dev/null 2>&1 || true
 adb_ install "$apk" >/dev/null || fail "couldn't install $apk"
 
 echo "== The app should ask for no internet access"
-requested="$(adb_ shell dumpsys package "$APP_ID" |
-  sed -n '/requested permissions:/,/permissions:/p')"
+# Only the lines of that list: it ends at the next heading (a line ending
+# in a colon).
+requested="$(adb_ shell dumpsys package "$APP_ID" | tr -d '\r' |
+  awk '/requested permissions:/ { bIn = 1; next } /:$/ { bIn = 0 } bIn')"
 [[ "$requested" == *android.permission.READ_CONTACTS* ]] ||
   fail "couldn't read the app's requested permissions"
 if [[ "$requested" == *android.permission.INTERNET* ]]; then

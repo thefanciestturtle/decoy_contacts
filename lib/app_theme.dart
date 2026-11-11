@@ -80,7 +80,9 @@ class _FocusRingState extends State<FocusRing> {
     if (oldWidget.focusNode != widget.focusNode) {
       oldWidget.focusNode?.removeListener(_nodeChanged);
       widget.focusNode?.addListener(_nodeChanged);
-      _nodeChanged();
+      // (Without a node, the ring shows again once the button in it gets
+      // the focus.)
+      _bFocused = widget.focusNode?.hasPrimaryFocus ?? false;
     }
   }
 

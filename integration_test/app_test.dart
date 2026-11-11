@@ -10,7 +10,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:fake_contacts/about_page.dart'
-    show kAppVersion, kLicensePackage;
+    show AboutPage, kAppVersion, kLicensePackage;
 import 'package:fake_contacts/contact_actions.dart'
     show kCreateChunkSize, kDeleteChunkSize;
 import 'package:fake_contacts/contacts_gateway.dart' show NewContact;
@@ -529,11 +529,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Copyright (c) 2021 Bill Dietrich'), findsOneWidget);
 
-    // Back to the app's page.
-    for (var i = 0; i < 3; i++) {
+    // Back to the app's page (how many pages that takes depends on the
+    // licence page's layout, which on a wide screen is one page).
+    for (var i = 0; i < 4 && find.byType(AboutPage).evaluate().isNotEmpty;
+        i++) {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
     }
+    expect(find.byType(AboutPage), findsNothing);
     expect(find.text('Create Fake Contacts'), findsOneWidget);
   });
 
