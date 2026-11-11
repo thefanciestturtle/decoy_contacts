@@ -136,6 +136,16 @@ Finder dialogButton(String label) => find.descendant(
 /// The result under the buttons, if any.
 final Finder resultFinder = find.byKey(const Key('Result'));
 
+/// Pumps until the dialog has gone, checking meanwhile that no result
+/// shows: it would come back with the page, in the update in which the
+/// dialog goes, and TalkBack would skip it (see LiveRegionAnnouncements).
+Future<void> noResultUntilDialogGone(WidgetTester tester) async {
+  while (find.byType(AlertDialog).evaluate().isNotEmpty) {
+    expect(resultFinder, findsNothing);
+    await tester.pump(const Duration(milliseconds: 10));
+  }
+}
+
 /// The text of the result under the buttons; fails if there is none.
 String resultText(WidgetTester tester) =>
     tester.widget<Text>(resultFinder).data!;
@@ -2665,16 +2675,6 @@ void main() {
   });
 
   group('TalkBack hears results after a dialog (U13)', () {
-    /// Pumps until the dialog has gone, checking meanwhile that no result
-    /// shows: it would come back with the page, in the update in which the
-    /// dialog goes, and TalkBack would skip it.
-    Future<void> noResultUntilDialogGone(WidgetTester tester) async {
-      while (find.byType(AlertDialog).evaluate().isNotEmpty) {
-        expect(resultFinder, findsNothing);
-        await tester.pump(const Duration(milliseconds: 10));
-      }
-    }
-
     testWidgets('a quick Create and Delete: the result shows once the '
         'dialog has gone, and is read out', (tester) async {
       await pumpApp(tester, book);
@@ -2687,8 +2687,10 @@ void main() {
         await tapAndOpenDialog(tester, button);
         await tester.tap(dialogButton(answer));
         await tester.pump();
+        await tester.pump();
         // Done already; the dialog is closing.
-        expect(buttonsEnabled(tester), isTrue, reason: button);
+        expect(book.all, hasLength(answer == 'Create' ? 4 : 0),
+            reason: button);
         await noResultUntilDialogGone(tester);
         await tester.pumpAndSettle();
         expect(resultText(tester), result);
@@ -2731,22 +2733,26 @@ void main() {
       heard.dispose();
     });
 
-    testWidgets('a Delete started while the dialog of a Create is still '
-        "closing: the Create's result never shows", (tester) async {
+    testWidgets('busy until the dialog has gone: taps meanwhile do '
+        'nothing, then the result shows', (tester) async {
       await pumpApp(tester, book);
       await tapAndOpenDialog(tester, kCreateButton);
       await tester.tap(dialogButton('Create'));
       await tester.pump();
+      await tester.pump();
       expect(book.all, hasLength(4));
       expect(find.byType(AlertDialog), findsOneWidget);
-      // While the dialog closes, taps reach the page.
-      await tester.tap(find.text(kDeleteButton));
+      // While the dialog closes, taps reach the page, but do nothing.
+      expect(buttonsEnabled(tester), isFalse);
+      expect(tester.widget<PopupMenuButton<Object?>>(menu).enabled, isFalse);
+      await tester.tap(find.text(kDeleteButton), warnIfMissed: false);
+      await tester.pump();
+      await noResultUntilDialogGone(tester);
       await tester.pumpAndSettle();
-      expect(dialogText(tester).title, 'Delete 4 fake contacts?');
-      expect(resultFinder, findsNothing);
-      await tester.tap(dialogButton('Delete'));
-      await tester.pumpAndSettle();
-      expect(resultText(tester), 'Deleted 4 fake contacts.');
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(book.all, hasLength(4));
+      expect(resultText(tester), 'Created 4 fake contacts.');
+      expect(buttonsEnabled(tester), isTrue);
     });
 
     testWidgets('a result whose dialog is still closing when the app goes '
@@ -3051,12 +3057,8 @@ void main() {
           // The fields and the last result at once.
           expect(fields(tester), kDefaults);
           expect(resultFinder, findsNothing);
-          // The message not while the dialog is still closing: TalkBack
-          // would never read it out.
-          while (find.byType(AlertDialog).evaluate().isNotEmpty) {
-            expect(resultFinder, findsNothing);
-            await tester.pump(const Duration(milliseconds: 10));
-          }
+          // The message not while the dialog is still closing.
+          await noResultUntilDialogGone(tester);
           await tester.pumpAndSettle();
           expect(resultText(tester), kReset);
         }

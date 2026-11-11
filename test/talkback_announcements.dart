@@ -15,11 +15,16 @@ import 'package:flutter_test/flutter_test.dart';
 /// page, in the update in which the dialog goes, and is never read out;
 /// one shown an update later is.) Pump a frame after creating it, so it
 /// knows the page as it is.
+///
+/// Call [dispose] at the end of the test: flutter_test checks for open
+/// semantics handles before its tear-downs run. (A tear-down disposes of
+/// it too, in case the test fails first.)
 class LiveRegionAnnouncements {
   LiveRegionAnnouncements(WidgetTester tester)
       : _handle = tester.ensureSemantics(),
         _owner = tester.binding.renderViews.first.owner!.semanticsOwner! {
     _owner.addListener(_updated);
+    addTearDown(dispose);
   }
 
   final SemanticsHandle _handle;
@@ -59,7 +64,11 @@ class LiveRegionAnnouncements {
     _previousRoutes = routes;
   }
 
+  bool _bDisposed = false;
+
   void dispose() {
+    if (_bDisposed) return;
+    _bDisposed = true;
     _owner.removeListener(_updated);
     _handle.dispose();
   }

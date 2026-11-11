@@ -315,8 +315,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   }
 
   /// Set from a tap on Create or Delete until it has ended (also if it was
-  /// cancelled). Its result, if any, shows then, or once its dialog has
-  /// gone (see [_ask]), and a few frames later if the button gets the
+  /// cancelled) and its dialog, if any, has gone (see [_ask]). Its result,
+  /// if any, shows then, or a few frames later if the button gets the
   /// keyboard focus back. The buttons are disabled meanwhile, so they lose
   /// the keyboard focus; see [_refocus].
   bool _isBusy = false;
@@ -483,8 +483,13 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     if (mounted && !(keepWaiting && bYes)) {
       setState(() { _waitingForUser = false; });
     }
-    return (yes: bYes, gone: _drawnWithout(dialog));
+    final gone = _dialogGone = _drawnWithout(dialog);
+    return (yes: bYes, gone: gone);
   }
+
+  /// `gone` of the last dialog [_ask] showed: a Create or Delete stays
+  /// busy until it has completed, and only then shows its result.
+  Future<void> _dialogGone = Future<void>.value();
 
   /// Completes once [dialog] has gone (its closing animation done) and a
   /// frame has been drawn without it. (Flutter completes
@@ -553,11 +558,12 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     }
     if (!mounted) return;
 
-    // The last dialog the user answered (see [_ask]): the result waits
-    // until it has gone.
-    Future<void> dialogGone = Future<void>.value();
-
-    void finish(ResultMessage? message) {
+    Future<void> finish(ResultMessage? message) async {
+      // Busy until the last dialog, if any, has gone, and the result only
+      // then (see [_ask]), else TalkBack would never read it out. (Until
+      // then nothing else can be opened over the page either, nor take the
+      // focus that is given back below.)
+      await _dialogGone;
       if (!mounted) return;
       // Stop goes away now, so it loses the focus too.
       final refocus = _stopFocus.hasFocus ? button : _refocus;
@@ -569,40 +575,33 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         _stopRequested = false;
       });
       unawaited(_refreshStatus());
-      // The result, once the dialog, if any, has gone (else TalkBack would
-      // never read it out); not if another run has started meanwhile.
-      unawaited(dialogGone.then((_) {
+      if (refocus == null) {
+        if (message != null) _showResult(message, button);
+        return;
+      }
+      final target = refocus;
+      // Once it is enabled again. (Nothing else can have taken the focus
+      // meanwhile: the fields are out of its reach and the buttons
+      // disabled, and Stop goes away. Flutter may have moved it to the
+      // other button, the one focused before, once enabled again.) Then,
+      // a frame later, the result: TalkBack reads out the newly focused
+      // button, which would cut short a result that came first or in the
+      // same update. (Neither if another run has started meanwhile.)
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted || run != _run) return;
-        if (refocus == null) {
-          if (message != null) _showResult(message, button);
-          return;
+        target.requestFocus();
+        if (message == null) return;
+        // Flutter applies the focus change before the next frame, and
+        // TalkBack hears of it with the one after; the result comes after
+        // that. (Shown even if the focus didn't move, e.g. with a D-pad,
+        // where a disabled button may keep it.)
+        for (var i = 0; i < 2; i++) {
+          // (Here, after a frame, Flutter doesn't schedule one by itself.)
+          WidgetsBinding.instance.ensureVisualUpdate();
+          await WidgetsBinding.instance.endOfFrame;
         }
-        final target = refocus;
-        // The focus first, once the button is enabled again. (Nothing else
-        // can have taken the focus meanwhile: the fields are out of its
-        // reach and the buttons disabled, and Stop goes away. Flutter may
-        // have moved it to the other button, the one focused before, once
-        // enabled again.) Then, a frame later, the result: TalkBack reads
-        // out the newly focused button, which would cut short a result that
-        // came first or in the same update.
-        WidgetsBinding.instance.addPostFrameCallback((_) async {
-          if (!mounted || run != _run) return;
-          target.requestFocus();
-          if (message == null) return;
-          // Flutter applies the focus change before the next frame, and
-          // TalkBack hears of it with the one after; the result comes after
-          // that. (Shown even if the focus didn't move, e.g. with a D-pad,
-          // where a disabled button may keep it.)
-          for (var i = 0; i < 2; i++) {
-            // (Here, after a frame, Flutter doesn't schedule one by itself.)
-            WidgetsBinding.instance.ensureVisualUpdate();
-            await WidgetsBinding.instance.endOfFrame;
-          }
-          if (mounted && run == _run) _showResult(message, button);
-        });
-        // (After the dialog has gone, no frame may be on its way.)
-        WidgetsBinding.instance.ensureVisualUpdate();
-      }));
+        if (mounted && run == _run) _showResult(message, button);
+      });
     }
 
     log("$name: about to request permission");
@@ -623,9 +622,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       case PermissionAnswer.permanentlyDenied:
         // The buttons stay disabled until the settings have been started,
         // so a quick second tap can't ask again; no spinner meanwhile.
-        final settingsDialog = await _ask(permissionSettings, keepWaiting: true);
-        dialogGone = settingsDialog.gone;
-        if (!settingsDialog.yes) {
+        if (!(await _ask(permissionSettings, keepWaiting: true)).yes) {
           log("$name: settings not opened");
           return finish(null);
         }
@@ -651,9 +648,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     final sNothingToDo = nothingToDo(settings, planned);
     if (sNothingToDo != null) return finish(sNothingToDo);
 
-    final dialog = await _ask(confirmation(planned), destructive: destructive);
-    dialogGone = dialog.gone;
-    if (!dialog.yes) {
+    if (!(await _ask(confirmation(planned), destructive: destructive)).yes) {
       log("$name: cancelled");
       return finish(null);
     }
