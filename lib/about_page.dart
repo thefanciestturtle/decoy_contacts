@@ -78,8 +78,8 @@ const List<(String, List<String>)> kAboutSections = [
   ]),
   ('Create and Delete', [
     'Create adds a fake contact for each first name with each last name. '
-        'In the templates, each n becomes a digit, and FIRST and LAST '
-        'become the names.',
+        'In the phone number template, each n becomes a digit. In the email '
+        'address template, FIRST and LAST become the names.',
     'Delete only removes fake contacts this app created, and only if they '
         'are still as it made them. Your real contacts are never touched.',
   ]),
@@ -152,8 +152,9 @@ class _AboutPageState extends State<AboutPage> {
   }
 
   /// Up and Down scroll the text by about a line, Page Up and Page Down
-  /// by most of a screen, while the text has the focus. Up at the top or
-  /// Down at the end moves the focus on, as from any other item.
+  /// by most of a screen, Home and End to the top and the end, while the
+  /// text has the focus. Up at the top or Down at the end moves the focus
+  /// on, as from any other item.
   KeyEventResult _scrollByKey(FocusNode node, KeyEvent event) {
     if (!node.hasPrimaryFocus || event is KeyUpEvent || !_scroll.hasClients) {
       return KeyEventResult.ignored;
@@ -169,6 +170,10 @@ class _AboutPageState extends State<AboutPage> {
       step = position.viewportDimension * 0.8;
     } else if (key == LogicalKeyboardKey.pageUp) {
       step = -position.viewportDimension * 0.8;
+    } else if (key == LogicalKeyboardKey.home) {
+      step = double.negativeInfinity;
+    } else if (key == LogicalKeyboardKey.end) {
+      step = double.infinity;
     } else {
       return KeyEventResult.ignored;
     }

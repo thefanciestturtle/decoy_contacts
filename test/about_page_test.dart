@@ -306,8 +306,9 @@ void main() {
     });
 
     testWidgets('the arrow keys scroll the text by a line, Page Up and Page '
-        'Down by most of a screen; Down at the end goes on to the link, Up '
-        'at the top back to Back', (tester) async {
+        'Down by most of a screen, Home and End all the way; Down at the '
+        'end goes on to the link, Up at the top back to Back',
+        (tester) async {
       await pumpAbout(tester, FakeBrowser());
       textFocus(tester).requestFocus();
       await tester.pumpAndSettle();
@@ -325,6 +326,15 @@ void main() {
       expect(scroll.pixels,
           kArrowScrollStep + 0.8 * scroll.viewportDimension);
       await press(tester, LogicalKeyboardKey.pageUp);
+      expect(scroll.pixels, kArrowScrollStep);
+      await press(tester, LogicalKeyboardKey.end);
+      expect(scroll.pixels, scroll.maxScrollExtent);
+      expect(textFocus(tester).hasPrimaryFocus, isTrue);
+      await press(tester, LogicalKeyboardKey.home);
+      expect(scroll.pixels, 0);
+      await press(tester, LogicalKeyboardKey.pageDown);
+      await press(tester, LogicalKeyboardKey.pageUp);
+      await press(tester, LogicalKeyboardKey.arrowDown);
       expect(scroll.pixels, kArrowScrollStep);
       // Not past the top.
       await press(tester, LogicalKeyboardKey.pageUp);

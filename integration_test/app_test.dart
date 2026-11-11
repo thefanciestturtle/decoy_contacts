@@ -531,12 +531,13 @@ void main() {
 
     // Back to the app's page (how many pages that takes depends on the
     // licence page's layout, which on a wide screen is one page).
-    for (var i = 0; i < 4 && find.byType(AboutPage).evaluate().isNotEmpty;
-        i++) {
+    // (About is offstage while the licence pages cover it.)
+    final about = find.byType(AboutPage, skipOffstage: false);
+    for (var i = 0; i < 4 && about.evaluate().isNotEmpty; i++) {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
     }
-    expect(find.byType(AboutPage), findsNothing);
+    expect(about, findsNothing);
     expect(find.text('Create Fake Contacts'), findsOneWidget);
   });
 
