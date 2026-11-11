@@ -2586,6 +2586,39 @@ void main() {
         expect(focusOf(tester, 'Create').hasPrimaryFocus, isTrue);
       });
 
+      testWidgets('with a D-pad, a button the user moved to while it ran '
+          'keeps the focus', (tester) async {
+        book.beforeCreateAll = hold;
+        tester.view.physicalSize = const Size(1080, 2400);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(MediaQuery(
+            data: const MediaQueryData(
+                navigationMode: NavigationMode.directional),
+            child: MyApp(contacts: book, createChunkSize: 1)));
+        await tester.pumpAndSettle();
+        addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+        focusOf(tester, 'Create').requestFocus();
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.select);
+        await tester.pumpAndSettle();
+        await tester.tap(dialogButton('Create'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const Key('Progress')), findsOneWidget);
+        // Disabled, but a D-pad can still move to it.
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+        await tester.pump();
+        expect(focusOf(tester, 'Delete').hasPrimaryFocus, isTrue);
+        for (var i = 0; i < 4; i++) {
+          gates.last.complete();
+          await tester.pumpAndSettle();
+        }
+
+        expect(resultText(tester), 'Created 4 fake contacts.');
+        expect(focusOf(tester, 'Delete').hasPrimaryFocus, isTrue);
+      });
+
       testWidgets('Stop focused when it ends (and goes away): the focus goes '
           'to the button that ran', (tester) async {
         book.beforeDeleteAll = hold;

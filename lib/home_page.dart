@@ -494,8 +494,17 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     void finish(ResultMessage? message) {
       if (!mounted) return;
       // Stop goes away now, so it loses the focus too.
-      final refocus = _stopFocus.hasFocus ? button : _refocus;
+      var refocus = _stopFocus.hasFocus ? button : _refocus;
       _refocus = null;
+      // With a D-pad (directional navigation) disabled buttons can take
+      // the focus: one the user moved to meanwhile keeps it.
+      final current = FocusManager.instance.primaryFocus;
+      if (MediaQuery.maybeNavigationModeOf(context) ==
+              NavigationMode.directional &&
+          (current == _createFocus || current == _deleteFocus) &&
+          current != refocus) {
+        refocus = null;
+      }
       setState(() {
         _isBusy = false;
         _waitingForUser = false;
@@ -507,6 +516,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         if (message != null) _showResult(message, button);
         return;
       }
+      final target = refocus;
       // Once it is enabled again. (Nothing else can have taken the focus
       // meanwhile: the fields are out of its reach and the buttons
       // disabled, and Stop goes away. Flutter may have moved it to the
@@ -516,7 +526,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       // same update. (Neither if another run has started meanwhile.)
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted || run != _run) return;
-        refocus.requestFocus();
+        target.requestFocus();
         if (message == null) return;
         // Flutter applies the focus change before the next frame, and
         // TalkBack hears of it with the one after; the result comes after
