@@ -3,9 +3,10 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' show Tristate;
 
 import 'package:fake_contacts/app_log.dart';
-import 'package:fake_contacts/app_theme.dart' show FocusRing;
+import 'package:fake_contacts/app_theme.dart' show FocusRing, RenderFocusRing;
 import 'package:fake_contacts/contact_actions.dart'
     show kCreateChunkSize, kDeleteChunkSize;
 import 'package:fake_contacts/contacts_gateway.dart';
@@ -14,7 +15,7 @@ import 'package:fake_contacts/home_page.dart' show kSaveDelay;
 import 'package:fake_contacts/main.dart';
 import 'package:fake_contacts/settings_store.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -2273,6 +2274,29 @@ void main() {
       expect(resultFinder, findsNothing);
     });
 
+    testWidgets("a failure's icon is as high as a line of its text, also "
+        "with Android's nonlinear scaling of large fonts", (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(MediaQuery(
+          data: MediaQueryData.fromView(tester.view)
+              .copyWith(textScaler: const _NonlinearScaler()),
+          child: MyApp(contacts: book)));
+      await tester.pumpAndSettle();
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      book.getAllError = Exception('no provider');
+      await tapExpectingNoDialog(tester, kCreateButton);
+
+      final icon = tester.widget<Icon>(find.byIcon(Icons.error_outline));
+      final line = tester
+          .renderObject<RenderParagraph>(resultFinder)
+          .getFullHeightForCaret(const TextPosition(offset: 0));
+      // bodyLarge: 16 at a line height of 1.5; the scaler doubles 16.
+      expect(icon.size, 48);
+      expect(icon.size, closeTo(line, 0.5));
+    });
+
     testWidgets('TalkBack reads each result out: one live region, there even '
         'while empty, so a result that repeats is read again', (tester) async {
       final handle = tester.ensureSemantics();
@@ -2309,19 +2333,31 @@ void main() {
   });
 
   group('focus after Create and Delete (U7)', () {
-    /// Expects one focus ring on screen, just outside [button], all round.
+    /// The focus rings shown, in global coordinates.
+    List<(Rect, OutlinedBorder)> rings(WidgetTester tester) => [
+          for (final ring
+              in tester.renderObjectList<RenderFocusRing>(find.byType(FocusRing)))
+            if (ring.ringRect case final Rect rect)
+              (
+                MatrixUtils.transformRect(ring.getTransformTo(null), rect),
+                ring.shape!,
+              ),
+        ];
+
+    /// Expects one focus ring on screen, 5 dp outside [button] as drawn
+    /// (its Material) all round: not around the taller tap target.
     void expectRingAround(WidgetTester tester, Finder button) {
-      final ring = find.byKey(FocusRing.ringKey);
-      expect(ring, findsOneWidget);
-      final outer = tester.getRect(ring), inner = tester.getRect(button);
-      expect(outer, inner.inflate(5));
-      final decoration = tester
-          .widget<DecoratedBox>(
-              find.descendant(of: ring, matching: find.byType(DecoratedBox)))
-          .decoration as ShapeDecoration;
-      final side = (decoration.shape as OutlinedBorder).side;
-      expect(side.width, 3);
-      expect(side.color,
+      final shown = rings(tester);
+      expect(shown, hasLength(1));
+      final drawn = tester.getRect(
+          find.descendant(of: button, matching: find.byType(Material)).first);
+      expect(drawn.height, lessThan(tester.getSize(button).height),
+          reason: 'the tap target is taller than the button');
+      final (rect, shape) = shown.single;
+      expect(rect, drawn.inflate(FocusRing.outset));
+      expect(shape, isA<StadiumBorder>());
+      expect(shape.side.width, 3);
+      expect(shape.side.color,
           Theme.of(tester.element(button)).colorScheme.secondary);
     }
 
@@ -2344,12 +2380,46 @@ void main() {
           : null);
     }
 
+    /// Settles, checking in every update TalkBack gets that a result never
+    /// shows before the button with [key] has the focus back (TalkBack reads
+    /// out the newly focused button, which would cut short a result read
+    /// out before it).
+    Future<void> settleFocusFirst(WidgetTester tester, String key) async {
+      final handle = tester.ensureSemantics();
+      final owner = tester.binding.renderViews.first.owner!.semanticsOwner!;
+      final label = key == 'Create' ? kCreateButton : kDeleteButton;
+      final problems = <String>[];
+      void check() {
+        String? result;
+        var bFocused = false;
+        bool visit(SemanticsNode node) {
+          final flags = node.flagsCollection;
+          if (flags.isLiveRegion && node.label.isNotEmpty) result = node.label;
+          if (node.label == label && flags.isFocused == Tristate.isTrue) {
+            bFocused = true;
+          }
+          node.visitChildren(visit);
+          return true;
+        }
+
+        visit(owner.rootSemanticsNode!);
+        if (result != null && !bFocused) problems.add(result!);
+      }
+
+      owner.addListener(check);
+      await tester.pumpAndSettle();
+      owner.removeListener(check);
+      handle.dispose();
+      expect(problems, isEmpty,
+          reason: 'result shown before the focus was back on $key');
+    }
+
     /// Gives the button with [key] the keyboard focus, and presses Enter.
     Future<void> pressWithKeyboard(WidgetTester tester, String key) async {
       focusOf(tester, key).requestFocus();
       await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pumpAndSettle();
+      await settleFocusFirst(tester, key);
     }
 
     testWidgets('with a keyboard, the button pressed has the focus again '
@@ -2373,7 +2443,7 @@ void main() {
           // While busy, the button is disabled and has lost the focus.
           expect(focusOf(tester, key).hasFocus, isFalse, reason: key);
           await tester.tap(dialogButton(answer));
-          await tester.pumpAndSettle();
+          await settleFocusFirst(tester, key);
         }
         expect(result == null ? resultFinder : find.text(result),
             result == null ? findsNothing : findsOneWidget, reason: key);
@@ -2453,13 +2523,13 @@ void main() {
       await tapCreate(tester);
       expect(resultText(tester), 'Created 4 fake contacts.');
       expect(focusedButton(), isNull);
-      expect(find.byKey(FocusRing.ringKey), findsNothing);
+      expect(rings(tester), isEmpty);
 
       // Focused by code after a tap (the screen in touch mode): no ring.
       focusOf(tester, 'Create').requestFocus();
       await tester.pumpAndSettle();
       expect(focusedButton(), 'Create Fake Contacts');
-      expect(find.byKey(FocusRing.ringKey), findsNothing);
+      expect(rings(tester), isEmpty);
       // Once a key is pressed, it shows.
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pump();
@@ -2524,4 +2594,19 @@ void main() {
       });
     });
   });
+}
+
+/// Scales small text more than large text, as Android 14 and later do with
+/// a large font size.
+class _NonlinearScaler extends TextScaler {
+  const _NonlinearScaler();
+
+  @override
+  double scale(double fontSize) => fontSize < 20 ? fontSize * 2 : fontSize * 1.5;
+
+  @override
+  double get textScaleFactor => 2;
+
+  @override
+  TextScaler clamp({double minScaleFactor = 0, double maxScaleFactor = double.infinity}) => this;
 }

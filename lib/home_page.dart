@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'app_log.dart';
 import 'app_theme.dart';
@@ -466,7 +467,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     // (else, if that happens as a dialog opens, the dialog may not get the
     // focus), and the result is cleared (TalkBack reads a result out when
     // its text changes, so the next one is read out even if it is the same).
-    await WidgetsBinding.instance.endOfFrame;
+    // (No frames are drawn while the app is out of sight; nothing to wait
+    // for then.)
+    if (SchedulerBinding.instance.framesEnabled) {
+      await WidgetsBinding.instance.endOfFrame;
+    }
     if (!mounted) return;
 
     void finish(ResultMessage? message) {
@@ -481,17 +486,22 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         _progress = null;
         _stopRequested = false;
       });
-      if (refocus != null) {
-        // Once it is enabled again. (Nothing else can have taken the focus
-        // meanwhile: the fields are out of its reach and the buttons
-        // disabled, and Stop goes away. Flutter may have moved it to the
-        // other button, the one focused before, once enabled again.)
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) refocus.requestFocus();
-        });
-      }
-      if (message != null) _showResult(message);
       unawaited(_refreshStatus());
+      if (refocus == null) {
+        if (message != null) _showResult(message);
+        return;
+      }
+      // Once it is enabled again. (Nothing else can have taken the focus
+      // meanwhile: the fields are out of its reach and the buttons
+      // disabled, and Stop goes away. Flutter may have moved it to the
+      // other button, the one focused before, once enabled again.) Then
+      // the result: TalkBack reads out the newly focused button, which
+      // would cut short a result that came first.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        refocus.requestFocus();
+        if (message != null) _showResult(message);
+      });
     }
 
     log("$name: about to request permission");
@@ -983,8 +993,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                       Icon(Icons.error_outline,
                           color: theme.colorScheme.error,
                           // As high as a line of the text, at any font size.
-                          size: MediaQuery.textScalerOf(context).scale(
-                              (style?.fontSize ?? 16) * (style?.height ?? 1.5))),
+                          // (Android scales large fonts nonlinearly: the
+                          // size, not the line.)
+                          size: MediaQuery.textScalerOf(context)
+                                  .scale(style?.fontSize ?? 16) *
+                              (style?.height ?? 1.5)),
                       const SizedBox(width: 8),
                     ],
                     Expanded(
