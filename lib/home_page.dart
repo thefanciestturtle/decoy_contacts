@@ -494,17 +494,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     void finish(ResultMessage? message) {
       if (!mounted) return;
       // Stop goes away now, so it loses the focus too.
-      var refocus = _stopFocus.hasFocus ? button : _refocus;
+      final refocus = _stopFocus.hasFocus ? button : _refocus;
       _refocus = null;
-      // With a D-pad (directional navigation) disabled buttons can take
-      // the focus: one the user moved to meanwhile keeps it.
-      final current = FocusManager.instance.primaryFocus;
-      if (MediaQuery.maybeNavigationModeOf(context) ==
-              NavigationMode.directional &&
-          (current == _createFocus || current == _deleteFocus) &&
-          current != refocus) {
-        refocus = null;
-      }
       setState(() {
         _isBusy = false;
         _waitingForUser = false;
@@ -533,6 +524,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         // that. (Shown even if the focus didn't move, e.g. with a D-pad,
         // where a disabled button may keep it.)
         for (var i = 0; i < 2; i++) {
+          // (Here, after a frame, Flutter doesn't schedule one by itself.)
+          WidgetsBinding.instance.ensureVisualUpdate();
           await WidgetsBinding.instance.endOfFrame;
         }
         if (mounted && run == _run) _showResult(message, button);
