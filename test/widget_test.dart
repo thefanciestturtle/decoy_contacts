@@ -13,6 +13,7 @@ import 'package:fake_contacts/main.dart';
 import 'package:fake_contacts/settings_store.dart';
 
 import 'in_memory_contacts_gateway.dart';
+import 'talkback_announcements.dart';
 
 const String kDefaultPreview =
     '27 last names × 28 first names = 756 fake contacts.\n'
@@ -513,14 +514,9 @@ void main() {
     });
   });
 
-  testWidgets("with TalkBack, the reset message doesn't miss TalkBack's "
-      'focus landing on the menu button while the settings are saved (U9)',
+  testWidgets('the reset message waits for a slow save, and is read out '
+      'once saved, after the dialog has gone (U9, U13)',
       (WidgetTester tester) async {
-    final dispatcher = tester.platformDispatcher;
-    dispatcher.accessibilityFeaturesTestValue =
-        const FakeAccessibilityFeatures(accessibleNavigation: true);
-    addTearDown(dispatcher.clearAccessibilityFeaturesTestValue);
-    final handle = tester.ensureSemantics();
     final store = _SlowSaveStore();
     await tester.pumpWidget(MaterialApp(
         home: MyHomePage(
@@ -528,6 +524,8 @@ void main() {
             contacts: InMemoryContactsGateway(),
             settingsStore: store)));
     await tester.pumpAndSettle();
+    final heard = LiveRegionAnnouncements(tester);
+    await tester.pump();
     await tester.tap(find.byKey(const Key('Menu')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('Reset')));
@@ -537,16 +535,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsNothing);
 
-    // Still saving when TalkBack's focus lands on the menu button.
-    tester.binding.renderViews.first.owner!.semanticsOwner!.performAction(
-        tester.getSemantics(find.byTooltip('More options')).id,
-        SemanticsAction.didGainAccessibilityFocus);
+    // Still saving after the dialog has gone.
+    const message = 'Names and templates reset to the defaults.';
+    expect(find.text(message), findsNothing);
     store.saving!.complete();
-    await tester.pump();
-    await tester.pump();
-    expect(find.text('Names and templates reset to the defaults.'),
-        findsOneWidget);
-    handle.dispose();
+    await tester.pumpAndSettle();
+    expect(find.text(message), findsOneWidget);
+    expect(heard.texts, [message]);
+    expect(heard.missed, isEmpty);
+    heard.dispose();
   });
 
   group('preview under the fields (U2)', () {

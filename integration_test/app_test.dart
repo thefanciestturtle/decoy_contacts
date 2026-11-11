@@ -25,6 +25,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../test/talkback_announcements.dart';
+
 /// 2 last names x 2 first names, so Create makes the four fakes in [kFakes].
 const Map<String, String> kSettings = {
   SettingsStore.kLastNamesKey: 'Zen, Zima',
@@ -496,6 +498,37 @@ void main() {
         await tapAndWaitForResult(tester, kDelete,
             confirm: 'Delete 4 fake contacts?'),
         'Deleted 4 fake contacts.');
+    expect(describeAll(await readAddressBook()), describeAll(real));
+  });
+
+  testWidgets('U13: the result of a quick Create and Delete waits for the '
+      'dialog to go, so TalkBack reads it out', (tester) async {
+    await startWithEmptyAddressBook(tester);
+    final real = await seed(kRealContacts);
+    await launchApp(tester);
+    await expectStatus(tester, 'No fake contacts on this phone.');
+    final heard = LiveRegionAnnouncements(tester);
+    await tester.pump();
+
+    for (final (label, title, result) in [
+      (kCreate, 'Create 4 fake contacts?', 'Created 4 fake contacts.'),
+      (kDelete, 'Delete 4 fake contacts?', 'Deleted 4 fake contacts.'),
+    ]) {
+      await tapAndConfirm(tester, label, title);
+      // With the real contacts provider, done before the dialog has gone;
+      // the result must wait. (Checked often: the dialog closes in 0.15 s.)
+      final deadline = DateTime.now().add(kActionTimeout);
+      while (find.byType(AlertDialog).evaluate().isNotEmpty) {
+        expect(resultFinder, findsNothing, reason: label);
+        expect(DateTime.now().isBefore(deadline), isTrue,
+            reason: 'dialog of "$label" gone');
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      expect(await waitForResult(tester, label), result);
+    }
+    expect(heard.texts, ['Created 4 fake contacts.', 'Deleted 4 fake contacts.']);
+    expect(heard.missed, isEmpty);
+    heard.dispose();
     expect(describeAll(await readAddressBook()), describeAll(real));
   });
 

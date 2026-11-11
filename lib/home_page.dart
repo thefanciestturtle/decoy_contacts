@@ -18,15 +18,6 @@ import 'settings_store.dart';
 /// How long to wait after the last keystroke before saving the settings.
 const Duration kSaveDelay = Duration(milliseconds: 500);
 
-/// With TalkBack on, the longest the reset message waits, after its dialog
-/// has gone (its closing animation done), for TalkBack's focus to be back
-/// on the menu button. Flutter gives it back 300 ms after the dialog has
-/// gone (see Navigator), and TalkBack then reads out the button, which would
-/// cut short a message shown before that. (On the emulator, API 36, shown
-/// at once, the message was lost in 3 of 4 tries.) Normally the focus is
-/// back long before; this is only in case it never comes.
-const Duration kTalkBackRefocusTimeout = Duration(milliseconds: 1500);
-
 /// The items of the app bar's menu.
 enum _MenuAction { reset, about }
 
@@ -324,15 +315,17 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   }
 
   /// Set from a tap on Create or Delete until it has ended (also if it was
-  /// cancelled). Its result, if any, shows then, or a frame later if the
-  /// button gets the keyboard focus back. The buttons are disabled
-  /// meanwhile, so they lose the keyboard focus; see [_refocus].
+  /// cancelled) and its dialog, if any, has gone (see [_confirm]). Its result,
+  /// if any, shows then, or a few frames later if the button gets the
+  /// keyboard focus back. The buttons are disabled meanwhile, so they lose
+  /// the keyboard focus; see [_refocus].
   bool _isBusy = false;
 
-  /// Set while one of the app's dialogs asks the user ([_confirm]), and
-  /// while the app's settings open for the user. No spinner then: the app
-  /// is waiting for the user, not working. (Android's own permission
-  /// dialog still has the spinner behind it.)
+  /// Set while one of the app's dialogs asks the user ([_confirm]), while
+  /// the app's settings open for the user, and while a Create or Delete
+  /// that has ended waits for its dialog to finish closing. No spinner
+  /// then: the app isn't working. (Android's own permission dialog still
+  /// has the spinner behind it.)
   bool _waitingForUser = false;
 
   /// Set while a Create or Delete of more than one chunk runs: how far it
@@ -431,24 +424,30 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     _revealAfterFrame(_resultBox, keep: button);
   }
 
-  /// Asks before going ahead. True only if the user taps the action button;
-  /// Cancel, Back and tapping outside the dialog all count as no.
+  /// Asks before going ahead. True only if the user taps the action
+  /// button; Cancel, Back and tapping outside the dialog all count as no.
+  /// [_dialogGone] then completes once the dialog has gone from the screen
+  /// (its closing animation done) and the page has been drawn without it.
   ///
   /// With [keepWaiting], [_waitingForUser] stays set after a yes, for
   /// whatever waits for the user next; finish() clears it. With
   /// [destructive], the button that goes ahead is in the error colour, as
   /// the Delete button is.
+  ///
+  /// A message about what the dialog led to (shown under the buttons, in a
+  /// live region) must wait for that, else TalkBack never reads it out:
+  /// until then the dialog hides the page from TalkBack, and a message
+  /// shown meanwhile comes back with the page, in the same update as the
+  /// news that the dialog has gone, and TalkBack skips it. (On the
+  /// emulator, API 36, TalkBack 16, the result of a Create or Delete of 4
+  /// contacts was lost nearly every time: they take under 0.1 s, the
+  /// dialog's closing 0.15 s.) Shown after that, it is read out in full:
+  /// TalkBack's focus goes back to the button that opened the dialog
+  /// (Flutter does that 0.3 s after the dialog has gone), and TalkBack
+  /// reads the button after the message, not over it.
   Future<bool> _confirm(Confirmation confirmation,
-          {bool keepWaiting = false, bool destructive = false}) async =>
-      (await _ask(confirmation,
-              keepWaiting: keepWaiting, destructive: destructive))
-          .yes;
-
-  /// As [_confirm]; also gives when the dialog has gone from the screen
-  /// (its closing animation done).
-  Future<({bool yes, Future<void> gone})> _ask(Confirmation confirmation,
       {bool keepWaiting = false, bool destructive = false}) async {
-    if (!mounted) return (yes: false, gone: Future<void>.value());
+    if (!mounted) return false;
     setState(() { _waitingForUser = true; });
     ModalRoute<Object?>? dialog;
     final bool? bConfirmed = await showDialog<bool>(
@@ -485,10 +484,24 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     if (mounted && !(keepWaiting && bYes)) {
       setState(() { _waitingForUser = false; });
     }
-    return (
-      yes: bYes,
-      gone: dialog?.completed.then((_) {}) ?? Future<void>.value(),
-    );
+    _dialogGone = _drawnWithout(dialog);
+    return bYes;
+  }
+
+  /// Completes once the last dialog [_confirm] showed has gone (see
+  /// there). A Create or Delete stays busy until then, and a message about
+  /// what the dialog led to waits for it.
+  Future<void> _dialogGone = Future<void>.value();
+
+  /// Completes once [dialog] has gone (its closing animation done) and a
+  /// frame has been drawn without it. (Flutter completes
+  /// [TransitionRoute.completed] as it disposes of the dialog, just after
+  /// that frame; the wait for a frame keeps this true if that ever comes
+  /// sooner. No frames are drawn while the app is out of sight; then it
+  /// completes once the app is back.)
+  static Future<void> _drawnWithout(ModalRoute<Object?>? dialog) async {
+    await dialog?.completed;
+    await WidgetsBinding.instance.endOfFrame;
   }
 
   /// The steps Create and Delete share: ignore taps while busy, save the
@@ -547,7 +560,14 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     }
     if (!mounted) return;
 
-    void finish(ResultMessage? message) {
+    Future<void> finish(ResultMessage? message) async {
+      if (!mounted) return;
+      // Busy until the last dialog, if any, has gone, and the result only
+      // then (see [_confirm]), else TalkBack would never read it out.
+      // (Until then nothing else can be opened over the page either, nor
+      // take the focus that is given back below.) No spinner meanwhile.
+      setState(() { _waitingForUser = true; });
+      await _dialogGone;
       if (!mounted) return;
       // Stop goes away now, so it loses the focus too.
       final refocus = _stopFocus.hasFocus ? button : _refocus;
@@ -650,7 +670,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       }
       return finish(failed(e));
     }
-    finish(result == null ? kChangedMeanwhileMessage : describe(result));
+    return finish(result == null ? kChangedMeanwhileMessage : describe(result));
   }
 
   Future<void> _createAllContacts() => _runContactsAction(
@@ -687,55 +707,29 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     // (Create and Delete count their runs; one that starts before the
     // message shows has its own.)
     final int run = _run;
-    final dialog = await _ask(kResetConfirmation);
+    final bool bYes = await _confirm(kResetConfirmation);
     if (!mounted) return;
-    if (!dialog.yes) {
+    if (!bYes) {
       // Back to the field being edited when the menu opened, if any.
       field?.requestFocus();
       return;
     }
     if (_isBusy) return;
-    // With TalkBack, the message waits for its focus to be back on the menu
-    // button (Flutter gives it back 300 ms after the dialog has gone):
-    // from now on, so it isn't missed while the settings are saved.
-    final focused = MediaQuery.accessibleNavigationOf(context)
-        ? (_menuTalkBackFocus = Completer<void>())
-        : null;
     // The preview and the warnings follow.
     _setFields(Settings.defaults);
     final int edits = _edits;
-    // The last result goes at once (the message, with TalkBack, comes a
-    // little later, and not at all if the fields change again meanwhile).
+    // The last result goes at once; the message comes once the settings
+    // are saved and the dialog has gone (else TalkBack would never read it
+    // out), and not at all if the fields change again meanwhile.
     setState(() { _result = null; });
     await _saveSettingsNow();
-    if (!mounted) return;
-    // Else once the cleared result is on screen.
-    if (focused != null) {
-      void giveUp() {
-        if (!focused.isCompleted) focused.complete();
-      }
-      Timer? timeout;
-      unawaited(dialog.gone.then((_) {
-        if (!focused.isCompleted) {
-          timeout = Timer(kTalkBackRefocusTimeout, giveUp);
-        }
-      }));
-      await focused.future;
-      timeout?.cancel();
-      if (identical(_menuTalkBackFocus, focused)) _menuTalkBackFocus = null;
-    } else if (SchedulerBinding.instance.framesEnabled) {
-      await WidgetsBinding.instance.endOfFrame;
-    }
+    await _dialogGone;
     // Not if a Create or Delete has started meanwhile, or the fields were
     // edited since.
     if (mounted && run == _run && _edits == edits) {
       _showResult(kResetMessage, null);
     }
   }
-
-  /// Set while the reset message waits for TalkBack's focus to be on the
-  /// menu button; completed when it is.
-  Completer<void>? _menuTalkBackFocus;
 
   /// The text field that had the focus when the menu opened: it gets it
   /// back if nothing is changed (the menu is closed without a choice, or
@@ -920,43 +914,31 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
           actionsPadding: const EdgeInsetsDirectional.only(end: 4),
           actions: <Widget>[
             FocusRing(
-              // One node for TalkBack, which says when TalkBack's focus
-              // lands on it (see [_resetToDefaults]).
-              child: MergeSemantics(
-                child: Semantics(
-                  onDidGainAccessibilityFocus: () {
-                    final waiting = _menuTalkBackFocus;
-                    if (waiting != null && !waiting.isCompleted) {
-                      waiting.complete();
-                    }
-                  },
-                  child: PopupMenuButton<_MenuAction>(
-                    key: keyMenu,
-                    // Android's name for it.
-                    tooltip: "More options",
-                    // Not while Create or Delete runs: Reset would change
-                    // the settings it uses, and About would hide its
-                    // progress and its result.
-                    enabled: bCanAct,
-                    onOpened: _menuOpened,
-                    onCanceled: _menuCanceled,
-                    onSelected: _menuSelected,
-                    // (Built as the menu opens.)
-                    itemBuilder: (context) => <PopupMenuEntry<_MenuAction>>[
-                      RingedMenuItem(
-                        key: keyReset,
-                        value: _MenuAction.reset,
-                        enabled: _settings != Settings.defaults,
-                        child: const Text("Reset to defaults"),
-                      ),
-                      const RingedMenuItem(
-                        key: keyAbout,
-                        value: _MenuAction.about,
-                        child: Text("About"),
-                      ),
-                    ],
+              child: PopupMenuButton<_MenuAction>(
+                key: keyMenu,
+                // Android's name for it.
+                tooltip: "More options",
+                // Not while Create or Delete runs: Reset would change the
+                // settings it uses, and About would hide its progress and
+                // its result.
+                enabled: bCanAct,
+                onOpened: _menuOpened,
+                onCanceled: _menuCanceled,
+                onSelected: _menuSelected,
+                // (Built as the menu opens.)
+                itemBuilder: (context) => <PopupMenuEntry<_MenuAction>>[
+                  RingedMenuItem(
+                    key: keyReset,
+                    value: _MenuAction.reset,
+                    enabled: _settings != Settings.defaults,
+                    child: const Text("Reset to defaults"),
                   ),
-                ),
+                  const RingedMenuItem(
+                    key: keyAbout,
+                    value: _MenuAction.about,
+                    child: Text("About"),
+                  ),
+                ],
               ),
             ),
           ],
