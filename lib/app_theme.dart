@@ -102,7 +102,8 @@ class _FocusRingState extends State<FocusRing> {
 }
 
 /// Paints [shape] (with its side as the ring), if any, around the first
-/// [Material] in [child], [FocusRing.outset] outside it.
+/// [Material] in [child], [FocusRing.outset] outside it; or, if [inward],
+/// just inside the edge of all of [child].
 class _FocusRingPainter extends SingleChildRenderObjectWidget {
   const _FocusRingPainter(
       {required this.shape, required this.inward, required super.child});
@@ -145,8 +146,9 @@ class RenderFocusRing extends RenderProxyBox {
     markNeedsPaint();
   }
 
-  /// Where the ring is (its outer edge), in this render object's
-  /// coordinates; null while it isn't shown.
+  /// Where the ring is (its outer edge; the ring is drawn inside it), in
+  /// this render object's coordinates: [FocusRing.outset] outside the
+  /// button, or, if [inward], all of this box. Null while it isn't shown.
   Rect? get ringRect {
     if (_shape == null || child == null) return null;
     // (The ring is drawn inside the shape's edge.)

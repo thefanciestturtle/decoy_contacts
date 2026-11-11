@@ -12,7 +12,7 @@ import 'package:fake_contacts/contact_actions.dart'
 import 'package:fake_contacts/contacts_gateway.dart';
 import 'package:fake_contacts/fake_contacts_core.dart';
 import 'package:fake_contacts/home_page.dart'
-    show kSaveDelay, kTalkBackRefocusDelay;
+    show kSaveDelay, kTalkBackRefocusTimeout;
 import 'package:fake_contacts/input_checks.dart' show phoneTemplateWarning;
 import 'package:fake_contacts/main.dart';
 import 'package:fake_contacts/settings_store.dart';
@@ -2872,6 +2872,39 @@ void main() {
       expect(resultText(tester), kReset);
     });
 
+    testWidgets('closing the menu without a choice gives the field its focus '
+        'and keyboard back', (tester) async {
+      await pumpApp(tester, book);
+      final field = find.byKey(const Key('FirstNames'));
+      for (final close in ['Back', 'outside']) {
+        await tester.tap(field);
+        await tester.pump();
+        await openMenu(tester);
+        expect(tester.testTextInput.isVisible, isFalse);
+        if (close == 'Back') {
+          await tester.binding.handlePopRoute();
+        } else {
+          await tester.tapAt(const Offset(10, 500));
+        }
+        await tester.pumpAndSettle();
+        expect(resetItem, findsNothing);
+        expect(tester.testTextInput.isVisible, isTrue, reason: close);
+        expect(
+            FocusManager.instance.primaryFocus?.context
+                ?.findAncestorWidgetOfExactType<TextField>()
+                ?.key,
+            const Key('FirstNames'),
+            reason: close);
+        FocusManager.instance.primaryFocus!.unfocus();
+        await tester.pump();
+      }
+      // Without a field focused before, nothing gets the focus.
+      await openMenu(tester);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(tester.testTextInput.isVisible, isFalse);
+    });
+
     group('with TalkBack', () {
       setUp(() {
         final dispatcher =
@@ -2890,6 +2923,20 @@ void main() {
         await tester.pump();
       }
 
+      /// Pumps until the dialog has gone.
+      Future<void> untilDialogGone(WidgetTester tester) async {
+        while (find.byType(AlertDialog).evaluate().isNotEmpty) {
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+      }
+
+      /// TalkBack's focus lands on the menu button.
+      void talkBackFocusesMenu(WidgetTester tester) {
+        tester.binding.renderViews.first.owner!.semanticsOwner!.performAction(
+            tester.getSemantics(find.byTooltip('More options')).id,
+            SemanticsAction.didGainAccessibilityFocus);
+      }
+
       testWidgets('the last result goes at once; the message comes once '
           'its focus is back on the menu button, and is read out again if it '
           'repeats', (tester) async {
@@ -2906,34 +2953,85 @@ void main() {
           await editAndReset(tester);
           // The last result goes at once.
           expect(node().label, isEmpty);
-          // The fields at once; the message later, counted from when the
-          // dialog has gone, as Flutter's wait before it gives TalkBack's
-          // focus back is.
+          // The fields at once; the message once TalkBack's focus is on the
+          // menu button (Flutter gives it back 300 ms after the dialog has
+          // gone).
           expect(fields(tester), kDefaults);
+          await untilDialogGone(tester);
+          await tester.pump(const Duration(milliseconds: 500));
           expect(node().label, isEmpty);
-          while (find.byType(AlertDialog).evaluate().isNotEmpty) {
-            await tester.pump(const Duration(milliseconds: 10));
-          }
-          expect(node().label, isEmpty);
-          await tester.pump(
-              kTalkBackRefocusDelay - const Duration(milliseconds: 20));
-          expect(node().label, isEmpty);
-          await tester.pump(const Duration(milliseconds: 40));
+          talkBackFocusesMenu(tester);
+          await tester.pump();
+          await tester.pump();
           expect(node().label, kReset);
           expect(node().id, id);
         }
         handle.dispose();
       });
 
-      testWidgets('fields changed before the message shows: no message',
-          (tester) async {
+      testWidgets("if TalkBack's focus never comes back, the message shows "
+          'after a while', (tester) async {
         await pumpApp(tester, book);
         await editAndReset(tester);
-        await tester.pumpAndSettle();
-        await tester.enterText(find.byKey(const Key('FirstNames')), 'Zelda');
-        await tester.pump(kTalkBackRefocusDelay);
-        await tester.pumpAndSettle();
+        await untilDialogGone(tester);
+        await tester.pump(
+            kTalkBackRefocusTimeout - const Duration(milliseconds: 20));
         expect(resultFinder, findsNothing);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.pump();
+        expect(resultText(tester), kReset);
+        // A later focus on the button changes nothing.
+        talkBackFocusesMenu(tester);
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets('fields edited before the message shows: no message, even '
+          'if they are back at the defaults', (tester) async {
+        await pumpApp(tester, book);
+        for (final edits in [
+          ['Zelda'],
+          ['Zelda', kDefaultFirstNames],
+        ]) {
+          final edit = edits.join(', then ');
+          await editAndReset(tester);
+          await untilDialogGone(tester);
+          for (final text in edits) {
+            await tester.enterText(find.byKey(const Key('FirstNames')), text);
+          }
+          expect(fields(tester)[1],
+              edits.length == 2 ? kDefaultFirstNames : 'Zelda');
+          await tester.pump();
+          talkBackFocusesMenu(tester);
+          await tester.pump(kTalkBackRefocusTimeout);
+          await tester.pumpAndSettle();
+          expect(resultFinder, findsNothing, reason: edit);
+        }
+      });
+
+      testWidgets('a message that comes while the app is out of sight shows '
+          'when it is back', (tester) async {
+        await pumpApp(tester, book);
+        await editAndReset(tester);
+        await untilDialogGone(tester);
+        for (final state in [
+          AppLifecycleState.inactive,
+          AppLifecycleState.hidden,
+          AppLifecycleState.paused,
+        ]) {
+          tester.binding.handleAppLifecycleStateChanged(state);
+        }
+        await tester.pump(kTalkBackRefocusTimeout);
+        expect(resultFinder, findsNothing);
+        for (final state in [
+          AppLifecycleState.hidden,
+          AppLifecycleState.inactive,
+          AppLifecycleState.resumed,
+        ]) {
+          tester.binding.handleAppLifecycleStateChanged(state);
+        }
+        await tester.pumpAndSettle();
+        expect(resultText(tester), kReset);
       });
 
       testWidgets('a Create started before the message shows keeps its own '
@@ -2942,7 +3040,8 @@ void main() {
         await editAndReset(tester);
         await tester.pump(const Duration(milliseconds: 300));
         await tapAndOpenDialog(tester, kCreateButton);
-        await tester.pump(kTalkBackRefocusDelay);
+        talkBackFocusesMenu(tester);
+        await tester.pump(kTalkBackRefocusTimeout);
         expect(resultFinder, findsNothing);
         await tester.tap(dialogButton('Create'));
         await tester.pumpAndSettle();
