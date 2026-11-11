@@ -12,8 +12,7 @@ import 'package:fake_contacts/contact_actions.dart'
     show kCreateChunkSize, kDeleteChunkSize;
 import 'package:fake_contacts/contacts_gateway.dart';
 import 'package:fake_contacts/fake_contacts_core.dart';
-import 'package:fake_contacts/home_page.dart'
-    show kSaveDelay, kTalkBackRefocusTimeout;
+import 'package:fake_contacts/home_page.dart' show kSaveDelay;
 import 'package:fake_contacts/input_checks.dart' show phoneTemplateWarning;
 import 'package:fake_contacts/main.dart';
 import 'package:fake_contacts/settings_store.dart';
@@ -25,6 +24,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'failing_ledger_store.dart';
 import 'in_memory_contacts_gateway.dart';
+import 'talkback_announcements.dart';
 
 /// 2 last names x 2 first names = these 4 fakes.
 const Map<String, Object> kSettings = {
@@ -2664,6 +2664,118 @@ void main() {
     });
   });
 
+  group('TalkBack hears results after a dialog (U13)', () {
+    /// Pumps until the dialog has gone, checking meanwhile that no result
+    /// shows: it would come back with the page, in the update in which the
+    /// dialog goes, and TalkBack would skip it.
+    Future<void> noResultUntilDialogGone(WidgetTester tester) async {
+      while (find.byType(AlertDialog).evaluate().isNotEmpty) {
+        expect(resultFinder, findsNothing);
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+    }
+
+    testWidgets('a quick Create and Delete: the result shows once the '
+        'dialog has gone, and is read out', (tester) async {
+      await pumpApp(tester, book);
+      final heard = LiveRegionAnnouncements(tester);
+      await tester.pump();
+      for (final (button, answer, result) in [
+        (kCreateButton, 'Create', 'Created 4 fake contacts.'),
+        (kDeleteButton, 'Delete', 'Deleted 4 fake contacts.'),
+      ]) {
+        await tapAndOpenDialog(tester, button);
+        await tester.tap(dialogButton(answer));
+        await tester.pump();
+        // Done already; the dialog is closing.
+        expect(buttonsEnabled(tester), isTrue, reason: button);
+        await noResultUntilDialogGone(tester);
+        await tester.pumpAndSettle();
+        expect(resultText(tester), result);
+      }
+      expect(heard.texts, ['Created 4 fake contacts.', 'Deleted 4 fake contacts.']);
+      expect(heard.missed, isEmpty);
+      heard.dispose();
+    });
+
+    testWidgets("also after the dialog that offers the settings, if they "
+        "can't be opened", (tester) async {
+      book.permission = PermissionAnswer.permanentlyDenied;
+      book.openSettingsError = Exception('no activity');
+      await pumpApp(tester, book);
+      final heard = LiveRegionAnnouncements(tester);
+      await tester.pump();
+      await tapAndOpenDialog(tester, kCreateButton);
+      await tester.tap(dialogButton('Open settings'));
+      await tester.pump();
+      await noResultUntilDialogGone(tester);
+      await tester.pumpAndSettle();
+      expect(book.openSettingsCalls, 1);
+      expect(heard.texts, ["Couldn't open Settings."]);
+      expect(heard.missed, isEmpty);
+      heard.dispose();
+    });
+
+    testWidgets('a result without a dialog is read out too', (tester) async {
+      await pumpApp(tester, book);
+      final heard = LiveRegionAnnouncements(tester);
+      await tester.pump();
+      await tapExpectingNoDialog(tester, kDeleteButton);
+      book.permission = PermissionAnswer.denied;
+      await tapExpectingNoDialog(tester, kCreateButton);
+      expect(heard.texts, [
+        'No fake contacts to delete.',
+        kDenied,
+      ]);
+      expect(heard.missed, isEmpty);
+      heard.dispose();
+    });
+
+    testWidgets('a Delete started while the dialog of a Create is still '
+        "closing: the Create's result never shows", (tester) async {
+      await pumpApp(tester, book);
+      await tapAndOpenDialog(tester, kCreateButton);
+      await tester.tap(dialogButton('Create'));
+      await tester.pump();
+      expect(book.all, hasLength(4));
+      expect(find.byType(AlertDialog), findsOneWidget);
+      // While the dialog closes, taps reach the page.
+      await tester.tap(find.text(kDeleteButton));
+      await tester.pumpAndSettle();
+      expect(dialogText(tester).title, 'Delete 4 fake contacts?');
+      expect(resultFinder, findsNothing);
+      await tester.tap(dialogButton('Delete'));
+      await tester.pumpAndSettle();
+      expect(resultText(tester), 'Deleted 4 fake contacts.');
+    });
+
+    testWidgets('a result whose dialog is still closing when the app goes '
+        'out of sight shows when it is back', (tester) async {
+      await pumpApp(tester, book);
+      await tapAndOpenDialog(tester, kCreateButton);
+      await tester.tap(dialogButton('Create'));
+      await tester.pump();
+      for (final state in [
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(state);
+      }
+      await tester.pump(const Duration(seconds: 1));
+      expect(resultFinder, findsNothing);
+      for (final state in [
+        AppLifecycleState.hidden,
+        AppLifecycleState.inactive,
+        AppLifecycleState.resumed,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(state);
+      }
+      await tester.pumpAndSettle();
+      expect(resultText(tester), 'Created 4 fake contacts.');
+    });
+  });
+
   group('reset to defaults (U9)', () {
     final Finder resetItem = find.byKey(const Key('Reset'));
     const String kReset = 'Names and templates reset to the defaults.';
@@ -2915,15 +3027,7 @@ void main() {
       expect(tester.testTextInput.isVisible, isFalse);
     });
 
-    group('with TalkBack', () {
-      setUp(() {
-        final dispatcher =
-            TestWidgetsFlutterBinding.instance.platformDispatcher;
-        dispatcher.accessibilityFeaturesTestValue =
-            const FakeAccessibilityFeatures(accessibleNavigation: true);
-        addTearDown(dispatcher.clearAccessibilityFeaturesTestValue);
-      });
-
+    group('TalkBack (U13)', () {
       /// Changes a field, then resets it, up to the tap on Reset.
       Future<void> editAndReset(WidgetTester tester) async {
         await tester.enterText(
@@ -2933,67 +3037,32 @@ void main() {
         await tester.pump();
       }
 
-      /// Pumps until the dialog has gone.
-      Future<void> untilDialogGone(WidgetTester tester) async {
-        while (find.byType(AlertDialog).evaluate().isNotEmpty) {
-          await tester.pump(const Duration(milliseconds: 10));
-        }
-      }
-
-      /// TalkBack's focus lands on the menu button.
-      void talkBackFocusesMenu(WidgetTester tester) {
-        tester.binding.renderViews.first.owner!.semanticsOwner!.performAction(
-            tester.getSemantics(find.byTooltip('More options')).id,
-            SemanticsAction.didGainAccessibilityFocus);
-      }
-
-      testWidgets('the last result goes at once; the message comes once '
-          'its focus is back on the menu button, and is read out again if it '
-          'repeats', (tester) async {
-        final handle = tester.ensureSemantics();
+      testWidgets('the last result goes at once; the message comes once the '
+          'dialog has gone, and is read out, also when it repeats',
+          (tester) async {
         await pumpApp(tester, book);
-        final region = find.byWidgetPredicate((w) =>
-            w is Semantics && w.container && w.properties.liveRegion == true);
-        SemanticsNode node() => tester.getSemantics(region);
-        final id = node().id;
+        final heard = LiveRegionAnnouncements(tester);
+        await tester.pump();
         await tapCreate(tester);
-        expect(node().label, 'Created 4 fake contacts.');
+        expect(heard.texts, ['Created 4 fake contacts.']);
 
         for (var i = 0; i < 2; i++) {
           await editAndReset(tester);
-          // The last result goes at once.
-          expect(node().label, isEmpty);
-          // The fields at once; the message once TalkBack's focus is on the
-          // menu button (Flutter gives it back 300 ms after the dialog has
-          // gone).
+          // The fields and the last result at once.
           expect(fields(tester), kDefaults);
-          await untilDialogGone(tester);
-          await tester.pump(const Duration(milliseconds: 500));
-          expect(node().label, isEmpty);
-          talkBackFocusesMenu(tester);
-          await tester.pump();
-          await tester.pump();
-          expect(node().label, kReset);
-          expect(node().id, id);
+          expect(resultFinder, findsNothing);
+          // The message not while the dialog is still closing: TalkBack
+          // would never read it out.
+          while (find.byType(AlertDialog).evaluate().isNotEmpty) {
+            expect(resultFinder, findsNothing);
+            await tester.pump(const Duration(milliseconds: 10));
+          }
+          await tester.pumpAndSettle();
+          expect(resultText(tester), kReset);
         }
-        handle.dispose();
-      });
-
-      testWidgets("if TalkBack's focus never comes back, the message shows "
-          'after a while', (tester) async {
-        await pumpApp(tester, book);
-        await editAndReset(tester);
-        await untilDialogGone(tester);
-        await tester.pump(
-            kTalkBackRefocusTimeout - const Duration(milliseconds: 20));
-        expect(resultFinder, findsNothing);
-        await tester.pump(const Duration(milliseconds: 40));
-        await tester.pump();
-        expect(resultText(tester), kReset);
-        // A later focus on the button changes nothing.
-        talkBackFocusesMenu(tester);
-        await tester.pump();
-        expect(tester.takeException(), isNull);
+        expect(heard.texts, ['Created 4 fake contacts.', kReset, kReset]);
+        expect(heard.missed, isEmpty);
+        heard.dispose();
       });
 
       testWidgets('fields edited before the message shows: no message, even '
@@ -3005,25 +3074,23 @@ void main() {
         ]) {
           final edit = edits.join(', then ');
           await editAndReset(tester);
-          await untilDialogGone(tester);
+          // (While the dialog closes.)
+          expect(find.byType(AlertDialog), findsOneWidget);
           for (final text in edits) {
             await tester.enterText(find.byKey(const Key('FirstNames')), text);
           }
           expect(fields(tester)[1],
               edits.length == 2 ? kDefaultFirstNames : 'Zelda');
-          await tester.pump();
-          talkBackFocusesMenu(tester);
-          await tester.pump(kTalkBackRefocusTimeout);
           await tester.pumpAndSettle();
+          expect(find.byType(AlertDialog), findsNothing);
           expect(resultFinder, findsNothing, reason: edit);
         }
       });
 
-      testWidgets('a message that comes while the app is out of sight shows '
-          'when it is back', (tester) async {
+      testWidgets('a message whose dialog is still closing when the app '
+          'goes out of sight shows when it is back', (tester) async {
         await pumpApp(tester, book);
         await editAndReset(tester);
-        await untilDialogGone(tester);
         for (final state in [
           AppLifecycleState.inactive,
           AppLifecycleState.hidden,
@@ -3031,7 +3098,7 @@ void main() {
         ]) {
           tester.binding.handleAppLifecycleStateChanged(state);
         }
-        await tester.pump(kTalkBackRefocusTimeout);
+        await tester.pump(const Duration(seconds: 1));
         expect(resultFinder, findsNothing);
         for (final state in [
           AppLifecycleState.hidden,
@@ -3048,10 +3115,11 @@ void main() {
           'result', (tester) async {
         await pumpApp(tester, book);
         await editAndReset(tester);
-        await tester.pump(const Duration(milliseconds: 300));
-        await tapAndOpenDialog(tester, kCreateButton);
-        talkBackFocusesMenu(tester);
-        await tester.pump(kTalkBackRefocusTimeout);
+        // While the dialog closes, taps reach the page.
+        expect(find.byType(AlertDialog), findsOneWidget);
+        await tester.tap(find.text(kCreateButton));
+        await tester.pumpAndSettle();
+        expect(dialogText(tester).title, 'Create 756 fake contacts?');
         expect(resultFinder, findsNothing);
         await tester.tap(dialogButton('Create'));
         await tester.pumpAndSettle();
