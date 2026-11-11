@@ -2850,8 +2850,8 @@ void main() {
     });
 
     testWidgets("a text field being edited loses the focus as the menu "
-        "opens, so its keyboard doesn't come back after the dialog",
-        (tester) async {
+        "opens; after Reset its keyboard doesn't come back, after Cancel it "
+        "does", (tester) async {
       await pumpApp(tester, book);
       for (final answer in ['Cancel', 'Reset']) {
         await tester.tap(find.byKey(const Key('FirstNames')));
@@ -2863,11 +2863,18 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(dialogButton(answer));
         await tester.pumpAndSettle();
-        expect(tester.testTextInput.isVisible, isFalse, reason: answer);
-        expect(FocusManager.instance.primaryFocus?.context
-                ?.findAncestorStateOfType<EditableTextState>(),
-            isNull,
+        final bBack = answer == 'Cancel';
+        expect(tester.testTextInput.isVisible, bBack, reason: answer);
+        expect(
+            FocusManager.instance.primaryFocus?.context
+                ?.findAncestorWidgetOfExactType<TextField>()
+                ?.key,
+            bBack ? const Key('FirstNames') : null,
             reason: answer);
+        if (bBack) {
+          FocusManager.instance.primaryFocus!.unfocus();
+          await tester.pump();
+        }
       }
       expect(resultText(tester), kReset);
     });

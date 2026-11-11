@@ -677,13 +677,28 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// buttons, in place of the last result. The ledger isn't touched, so
   /// Delete can still remove what was created, nor is the status line,
   /// which doesn't depend on the settings.
-  Future<void> _resetToDefaults() async {
+  ///
+  /// [field] is the text field being edited when the menu opened, if any:
+  /// it gets the focus back if the dialog is cancelled.
+  Future<void> _resetToDefaults(FocusNode? field) async {
     if (!_settingsLoaded || _isBusy) return;
     // (Create and Delete count their runs; one that starts before the
     // message shows has its own.)
     final int run = _run;
     final dialog = await _ask(kResetConfirmation);
-    if (!dialog.yes || !mounted || _isBusy) return;
+    if (!mounted) return;
+    if (!dialog.yes) {
+      // Back to the field being edited when the menu opened, if any.
+      field?.requestFocus();
+      return;
+    }
+    if (_isBusy) return;
+    // With TalkBack, the message waits for its focus to be back on the menu
+    // button (Flutter gives it back 300 ms after the dialog has gone):
+    // from now on, so it isn't missed while the settings are saved.
+    final focused = MediaQuery.accessibleNavigationOf(context)
+        ? (_menuTalkBackFocus = Completer<void>())
+        : null;
     // The preview and the warnings follow.
     _setFields(Settings.defaults);
     final int edits = _edits;
@@ -692,10 +707,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     setState(() { _result = null; });
     await _saveSettingsNow();
     if (!mounted) return;
-    // With TalkBack, after its focus is back on the menu button; else once
-    // the cleared result is on screen.
-    if (MediaQuery.accessibleNavigationOf(context)) {
-      final focused = _menuTalkBackFocus = Completer<void>();
+    // Else once the cleared result is on screen.
+    if (focused != null) {
       void giveUp() {
         if (!focused.isCompleted) focused.complete();
       }
@@ -723,7 +736,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   Completer<void>? _menuTalkBackFocus;
 
   /// The text field that had the focus when the menu opened: it gets it
-  /// back if the menu is closed without a choice.
+  /// back if nothing is changed (the menu is closed without a choice, or
+  /// the reset dialog cancelled).
   FocusNode? _fieldBeforeMenu;
 
   void _menuOpened() {
@@ -738,10 +752,11 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   }
 
   void _menuSelected(_MenuAction action) {
+    final field = _fieldBeforeMenu;
     _fieldBeforeMenu = null;
     switch (action) {
       case _MenuAction.reset:
-        _resetToDefaults();
+        unawaited(_resetToDefaults(field));
     }
   }
 

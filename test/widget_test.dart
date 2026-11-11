@@ -50,6 +50,20 @@ class _SlowSettingsStore extends SettingsStore {
   Future<void> save(Settings settings) async {}
 }
 
+/// Starts with settings other than the defaults; a save waits for [saving],
+/// if set.
+class _SlowSaveStore extends SettingsStore {
+  Completer<void>? saving;
+
+  @override
+  Future<Settings> load() async => const Settings(
+      lastNamesText: 'Zen', firstNamesText: 'Zoe', phoneTemplateText: '',
+      emailTemplateText: '');
+
+  @override
+  Future<void> save(Settings settings) async => saving?.future;
+}
+
 /// The part of the screen not covered by the app bar or the keyboard.
 Rect visibleArea(WidgetTester tester) {
   final view = tester.view;
@@ -493,6 +507,42 @@ void main() {
       expect(find.textContaining('Stopped after creating 2 of 4'),
           findsOneWidget);
     });
+  });
+
+  testWidgets("with TalkBack, the reset message doesn't miss TalkBack's "
+      'focus landing on the menu button while the settings are saved (U9)',
+      (WidgetTester tester) async {
+    final dispatcher = tester.platformDispatcher;
+    dispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(accessibleNavigation: true);
+    addTearDown(dispatcher.clearAccessibilityFeaturesTestValue);
+    final handle = tester.ensureSemantics();
+    final store = _SlowSaveStore();
+    await tester.pumpWidget(MaterialApp(
+        home: MyHomePage(
+            title: 'Fake Contacts',
+            contacts: InMemoryContactsGateway(),
+            settingsStore: store)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('Menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('Reset')));
+    await tester.pumpAndSettle();
+    store.saving = Completer();
+    await tester.tap(find.widgetWithText(TextButton, 'Reset'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+
+    // Still saving when TalkBack's focus lands on the menu button.
+    tester.binding.renderViews.first.owner!.semanticsOwner!.performAction(
+        tester.getSemantics(find.byTooltip('More options')).id,
+        SemanticsAction.didGainAccessibilityFocus);
+    store.saving!.complete();
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Names and templates reset to the defaults.'),
+        findsOneWidget);
+    handle.dispose();
   });
 
   group('preview under the fields (U2)', () {
