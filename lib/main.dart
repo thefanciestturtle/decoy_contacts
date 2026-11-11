@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'app_theme.dart';
 import 'contact_actions.dart';
 import 'contacts_gateway.dart';
 import 'flutter_contacts_gateway.dart';
@@ -36,9 +37,9 @@ class MyApp extends StatelessWidget {
 
     return MaterialApp(
       title: 'Fake Contacts',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-      ),
+      // Light or dark, as the system is set.
+      theme: appTheme(Brightness.light),
+      darkTheme: appTheme(Brightness.dark),
       home: MyHomePage(
           title: 'Fake Contacts',
           contacts: contacts,

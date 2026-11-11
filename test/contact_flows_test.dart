@@ -5,10 +5,12 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:fake_contacts/app_log.dart';
+import 'package:fake_contacts/app_theme.dart' show FocusRing;
 import 'package:fake_contacts/contact_actions.dart'
     show kCreateChunkSize, kDeleteChunkSize;
 import 'package:fake_contacts/contacts_gateway.dart';
 import 'package:fake_contacts/fake_contacts_core.dart';
+import 'package:fake_contacts/home_page.dart' show kSaveDelay;
 import 'package:fake_contacts/main.dart';
 import 'package:fake_contacts/settings_store.dart';
 import 'package:flutter/material.dart';
@@ -127,9 +129,25 @@ Finder dialogButton(String label) => find.descendant(
   );
 }
 
-String snackBarText(WidgetTester tester) {
-  final bar = tester.widget<SnackBar>(find.byType(SnackBar));
-  return (bar.content as Text).data!;
+/// The result under the buttons, if any.
+final Finder resultFinder = find.byKey(const Key('Result'));
+
+/// The text of the result under the buttons; fails if there is none.
+String resultText(WidgetTester tester) =>
+    tester.widget<Text>(resultFinder).data!;
+
+/// Whether the result is marked as a failure (an error icon, in the error
+/// colour); fails if there is no result.
+bool resultIsError(WidgetTester tester) {
+  final text = tester.widget<Text>(resultFinder);
+  final icon = find.byIcon(Icons.error_outline);
+  final colors = Theme.of(tester.element(resultFinder)).colorScheme;
+  final bIcon = icon.evaluate().isNotEmpty;
+  // The icon and the colour go together.
+  expect(text.style?.color == colors.error, bIcon,
+      reason: 'error colour without the icon, or the other way round');
+  if (bIcon) expect(tester.widget<Icon>(icon).color, colors.error);
+  return bIcon;
 }
 
 Future<String?> storedLedgerJson() async =>
@@ -163,8 +181,8 @@ Future<void> leaveAndReturn(WidgetTester tester) async {
 }
 
 bool buttonsEnabled(WidgetTester tester) =>
-    tester.widget<ElevatedButton>(find.byType(ElevatedButton)).enabled &&
-    tester.widget<FilledButton>(find.byType(FilledButton)).enabled;
+    tester.widget<FilledButton>(find.byKey(const Key('Create'))).enabled &&
+    tester.widget<OutlinedButton>(find.byKey(const Key('Delete'))).enabled;
 
 /// Answers the permission request only when [answer] is completed.
 class _SlowPermission extends InMemoryContactsGateway {
@@ -323,7 +341,7 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
 
-      expect(snackBarText(tester), 'Created 4 fake contacts.');
+      expect(resultText(tester), 'Created 4 fake contacts.');
       expect(book.displayNames, unorderedEquals(kFakeNames));
       final zoe = book.all.firstWhere((c) => c.displayName == 'Zoe Zen');
       expect(zoe.phones, [fakeEntry('Zoe', 'Zen').phone]);
@@ -346,7 +364,7 @@ void main() {
 
       await tapExpectingNoDialog(tester, kCreateButton);
 
-      expect(snackBarText(tester), 'Nothing to create. 4 fake contacts already exist.');
+      expect(resultText(tester), 'Nothing to create. 4 fake contacts already exist.');
       expect(book.all, hasLength(4));
       expect(book.createAllCalls, hasLength(1));
       expect(await storedLedgerJson(), ledgerAfterFirst);
@@ -360,7 +378,7 @@ void main() {
       await tester.enterText(find.byKey(const Key('FirstNames')), 'Zoe, Zach, Zelda');
       await tapCreate(tester);
 
-      expect(snackBarText(tester), 'Created 2 fake contacts. 4 already existed.');
+      expect(resultText(tester), 'Created 2 fake contacts. 4 already existed.');
       expect(book.displayNames,
           unorderedEquals([...kFakeNames, 'Zelda Zen', 'Zelda Zima']));
       expect((await storedLedger()).length, 6);
@@ -373,7 +391,7 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
 
-      expect(snackBarText(tester), 'Created 3 fake contacts. 1 already existed.');
+      expect(resultText(tester), 'Created 3 fake contacts. 1 already existed.');
       expect(book.displayNames.where((n) => n == 'Zoe Zen'), hasLength(1));
       // Not tracked, so Delete will never touch it.
       final ledger = await storedLedger();
@@ -387,7 +405,7 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
 
-      expect(snackBarText(tester), 'Created 4 fake contacts.');
+      expect(resultText(tester), 'Created 4 fake contacts.');
       expect(book.displayNames.where((n) => n == 'Zoe Zen'), hasLength(2));
       final ledger = await storedLedger();
       expect(ledger.length, 4);
@@ -401,7 +419,7 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
 
-      expect(snackBarText(tester), 'Created 4 fake contacts.');
+      expect(resultText(tester), 'Created 4 fake contacts.');
       final raws = book.rawIdsOf(alice);
       expect(raws, hasLength(2));
       final ledger = await storedLedger();
@@ -416,7 +434,7 @@ void main() {
       await pumpApp(tester, lossy);
       await tapCreate(tester);
 
-      expect(snackBarText(tester), 'Created 4 fake contacts.');
+      expect(resultText(tester), 'Created 4 fake contacts.');
       expect((await storedLedger()).length, 4);
     });
 
@@ -427,7 +445,7 @@ void main() {
       await pumpApp(tester, lossy);
       await tapCreate(tester);
 
-      expect(snackBarText(tester),
+      expect(resultText(tester),
           'Created 4 fake contacts. Warning: 1 could not be recorded and '
           'must be deleted by hand.');
       expect(lossy.all, hasLength(4));
@@ -439,7 +457,7 @@ void main() {
       await pumpApp(tester, book);
       await tapExpectingNoDialog(tester, kCreateButton);
 
-      expect(snackBarText(tester), kDenied);
+      expect(resultText(tester), kDenied);
       expect(book.permissionRequests, 1);
       expect(book.getAllCalls, 0);
       expect(book.createAllCalls, isEmpty);
@@ -453,7 +471,7 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
 
-      expect(snackBarText(tester), kCreateFailed);
+      expect(resultText(tester), kCreateFailed);
       expect(book.all, isEmpty);
       expect((await storedLedger()).isEmpty, isTrue);
       // None found; they stay pending in case the read was wrong.
@@ -468,7 +486,7 @@ void main() {
       await tapExpectingNoDialog(tester, kCreateButton);
 
       // It happened before anything was created, and the message says so.
-      expect(snackBarText(tester), kReadFailed);
+      expect(resultText(tester), kReadFailed);
       expect(book.createAllCalls, isEmpty);
       expect(await storedLedgerJson(), isNull);
     });
@@ -492,7 +510,7 @@ void main() {
       expect(slow.permissionRequests, 1);
       expect(slow.createAllCalls, hasLength(1));
       expect(slow.deleteAllCalls, isEmpty);
-      expect(snackBarText(tester), 'Created 4 fake contacts.');
+      expect(resultText(tester), 'Created 4 fake contacts.');
     });
   });
 
@@ -507,7 +525,7 @@ void main() {
 
       await tapDelete(tester);
 
-      expect(snackBarText(tester), 'Deleted 4 fake contacts.');
+      expect(resultText(tester), 'Deleted 4 fake contacts.');
       expect(book.displayNames, unorderedEquals(['Alice Example', 'Zoe Zen']));
       expect(book.all.firstWhere((c) => c.displayName == 'Zoe Zen').phones,
           ['+1 555 0100']);
@@ -520,7 +538,7 @@ void main() {
       await tapDelete(tester);
       await tapExpectingNoDialog(tester, kDeleteButton);
 
-      expect(snackBarText(tester), 'No fake contacts to delete.');
+      expect(resultText(tester), 'No fake contacts to delete.');
       expect(book.all, isEmpty);
     });
 
@@ -535,7 +553,7 @@ void main() {
 
       await tapDelete(tester);
 
-      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneMerged');
+      expect(resultText(tester), 'Deleted 3 fake contacts.$kOneMerged');
       expect(book.displayNames, ['Alice Example']);
       expect(book.rawIdsOf(alice), hasLength(2));
       final ledger = await storedLedger();
@@ -551,7 +569,7 @@ void main() {
 
       await tapDelete(tester);
 
-      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneMerged');
+      expect(resultText(tester), 'Deleted 3 fake contacts.$kOneMerged');
       expect(book.displayNames, ['Alice Example']);
       expect(book.rawIdsOf(alice), hasLength(2));
     });
@@ -564,7 +582,7 @@ void main() {
 
       await tapDelete(tester);
 
-      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneChanged');
+      expect(resultText(tester), 'Deleted 3 fake contacts.$kOneChanged');
       expect(book.displayNames, ['Zoe Zen']);
       expect((await storedLedger()).entries.keys, book.rawIdsOf(zoe));
     });
@@ -577,7 +595,7 @@ void main() {
 
       await tapDelete(tester);
 
-      expect(snackBarText(tester), 'Deleted 3 fake contacts.');
+      expect(resultText(tester), 'Deleted 3 fake contacts.');
       expect(book.all, isEmpty);
       expect((await storedLedger()).isEmpty, isTrue);
     });
@@ -598,7 +616,7 @@ void main() {
 
         await tapExpectingNoDialog(tester, kDeleteButton);
 
-        expect(snackBarText(tester), 'No fake contacts to delete.${someChanged(3)}');
+        expect(resultText(tester), 'No fake contacts to delete.${someChanged(3)}');
         expect(book.displayNames,
             unorderedEquals(['Alice Example', 'Bob Example', 'Zoe Zen']));
         expect(book.deleteAllCalls, isEmpty);
@@ -617,7 +635,7 @@ void main() {
 
         await tapExpectingNoDialog(tester, kDeleteButton);
 
-        expect(snackBarText(tester), 'No fake contacts to delete.${someChanged(2)}');
+        expect(resultText(tester), 'No fake contacts to delete.${someChanged(2)}');
         expect(book.displayNames, unorderedEquals(['Alice Example', 'Zoe Zen']));
         expect(book.deleteAllCalls, isEmpty);
         // Saved with the details they were checked against, even though
@@ -633,7 +651,7 @@ void main() {
         setPrefs(ledger: {book.rawIdsOf(zoe).single: 'Zoe Zen'});
         await pumpApp(tester, book);
         await tapExpectingNoDialog(tester, kDeleteButton);
-        expect(snackBarText(tester), 'No fake contacts to delete.$kOneChanged');
+        expect(resultText(tester), 'No fake contacts to delete.$kOneChanged');
 
         // Templates that happen to give exactly the real contact's details.
         await tester.enterText(
@@ -642,7 +660,7 @@ void main() {
             find.byKey(const Key('EmailAddressTemplate')), 'zoe@real.test');
         await tapExpectingNoDialog(tester, kDeleteButton);
 
-        expect(snackBarText(tester), 'No fake contacts to delete.$kOneChanged');
+        expect(resultText(tester), 'No fake contacts to delete.$kOneChanged');
         expect(book.all.map((c) => c.id), [zoe]);
         expect(book.deleteAllCalls, isEmpty);
       });
@@ -662,7 +680,7 @@ void main() {
 
         await tapDelete(tester);
 
-        expect(snackBarText(tester), 'Deleted 2 fake contacts.');
+        expect(resultText(tester), 'Deleted 2 fake contacts.');
         expect(book.all.map((c) => c.id), [alice]);
       });
 
@@ -675,7 +693,7 @@ void main() {
 
         await tapExpectingNoDialog(tester, kDeleteButton);
 
-        expect(snackBarText(tester), 'No fake contacts to delete.');
+        expect(resultText(tester), 'No fake contacts to delete.');
         expect(book.all.map((c) => c.id), [alice]);
         // Only a Create or Delete that runs drops it; asking doesn't.
         expect((await storedLedger()).entries.keys, [gone]);
@@ -696,7 +714,7 @@ void main() {
 
       await tapExpectingNoDialog(tester, kDeleteButton);
 
-      expect(snackBarText(tester), kDenied);
+      expect(resultText(tester), kDenied);
       expect(book.getAllCalls, readsBefore);
       expect(book.deleteAllCalls, isEmpty);
       expect(book.all, hasLength(4));
@@ -713,7 +731,7 @@ void main() {
 
       await tapDelete(tester);
 
-      expect(snackBarText(tester), kDeleteFailed);
+      expect(resultText(tester), kDeleteFailed);
       expect(book.all, hasLength(4));
       expect(await storedLedgerJson(), ledgerBefore);
       expect(buttonsEnabled(tester), isTrue);
@@ -721,7 +739,7 @@ void main() {
       // Once the error is gone, Delete still works.
       book.deleteAllError = null;
       await tapDelete(tester);
-      expect(snackBarText(tester), 'Deleted 4 fake contacts.');
+      expect(resultText(tester), 'Deleted 4 fake contacts.');
       expect(book.all, isEmpty);
     });
   });
@@ -745,7 +763,7 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
 
-      expect(snackBarText(tester), kStoppedCreating);
+      expect(resultText(tester), kStoppedCreating);
       expect(book.all, hasLength(2));
       final ledger = await storedLedger();
       expect(ledger.entries.keys,
@@ -755,12 +773,12 @@ void main() {
 
       book.createAllError = null;
       await tapCreate(tester);
-      expect(snackBarText(tester), 'Created 2 fake contacts. 2 already existed.');
+      expect(resultText(tester), 'Created 2 fake contacts. 2 already existed.');
       expect(book.displayNames, unorderedEquals(kFakeNames));
 
       // All four are recorded, so Delete removes them all.
       await tapDelete(tester);
-      expect(snackBarText(tester), 'Deleted 4 fake contacts.');
+      expect(resultText(tester), 'Deleted 4 fake contacts.');
       expect(book.all, isEmpty);
     });
 
@@ -773,13 +791,13 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
 
-      expect(snackBarText(tester), kStoppedCreating);
+      expect(resultText(tester), kStoppedCreating);
       expect((await storedLedger()).length, 2);
 
       book.createAllError = null;
       await tapCreate(tester);
       await tapDelete(tester);
-      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneMerged');
+      expect(resultText(tester), 'Deleted 3 fake contacts.$kOneMerged');
       expect(book.rawIdsOf(alice), hasLength(2));
     });
 
@@ -791,7 +809,7 @@ void main() {
       await pumpApp(tester, failing);
       await tapCreate(tester);
 
-      expect(snackBarText(tester),
+      expect(resultText(tester),
           "Couldn't finish creating fake contacts. Try again.");
       expect(failing.all, hasLength(2));
       // Not recorded yet, but still pending.
@@ -803,11 +821,11 @@ void main() {
       failing.createAllError = null;
       failing.getAllError = null;
       await tapCreate(tester);
-      expect(snackBarText(tester), 'Created 2 fake contacts. 2 already existed.');
+      expect(resultText(tester), 'Created 2 fake contacts. 2 already existed.');
       expect((await storedLedger()).length, 4);
       expect(await storedPending(), isNull);
       await tapDelete(tester);
-      expect(snackBarText(tester), 'Deleted 4 fake contacts.');
+      expect(resultText(tester), 'Deleted 4 fake contacts.');
       expect(failing.all, isEmpty);
     });
 
@@ -817,12 +835,12 @@ void main() {
       await pumpApp(tester, failing);
       await tapCreate(tester);
 
-      expect(snackBarText(tester), 'Created 4 fake contacts.');
+      expect(resultText(tester), 'Created 4 fake contacts.');
       expect((await storedLedger()).length, 4);
       expect(logged.single, contains('lookup failed'));
 
       await tapDelete(tester);
-      expect(snackBarText(tester), 'Deleted 4 fake contacts.');
+      expect(resultText(tester), 'Deleted 4 fake contacts.');
       expect(failing.all, isEmpty);
     });
 
@@ -835,7 +853,7 @@ void main() {
       book.deleteAllStopsAfter = 2;
 
       await tapDelete(tester);
-      expect(snackBarText(tester), kStoppedDeleting);
+      expect(resultText(tester), kStoppedDeleting);
       expect(book.all, hasLength(2));
       expect(statusText(tester), '2 fake contacts on this phone.');
       // The ledger is left as it was: entries for the deleted ones do no
@@ -847,7 +865,7 @@ void main() {
       expect(dialogText(tester).title, 'Delete 2 fake contacts?');
       await tester.tap(dialogButton('Delete'));
       await tester.pumpAndSettle();
-      expect(snackBarText(tester), 'Deleted 2 fake contacts.');
+      expect(resultText(tester), 'Deleted 2 fake contacts.');
       expect(book.all, isEmpty);
       expect((await storedLedger()).isEmpty, isTrue);
     });
@@ -864,14 +882,14 @@ void main() {
       broken.empty = true;
       broken.createAllError = Exception('Unknown authority');
       await tapCreate(tester);
-      expect(snackBarText(tester), kCreateFailed);
+      expect(resultText(tester), kCreateFailed);
       expect((await storedLedger()).entries,
           Ledger.decode(ledgerBefore).entries);
 
       broken.empty = false;
       broken.createAllError = null;
       await tapDelete(tester);
-      expect(snackBarText(tester), 'Deleted 4 fake contacts.');
+      expect(resultText(tester), 'Deleted 4 fake contacts.');
     });
 
     testWidgets("if what a failed Delete did can't be read, it says so",
@@ -884,7 +902,7 @@ void main() {
       failing.deleteAllStopsAfter = 2;
 
       await tapDelete(tester);
-      expect(snackBarText(tester),
+      expect(resultText(tester),
           "Couldn't finish deleting fake contacts. Try again.");
       expect(failing.all, hasLength(2));
       expect(await storedLedgerJson(), ledgerBefore);
@@ -897,7 +915,7 @@ void main() {
       expect(dialogText(tester).title, 'Delete 2 fake contacts?');
       await tester.tap(dialogButton('Delete'));
       await tester.pumpAndSettle();
-      expect(snackBarText(tester), 'Deleted 2 fake contacts.');
+      expect(resultText(tester), 'Deleted 2 fake contacts.');
       expect(failing.all, isEmpty);
     });
 
@@ -907,18 +925,18 @@ void main() {
       book.createAllStopsAfter = 2;
       await pumpApp(tester, book);
       await tapCreate(tester);
-      expect(snackBarText(tester),
+      expect(resultText(tester),
           'Created 2 of 4 fake contacts before your phone ran out of storage.');
       expect((await storedLedger()).length, 2);
 
       book.createAllStopsAfter = null;
       await tapCreate(tester);
-      expect(snackBarText(tester),
+      expect(resultText(tester),
           "Couldn't create fake contacts: your phone's storage is full.");
 
       book.deleteAllError = kStorageFull;
       await tapDelete(tester);
-      expect(snackBarText(tester),
+      expect(resultText(tester),
           "Couldn't delete fake contacts: your phone's storage is full.");
       expect(book.all, hasLength(2));
     });
@@ -933,13 +951,13 @@ void main() {
           ledgerStore: FailingLedgerStore(2, succeeding: 1));
       await tapCreate(tester);
 
-      expect(snackBarText(tester),
+      expect(resultText(tester),
           'Created 2 of 4 fake contacts before your phone ran out of storage.');
       expect(statusText(tester), '2 fake contacts on this phone.');
 
       book.createAllError = null;
       await tapDelete(tester);
-      expect(snackBarText(tester), 'Deleted 2 fake contacts.');
+      expect(resultText(tester), 'Deleted 2 fake contacts.');
       expect(book.all, isEmpty);
     });
 
@@ -950,7 +968,7 @@ void main() {
       logged.clear(); // the status line's count failed too
       await tapExpectingNoDialog(tester, kCreateButton);
 
-      expect(snackBarText(tester), kReadFailed);
+      expect(resultText(tester), kReadFailed);
       expect(logged.single, contains('_createAllContacts, preview'));
       expect(logged.single, contains('Exception: no provider'));
       // With the stack trace.
@@ -977,7 +995,7 @@ void main() {
       await pumpApp(tester, book);
 
       expect(statusText(tester), isNull);
-      expect(find.byType(SnackBar), findsNothing);
+      expect(resultFinder, findsNothing);
       expect(logged.single, contains('_refreshStatus'));
       expect(logged.single, contains('Exception: no provider'));
     });
@@ -988,7 +1006,7 @@ void main() {
     Future<void> expectUntouched(WidgetTester tester,
         {required int contacts, String? ledgerJson}) async {
       expect(find.byType(AlertDialog), findsNothing);
-      expect(find.byType(SnackBar), findsNothing);
+      expect(resultFinder, findsNothing);
       expect(book.all, hasLength(contacts));
       expect(await storedLedgerJson(), ledgerJson);
       expect(buttonsEnabled(tester), isTrue);
@@ -1030,7 +1048,7 @@ void main() {
       final ledger = await storedLedgerJson();
       await tapAndOpenDialog(tester, kDeleteButton);
       // The result of Create doesn't linger under the dialog.
-      expect(find.byType(SnackBar), findsNothing);
+      expect(resultFinder, findsNothing);
 
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
@@ -1039,7 +1057,7 @@ void main() {
       expect(book.deleteAllCalls, isEmpty);
       // Still works afterwards.
       await tapDelete(tester);
-      expect(snackBarText(tester), 'Deleted 4 fake contacts.');
+      expect(resultText(tester), 'Deleted 4 fake contacts.');
     });
 
     testWidgets('Create counts only the new ones', (tester) async {
@@ -1059,9 +1077,9 @@ void main() {
         'says why (U4)', (tester) async {
       await pumpApp(tester, book);
       bool createEnabled() =>
-          tester.widget<ElevatedButton>(find.byType(ElevatedButton)).enabled;
+          tester.widget<FilledButton>(find.byKey(const Key('Create'))).enabled;
       bool deleteEnabled() =>
-          tester.widget<FilledButton>(find.byType(FilledButton)).enabled;
+          tester.widget<OutlinedButton>(find.byKey(const Key('Delete'))).enabled;
       String preview() =>
           tester.widget<Text>(find.byKey(const Key('Preview'))).data!;
       expect(createEnabled(), isTrue);
@@ -1082,7 +1100,7 @@ void main() {
       await tester.tap(find.text(kCreateButton), warnIfMissed: false);
       await tester.pumpAndSettle();
       expect(find.byType(AlertDialog), findsNothing);
-      expect(find.byType(SnackBar), findsNothing);
+      expect(resultFinder, findsNothing);
       expect(book.permissionRequests, 0);
 
       await tester.enterText(find.byKey(const Key('FirstNames')), 'Zoe');
@@ -1139,7 +1157,7 @@ void main() {
       await tester.tap(dialogButton('Delete'));
       await tester.pumpAndSettle();
 
-      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneChanged');
+      expect(resultText(tester), 'Deleted 3 fake contacts.$kOneChanged');
       expect(book.displayNames, ['Zoe Zen']);
       expect(book.all.single.phones, ['+1 555 0199']);
     });
@@ -1156,7 +1174,7 @@ void main() {
       await tester.tap(dialogButton('Create'));
       await tester.pumpAndSettle();
 
-      expect(snackBarText(tester), 'Created 3 fake contacts. 1 already existed.');
+      expect(resultText(tester), 'Created 3 fake contacts. 1 already existed.');
       expect(book.displayNames.where((n) => n == 'Zoe Zen'), hasLength(1));
     });
 
@@ -1173,7 +1191,7 @@ void main() {
       await tester.tap(dialogButton('Create'));
       await tester.pumpAndSettle();
 
-      expect(snackBarText(tester),
+      expect(resultText(tester),
           'Your contacts changed meanwhile, so nothing was done. Try again.');
       expect(book.createAllCalls, isEmpty);
       expect(await storedLedgerJson(), isNull);
@@ -1197,7 +1215,7 @@ void main() {
       await tester.tap(dialogButton('Delete'));
       await tester.pumpAndSettle();
 
-      expect(snackBarText(tester),
+      expect(resultText(tester),
           'Your contacts changed meanwhile, so nothing was done. Try again.');
       expect(book.deleteAllCalls, isEmpty);
       expect(book.all, hasLength(4));
@@ -1214,7 +1232,7 @@ void main() {
       await tester.tap(dialogButton('Delete'));
       await tester.pumpAndSettle();
 
-      expect(snackBarText(tester), kDeleteFailed);
+      expect(resultText(tester), kDeleteFailed);
       expect(book.deleteAllCalls, isEmpty);
       expect(buttonsEnabled(tester), isTrue);
     });
@@ -1231,7 +1249,7 @@ void main() {
 
       await tapExpectingNoDialog(tester, kDeleteButton);
 
-      expect(snackBarText(tester), 'No fake contacts to delete.$kOneMerged');
+      expect(resultText(tester), 'No fake contacts to delete.$kOneMerged');
       expect(book.deleteAllCalls, hasLength(3)); // only the ones above
     });
   });
@@ -1359,7 +1377,7 @@ void main() {
 
       await tapDelete(tester);
 
-      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneMerged');
+      expect(resultText(tester), 'Deleted 3 fake contacts.$kOneMerged');
       expect(statusText(tester), 'No fake contacts this app can delete.');
     });
 
@@ -1417,7 +1435,7 @@ void main() {
       failing.setPhones(failing.idOf('Zoe Zen'), ['+1 555 0199']);
       await tapDelete(tester);
 
-      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneChanged');
+      expect(resultText(tester), 'Deleted 3 fake contacts.$kOneChanged');
       expect(failing.displayNames, ['Zoe Zen']);
       expect(statusText(tester), isNull);
     });
@@ -1429,7 +1447,7 @@ void main() {
       await tapCreate(tester);
       holding.setPhones(holding.idOf('Zoe Zen'), ['+1 555 0199']);
       await tapDelete(tester); // its count afterwards is now waiting
-      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneChanged');
+      expect(resultText(tester), 'Deleted 3 fake contacts.$kOneChanged');
       expect(statusText(tester), '4 fake contacts on this phone.');
 
       // The user leaves and comes back; that count fails.
@@ -1669,13 +1687,13 @@ void main() {
 
       book.getAllError = Exception('no provider');
       await tapExpectingNoDialog(tester, kCreateButton);
-      expect(snackBarText(tester), kReadFailed);
+      expect(resultText(tester), kReadFailed);
       expect(previewText(tester), before);
 
       book.getAllError = null;
       book.permission = PermissionAnswer.denied;
       await tapExpectingNoDialog(tester, kCreateButton);
-      expect(snackBarText(tester), kDenied);
+      expect(resultText(tester), kDenied);
       expect(previewText(tester), before);
     });
   });
@@ -1691,7 +1709,7 @@ void main() {
     /// Checks that the dialog is gone and nothing else happened.
     void expectDone(WidgetTester tester) {
       expect(find.byType(AlertDialog), findsNothing);
-      expect(find.byType(SnackBar), findsNothing);
+      expect(resultFinder, findsNothing);
       expect(buttonsEnabled(tester), isTrue);
       expect(find.byType(CircularProgressIndicator), findsNothing);
     }
@@ -1772,7 +1790,7 @@ void main() {
 
       expect(statusText(tester), 'No fake contacts on this phone.');
       await tapCreate(tester);
-      expect(snackBarText(tester), 'Created 4 fake contacts.');
+      expect(resultText(tester), 'Created 4 fake contacts.');
       expect(statusText(tester), '4 fake contacts on this phone.');
     });
 
@@ -1784,7 +1802,7 @@ void main() {
       await tapAndAnswer(tester, kCreateButton, 'Open settings');
 
       expect(book.openSettingsCalls, 1);
-      expect(snackBarText(tester), "Couldn't open Settings.");
+      expect(resultText(tester), "Couldn't open Settings.");
       expect(buttonsEnabled(tester), isTrue);
       expect(find.byType(CircularProgressIndicator), findsNothing);
     });
@@ -1815,14 +1833,14 @@ void main() {
 
       await tapExpectingNoDialog(tester, kCreateButton);
 
-      expect(snackBarText(tester),
+      expect(resultText(tester),
           "Couldn't ask for permission to access contacts. Try again.");
       expect(buttonsEnabled(tester), isTrue);
       expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(failing.getAllCalls, 0);
       failing.fail = false;
       await tapCreate(tester);
-      expect(snackBarText(tester), 'Created 4 fake contacts.');
+      expect(resultText(tester), 'Created 4 fake contacts.');
     });
 
     testWidgets('a plain denial (Android may still ask) gets the message, '
@@ -1830,7 +1848,7 @@ void main() {
       book.permission = PermissionAnswer.denied;
       await pumpApp(tester, book);
       await tapExpectingNoDialog(tester, kCreateButton);
-      expect(snackBarText(tester), kDenied);
+      expect(resultText(tester), kDenied);
       expect(book.openSettingsCalls, 0);
     });
   });
@@ -1868,22 +1886,6 @@ void main() {
     Finder stopButton(String label) =>
         find.widgetWithText(OutlinedButton, label).hitTestable();
 
-    SnackBar snackBar(WidgetTester tester) =>
-        tester.widget<SnackBar>(find.byType(SnackBar));
-
-    /// Whether the snack bar is a short one (4 s, no close button), or a long
-    /// one (10 s, with one).
-    void expectShort(WidgetTester tester, {String? reason}) {
-      expect(snackBar(tester).duration, const Duration(seconds: 4),
-          reason: reason);
-      expect(snackBar(tester).showCloseIcon, isFalse, reason: reason);
-    }
-
-    void expectLong(WidgetTester tester, {String? reason}) {
-      expect(snackBar(tester).duration, const Duration(seconds: 10),
-          reason: reason);
-      expect(snackBar(tester).showCloseIcon, isTrue, reason: reason);
-    }
 
     testWidgets('Create shows how far it got, with Stop, instead of the '
         'spinner', (tester) async {
@@ -1907,8 +1909,8 @@ void main() {
       }
       await release(tester);
 
-      expect(snackBarText(tester), 'Created 4 fake contacts.');
-      expectShort(tester);
+      expect(resultText(tester), 'Created 4 fake contacts.');
+      expect(resultIsError(tester), isFalse);
       expect(progressText(tester), isNull);
       expect(stopButton('Stop'), findsNothing);
       expect(buttonsEnabled(tester), isTrue);
@@ -1963,7 +1965,7 @@ void main() {
       expect(progressText(tester), isNull);
       expect(stopButton('Stop'), findsNothing);
       await release(tester);
-      expect(snackBarText(tester), 'Created 4 fake contacts.');
+      expect(resultText(tester), 'Created 4 fake contacts.');
     });
 
     testWidgets('Stop: stops after the chunk it is on and says how far it '
@@ -1982,12 +1984,13 @@ void main() {
           tester.widget<OutlinedButton>(
               find.widgetWithText(OutlinedButton, 'Stopping…')).enabled,
           isFalse);
-      expect(find.byType(SnackBar), findsNothing);
+      expect(resultFinder, findsNothing);
       await release(tester);
 
-      expect(snackBarText(tester),
+      expect(resultText(tester),
           'Stopped after creating 2 of 4 fake contacts.');
-      expectLong(tester);
+      // The user's choice, not a failure.
+      expect(resultIsError(tester), isFalse);
       expect(book.createAllCalls, hasLength(2));
       expect(book.all, hasLength(2));
       expect((await storedLedger()).length, 2);
@@ -1996,7 +1999,7 @@ void main() {
 
       book.beforeCreateAll = null;
       await tapCreate(tester);
-      expect(snackBarText(tester), 'Created 2 fake contacts. 2 already existed.');
+      expect(resultText(tester), 'Created 2 fake contacts. 2 already existed.');
       expect(book.displayNames, unorderedEquals(kFakeNames));
     });
 
@@ -2020,7 +2023,7 @@ void main() {
       expect(stopButton('Stopping…'), findsOneWidget);
       await release(tester);
 
-      expect(snackBarText(tester),
+      expect(resultText(tester),
           'Stopped after creating 1 of 4 fake contacts.');
       expect(book.createAllCalls, hasLength(1));
       expect((await storedLedger()).length, 1);
@@ -2057,7 +2060,7 @@ void main() {
       await release(tester);
 
       expect(pops, isEmpty);
-      expect(snackBarText(tester), 'Created 4 fake contacts.');
+      expect(resultText(tester), 'Created 4 fake contacts.');
     });
 
     testWidgets('Delete shows its progress too, and can be stopped',
@@ -2075,9 +2078,9 @@ void main() {
       await tester.pump();
       await release(tester);
 
-      expect(snackBarText(tester),
+      expect(resultText(tester),
           'Stopped after deleting 2 of 4 fake contacts.');
-      expectLong(tester);
+      expect(resultIsError(tester), isFalse);
       expect(book.all, hasLength(2));
       expect(statusText(tester), '2 fake contacts on this phone.');
       // The ones it didn't get to are still recorded.
@@ -2086,8 +2089,8 @@ void main() {
 
       book.beforeDeleteAll = null;
       await tapDelete(tester);
-      expect(snackBarText(tester), 'Deleted 2 fake contacts.');
-      expectShort(tester);
+      expect(resultText(tester), 'Deleted 2 fake contacts.');
+      expect(resultIsError(tester), isFalse);
       expect(book.all, isEmpty);
     });
 
@@ -2102,9 +2105,9 @@ void main() {
       await pumpApp(tester, book, createChunkSize: 2);
       await tapCreate(tester);
 
-      expect(snackBarText(tester), 'Created 3 of 4 fake contacts, then'
+      expect(resultText(tester), 'Created 3 of 4 fake contacts, then'
           ' something went wrong. Try again to create the rest.');
-      expectLong(tester);
+      expect(resultIsError(tester), isTrue);
       expect(progressText(tester), isNull);
       expect(buttonsEnabled(tester), isTrue);
       expect((await storedLedger()).entries.keys,
@@ -2136,7 +2139,7 @@ void main() {
       expect(dialogText(tester).title, 'Delete 4 fake contacts?');
       await tester.tap(dialogButton('Delete'));
       await tester.pumpAndSettle();
-      expect(snackBarText(tester), 'Deleted 4 fake contacts.');
+      expect(resultText(tester), 'Deleted 4 fake contacts.');
       expect(book.all.map((c) => c.id), [real]);
       expect((await storedLedger()).isEmpty, isTrue);
       expect(await storedPending(), isNull);
@@ -2178,145 +2181,347 @@ void main() {
         await release(tester);
       }
       expect(book.all, hasLength(4));
-      expect(find.byType(SnackBar), findsNothing);
+      expect(resultFinder, findsNothing);
 
       // Not after only "inactive" (e.g. the notification shade): it would
       // be in sight then.
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       await tester.pumpAndSettle();
-      expect(find.byType(SnackBar), findsNothing);
+      expect(resultFinder, findsNothing);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump();
-      expect(snackBarText(tester), 'Created 4 fake contacts.');
+      expect(resultText(tester), 'Created 4 fake contacts.');
       expect(statusText(tester), '4 fake contacts on this phone.');
     });
+  });
 
-    testWidgets('a plain success shows 4 s; anything else 10 s, with a close '
-        'button', (tester) async {
+  group('results under the buttons (U7)', () {
+    testWidgets('plain text; failures with an error icon, in the error colour',
+        (tester) async {
       final alice = book.add('Alice Example', phones: ['+1 555 0101']);
       await pumpApp(tester, book);
 
       await tapCreate(tester);
-      expect(snackBarText(tester), 'Created 4 fake contacts.');
-      expectShort(tester);
+      expect(resultText(tester), 'Created 4 fake contacts.');
+      expect(resultIsError(tester), isFalse);
 
       await tapExpectingNoDialog(tester, kCreateButton);
-      expect(snackBarText(tester), startsWith('Nothing to create.'));
-      expectShort(tester);
+      expect(resultText(tester), startsWith('Nothing to create.'));
+      expect(resultIsError(tester), isFalse);
 
       book.merge(into: alice, from: book.idOf('Zach Zen'));
       await tapDelete(tester);
-      expect(snackBarText(tester), 'Deleted 3 fake contacts.$kOneMerged');
-      expectLong(tester, reason: 'left alone');
-
-      await tapExpectingNoDialog(tester, kDeleteButton);
-      expect(snackBarText(tester), 'No fake contacts to delete.$kOneMerged');
-      expectLong(tester, reason: 'nothing to delete, one left alone');
+      expect(resultText(tester), 'Deleted 3 fake contacts.$kOneMerged');
+      expect(resultIsError(tester), isFalse, reason: 'left alone');
 
       book.createAllError = Exception('provider gone');
       await tapCreate(tester);
-      expect(snackBarText(tester), kCreateFailed);
-      expectLong(tester, reason: 'an error');
+      expect(resultText(tester), kCreateFailed);
+      expect(resultIsError(tester), isTrue);
 
       book.createAllError = null;
       book.getAllError = Exception('no provider');
       await tapExpectingNoDialog(tester, kCreateButton);
-      expect(snackBarText(tester), kReadFailed);
-      expectLong(tester, reason: 'reading failed');
+      expect(resultText(tester), kReadFailed);
+      expect(resultIsError(tester), isTrue);
 
       book.getAllError = null;
       book.permission = PermissionAnswer.denied;
       await tapExpectingNoDialog(tester, kCreateButton);
-      expect(snackBarText(tester), kDenied);
-      expectShort(tester, reason: 'the user said no');
+      expect(resultText(tester), kDenied);
+      expect(resultIsError(tester), isFalse, reason: 'the user said no');
     });
 
-    testWidgets('the close button clears a long one off the buttons',
-        (tester) async {
-      book.createAllError = Exception('provider gone');
+    testWidgets('a result stays until the next Create or Delete starts, and '
+        'moves and covers nothing', (tester) async {
+      final alice = book.add('Alice Example', phones: ['+1 555 0101']);
       await pumpApp(tester, book);
       await tapCreate(tester);
-      expect(find.byType(SnackBar), findsOneWidget);
+      // A long one.
+      book.merge(into: alice, from: book.idOf('Zach Zen'));
+      book.setPhones(book.idOf('Zoe Zen'), ['+1 555 0199']);
+      await tapDelete(tester);
+      expect(resultText(tester), 'Deleted 2 fake contacts.$kOneMerged$kOneChanged');
 
-      await tester.tap(find.byIcon(Icons.close));
+      final createAt = tester.getRect(find.text(kCreateButton));
+      final deleteAt = tester.getRect(find.text(kDeleteButton));
+
+      // Long after a snack bar would have gone.
+      await tester.pump(const Duration(minutes: 5));
       await tester.pumpAndSettle();
-      expect(find.byType(SnackBar), findsNothing);
+      expect(resultText(tester), startsWith('Deleted 2 fake contacts.'));
+      // Under the buttons, which can be tapped.
+      expect(tester.getRect(resultFinder).top,
+          greaterThan(tester.getRect(find.byKey(const Key('Delete'))).bottom));
+      for (final label in [kCreateButton, kDeleteButton]) {
+        expect(find.text(label).hitTestable(), findsOneWidget);
+      }
+      // Editing the settings leaves it alone.
+      await tester.enterText(find.byKey(const Key('LastNames')), 'Zelda');
+      await tester.pumpAndSettle(kSaveDelay);
+      expect(resultFinder, findsOneWidget);
+
+      // Gone as soon as the next one starts, also if that is cancelled; the
+      // buttons don't move when it goes.
+      await tapAndOpenDialog(tester, kCreateButton);
+      expect(resultFinder, findsNothing);
+      expect(tester.getRect(find.text(kCreateButton)), createAt);
+      expect(tester.getRect(find.text(kDeleteButton)), deleteAt);
+      await tester.tap(dialogButton('Cancel'));
+      await tester.pumpAndSettle();
+      expect(resultFinder, findsNothing);
     });
 
-    testWidgets("they show longer if the user's accessibility timeout asks "
-        'for more', (tester) async {
-      final asked = <Map<Object?, Object?>>[];
-      const channel = MethodChannel('fake_contacts/accessibility');
-      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel,
-          (call) async {
-        final args = call.arguments as Map<Object?, Object?>;
-        asked.add(args);
-        // The user's settings as they are; the app takes the longer of
-        // that and its own (Android does too).
-        return args['controls'] == true ? 30000 : 2000;
-      });
-      addTearDown(() => tester.binding.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, null));
+    testWidgets('TalkBack reads each result out: one live region, there even '
+        'while empty, so a result that repeats is read again', (tester) async {
+      final handle = tester.ensureSemantics();
       await pumpApp(tester, book);
-      expect(asked, [
-        {'millis': 4000, 'controls': false},
-        {'millis': 10000, 'controls': true},
-      ]);
+      final region = find.byWidgetPredicate((w) =>
+          w is Semantics && w.container && w.properties.liveRegion == true);
+      expect(region, findsOneWidget);
+      SemanticsNode node() => tester.getSemantics(region);
+      expect(node().label, isEmpty);
+      expect(node().flagsCollection.isLiveRegion, isTrue);
+      final id = node().id;
 
-      await tapCreate(tester);
-      expect(snackBar(tester).duration, const Duration(seconds: 4));
-      book.createAllError = Exception('provider gone');
-      book.add('Zoe Zen'); // so there is something to create
-      await tester.enterText(find.byKey(const Key('FirstNames')), 'Zoe, Zach, Zelda');
-      await tapCreate(tester);
-      expect(snackBar(tester).duration, const Duration(seconds: 30));
-    });
+      await tapExpectingNoDialog(tester, kDeleteButton);
+      expect(node().label, 'No fake contacts to delete.');
 
-    testWidgets('an older answer about the accessibility timeout that comes '
-        'last is not used', (tester) async {
-      const channel = MethodChannel('fake_contacts/accessibility');
-      final answers = <Completer<Object?>>[];
-      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel,
-          (call) {
-        final answer = Completer<Object?>();
-        answers.add(answer);
-        return answer.future;
-      });
-      addTearDown(() => tester.binding.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, null));
-      await pumpApp(tester, book);
-      expect(answers, hasLength(2)); // both, at startup
-
-      // The user changes the setting and comes back; those answers come
-      // first.
-      await leaveAndReturn(tester);
-      expect(answers, hasLength(4));
-      answers[2].complete(30000);
-      answers[3].complete(30000);
+      // Again: empty for a frame, then the same text, on the same node.
+      // (TalkBack reads out a live region when its text changes; a new
+      // node isn't read out.)
+      await tester.tap(find.text(kDeleteButton));
       await tester.pump();
-      // Then the ones from startup.
-      answers[0].complete(4000);
-      answers[1].complete(10000);
+      expect(node().label, isEmpty);
       await tester.pumpAndSettle();
+      expect(node().label, 'No fake contacts to delete.');
+      expect(node().id, id);
 
-      await tapCreate(tester);
-      expect(snackBar(tester).duration, const Duration(seconds: 30));
+      // A failure's icon isn't read out: the text says it.
+      book.getAllError = Exception('no provider');
+      await tapExpectingNoDialog(tester, kDeleteButton);
+      expect(resultIsError(tester), isTrue);
+      expect(node().label, kReadFailed);
+      expect(node().id, id);
+      handle.dispose();
+    });
+  });
+
+  group('focus after Create and Delete (U7)', () {
+    /// Expects one focus ring on screen, just outside [button], all round.
+    void expectRingAround(WidgetTester tester, Finder button) {
+      final ring = find.byKey(FocusRing.ringKey);
+      expect(ring, findsOneWidget);
+      final outer = tester.getRect(ring), inner = tester.getRect(button);
+      expect(outer, inner.inflate(5));
+      final decoration = tester
+          .widget<DecoratedBox>(
+              find.descendant(of: ring, matching: find.byType(DecoratedBox)))
+          .decoration as ShapeDecoration;
+      final side = (decoration.shape as OutlinedBorder).side;
+      expect(side.width, 3);
+      expect(side.color,
+          Theme.of(tester.element(button)).colorScheme.secondary);
+    }
+
+    FocusNode focusOf(WidgetTester tester, String key) =>
+        Focus.of(tester.element(find.descendant(
+            of: find.byKey(Key(key)), matching: find.byType(Text))));
+
+    /// The label of the button with the keyboard focus, or null if none
+    /// has it.
+    String? focusedButton() {
+      final focus = FocusManager.instance.primaryFocus;
+      final button = focus is FocusScopeNode
+          ? null
+          : focus?.context?.findAncestorWidgetOfExactType<TextButton>() ??
+              focus?.context?.findAncestorWidgetOfExactType<FilledButton>() ??
+              focus?.context?.findAncestorWidgetOfExactType<OutlinedButton>();
+      final child = button?.child;
+      return child is Text ? child.data : (child is Semantics
+          ? (child.child as Text?)?.data
+          : null);
+    }
+
+    /// Gives the button with [key] the keyboard focus, and presses Enter.
+    Future<void> pressWithKeyboard(WidgetTester tester, String key) async {
+      focusOf(tester, key).requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('with a keyboard, the button pressed has the focus again '
+        'after the result, Cancel, a failure, or no dialog', (tester) async {
+      await pumpApp(tester, book);
+      for (final (key, answer, setUp, result) in [
+        ('Create', 'Create', () {}, 'Created 4 fake contacts.'),
+        ('Delete', 'Cancel', () {}, null),
+        ('Create', null, () {}, 'Nothing to create. 4 fake contacts already exist.'),
+        ('Delete', 'Delete', () => book.deleteAllError = Exception('busy'),
+            kDeleteFailed),
+        ('Create', null, () {
+          book.deleteAllError = null;
+          book.permission = PermissionAnswer.denied;
+        }, kDenied),
+      ]) {
+        setUp();
+        await pressWithKeyboard(tester, key);
+        if (answer != null) {
+          expect(find.byType(AlertDialog), findsOneWidget, reason: key);
+          // While busy, the button is disabled and has lost the focus.
+          expect(focusOf(tester, key).hasFocus, isFalse, reason: key);
+          await tester.tap(dialogButton(answer));
+          await tester.pumpAndSettle();
+        }
+        expect(result == null ? resultFinder : find.text(result),
+            result == null ? findsNothing : findsOneWidget, reason: key);
+        expect(focusOf(tester, key).hasPrimaryFocus, isTrue,
+            reason: '$key, $answer');
+      }
     });
 
-    testWidgets('if asking for the accessibility timeout fails, the usual '
-        'times apply', (tester) async {
-      const channel = MethodChannel('fake_contacts/accessibility');
-      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-          channel, (call) async => throw PlatformException(code: 'broken'));
-      addTearDown(() => tester.binding.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, null));
+    testWidgets('all by keyboard: Tab to the button, Enter, Tab to the '
+        "dialog's button, Enter; then Tab goes on from the button",
+        (tester) async {
       await pumpApp(tester, book);
-      expect(logged, hasLength(2));
-      expect(logged.first, contains('recommendedTimeout'));
+      final create = focusOf(tester, 'Create');
+      for (var i = 0; i < 10 && !create.hasPrimaryFocus; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+      }
+      expect(create.hasPrimaryFocus, isTrue);
+      expectRingAround(tester, find.byKey(const Key('Create')));
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      for (var i = 0; i < 4 && focusedButton() != 'Cancel'; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+      }
+      // Cancel comes first.
+      expect(focusedButton(), 'Cancel');
+      expectRingAround(tester, dialogButton('Cancel'));
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(focusedButton(), 'Create');
+      expectRingAround(tester, dialogButton('Create'));
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
 
+      expect(resultText(tester), 'Created 4 fake contacts.');
+      expect(create.hasPrimaryFocus, isTrue);
+      expectRingAround(tester, find.byKey(const Key('Create')));
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(focusOf(tester, 'Delete').hasPrimaryFocus, isTrue);
+      expectRingAround(tester, find.byKey(const Key('Delete')));
+    });
+
+    testWidgets('with a D-pad, the place is kept too', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(MediaQuery(
+          data: const MediaQueryData(navigationMode: NavigationMode.directional),
+          child: MyApp(contacts: book)));
+      await tester.pumpAndSettle();
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+
+      focusOf(tester, 'Delete').requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pump();
+      expect(focusOf(tester, 'Create').hasPrimaryFocus, isTrue);
+      // The D-pad's centre button.
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pumpAndSettle();
+      await tester.tap(dialogButton('Create'));
+      await tester.pumpAndSettle();
+
+      expect(resultText(tester), 'Created 4 fake contacts.');
+      expect(focusOf(tester, 'Create').hasPrimaryFocus, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      expect(focusOf(tester, 'Delete').hasPrimaryFocus, isTrue);
+    });
+
+    testWidgets('a tap on the screen gives the button no focus, and shows '
+        'no focus ring', (tester) async {
+      await pumpApp(tester, book);
       await tapCreate(tester);
-      expectShort(tester);
+      expect(resultText(tester), 'Created 4 fake contacts.');
+      expect(focusedButton(), isNull);
+      expect(find.byKey(FocusRing.ringKey), findsNothing);
+
+      // Focused by code after a tap (the screen in touch mode): no ring.
+      focusOf(tester, 'Create').requestFocus();
+      await tester.pumpAndSettle();
+      expect(focusedButton(), 'Create Fake Contacts');
+      expect(find.byKey(FocusRing.ringKey), findsNothing);
+      // Once a key is pressed, it shows.
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(focusedButton(), 'Delete Fake Contacts');
+      expectRingAround(tester, find.byKey(const Key('Delete')));
+    });
+
+    group('with progress', () {
+      late List<Completer<void>> gates;
+      Future<void> hold(int _) {
+        final gate = Completer<void>();
+        gates.add(gate);
+        return gate.future;
+      }
+
+      setUp(() => gates = []);
+
+      Finder stop(String label) => find.widgetWithText(OutlinedButton, label);
+
+      testWidgets('Stop pressed with the keyboard: the focus goes to the '
+          'button that ran once it has stopped', (tester) async {
+        book.beforeCreateAll = hold;
+        await pumpApp(tester, book, createChunkSize: 1);
+        // Started by a tap, so only pressing Stop calls for the focus.
+        await tapCreate(tester);
+        expect(find.byKey(const Key('Progress')), findsOneWidget);
+
+        Focus.of(tester.element(find.descendant(
+                of: stop('Stop'), matching: find.byType(Text))))
+            .requestFocus();
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump();
+        // Disabled while it stops, so it has lost the focus.
+        expect(stop('Stopping…'), findsOneWidget);
+        expect(focusedButton(), isNull);
+        gates.last.complete();
+        await tester.pumpAndSettle();
+
+        expect(resultText(tester), 'Stopped after creating 1 of 4 fake contacts.');
+        expect(focusOf(tester, 'Create').hasPrimaryFocus, isTrue);
+      });
+
+      testWidgets('Stop focused when it ends (and goes away): the focus goes '
+          'to the button that ran', (tester) async {
+        book.beforeDeleteAll = hold;
+        await pumpApp(tester, book, deleteChunkSize: 1);
+        await tapCreate(tester);
+        // Started by a tap, then the keyboard is used.
+        await tapDelete(tester);
+        Focus.of(tester.element(find.descendant(
+                of: stop('Stop'), matching: find.byType(Text))))
+            .requestFocus();
+        await tester.pump();
+        for (var i = 0; i < 4; i++) {
+          gates.last.complete();
+          await tester.pumpAndSettle();
+        }
+
+        expect(resultText(tester), 'Deleted 4 fake contacts.');
+        expect(focusOf(tester, 'Delete').hasPrimaryFocus, isTrue);
+      });
     });
   });
 }

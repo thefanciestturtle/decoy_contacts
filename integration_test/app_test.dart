@@ -17,6 +17,7 @@ import 'package:fake_contacts/flutter_contacts_gateway.dart';
 import 'package:fake_contacts/main.dart';
 import 'package:fake_contacts/settings_store.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -393,6 +394,63 @@ void main() {
     expect(await storedPending(), isNull);
   });
 
+  testWidgets('U7: all by keyboard, the focus comes back to the button '
+      'after the dialog and the result, which stays under the buttons',
+      (tester) async {
+    await startWithEmptyAddressBook(tester);
+    final real = await seed(kRealContacts);
+    await launchApp(tester);
+    await expectStatus(tester, 'No fake contacts on this phone.');
+
+    /// The label of the button with the keyboard focus, if any.
+    String? focusedButton() {
+      final context = FocusManager.instance.primaryFocus?.context;
+      final button = context?.findAncestorWidgetOfExactType<TextButton>() ??
+          context?.findAncestorWidgetOfExactType<FilledButton>() ??
+          context?.findAncestorWidgetOfExactType<OutlinedButton>();
+      final child = button?.child;
+      return switch (child) {
+        Text(:final data) => data,
+        Semantics(child: Text(:final data)) => data,
+        _ => null,
+      };
+    }
+
+    Future<void> press(LogicalKeyboardKey key) async {
+      await tester.sendKeyEvent(key);
+      await tester.pumpAndSettle();
+    }
+
+    /// Tabs until the button labelled [label] has the focus.
+    Future<void> tabTo(String label) async {
+      for (var i = 0; i < 12 && focusedButton() != label; i++) {
+        await press(LogicalKeyboardKey.tab);
+      }
+      expect(focusedButton(), label);
+    }
+
+    for (final (button, title, answer, result) in [
+      (kCreate, 'Create 4 fake contacts?', 'Create', 'Created 4 fake contacts.'),
+      (kDelete, 'Delete 4 fake contacts?', 'Delete', 'Deleted 4 fake contacts.'),
+    ]) {
+      await tabTo(button);
+      await press(LogicalKeyboardKey.enter);
+      await pumpUntil(tester, () => find.byType(AlertDialog).evaluate().isNotEmpty,
+          'dialog of "$button"');
+      expectDialog(tester, title);
+      // The dialog has the focus: Tab reaches its buttons.
+      await tabTo(answer);
+      await press(LogicalKeyboardKey.enter);
+      expect(await waitForResult(tester, button), result);
+      await pumpUntil(tester, () => focusedButton() == button,
+          'focus back on "$button"');
+    }
+    // The last result stays (a snack bar used to go after 4 s, or 10 s).
+    await tester.pump(const Duration(seconds: 11));
+    expect(tester.widget<Text>(resultFinder).data, 'Deleted 4 fake contacts.');
+    expect(describeAll(await readAddressBook()), describeAll(real));
+  });
+
   testWidgets('S1: a ledger whose raw IDs point at real contacts deletes '
       'nothing', (tester) async {
     await startWithEmptyAddressBook(tester);
@@ -514,19 +572,22 @@ Future<void> launchApp(WidgetTester tester,
 /// Create or Delete is running. (Delete, not Create: Create is also disabled
 /// while a name list is empty.)
 bool appIdle(WidgetTester tester) {
-  final button = find.byType(FilledButton);
+  final button = find.byKey(const Key('Delete'));
+  return button.evaluate().isNotEmpty &&
+      tester.widget<OutlinedButton>(button).enabled;
+}
+
+bool createButtonEnabled(WidgetTester tester) {
+  final button = find.byKey(const Key('Create'));
   return button.evaluate().isNotEmpty &&
       tester.widget<FilledButton>(button).enabled;
 }
 
-bool createButtonEnabled(WidgetTester tester) {
-  final button = find.byType(ElevatedButton);
-  return button.evaluate().isNotEmpty &&
-      tester.widget<ElevatedButton>(button).enabled;
-}
+/// The result under the buttons, if any.
+final Finder resultFinder = find.byKey(const Key('Result'));
 
-/// Taps the button labelled [label] and returns the text of the snack bar
-/// with the result. The app talks to the real contacts provider, so this
+/// Taps the button labelled [label] and returns the text of the result
+/// under the buttons. The app talks to the real contacts provider, so this
 /// waits in real time rather than relying on pumpAndSettle.
 ///
 /// If [confirm] is given, expects the dialog that asks to go ahead, with
@@ -556,18 +617,14 @@ Future<void> tapAndConfirm(
   await tester.pump();
 }
 
-/// Waits for the snack bar with the result of [label] and returns its text.
+/// Waits for the result of [label] under the buttons and returns its text.
 /// The app talks to the real contacts provider, so this waits in real time
-/// rather than relying on pumpAndSettle.
+/// rather than relying on pumpAndSettle. (The result stays until the next
+/// Create or Delete starts, which clears it.)
 Future<String> waitForResult(WidgetTester tester, String label) async {
-  await pumpUntil(tester, () => find.byType(SnackBar).evaluate().isNotEmpty,
+  await pumpUntil(tester, () => resultFinder.evaluate().isNotEmpty,
       'result of "$label"');
-  final bar = tester.widget<SnackBar>(find.byType(SnackBar));
-  final text = (bar.content as Text).data!;
-  // Remove it, so the next action's result can't be mistaken for this one.
-  tester
-      .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
-      .removeCurrentSnackBar();
+  final text = tester.widget<Text>(resultFinder).data!;
   await pumpUntil(tester, () => appIdle(tester), 'app idle');
   await tester.pumpAndSettle();
   return text;
@@ -607,23 +664,25 @@ Future<void> tapAndCancel(WidgetTester tester, String label, String title,
       'dialog closed');
   await pumpUntil(tester, () => appIdle(tester), 'app idle');
   await tester.pumpAndSettle();
-  expect(find.byType(SnackBar), findsNothing);
+  expect(resultFinder, findsNothing);
 }
 
 /// Taps the button labelled [label] and waits until the app either asks to
 /// go ahead or shows a result.
 Future<void> tapAndWaitForAnswer(WidgetTester tester, String label) async {
-  // An earlier result still on screen would end the wait below too early.
-  expect(find.byType(SnackBar), findsNothing);
   final button = find.text(label);
   await tester.ensureVisible(button);
   await tester.pumpAndSettle();
   await tester.tap(button);
+  await tester.pump();
+  // The earlier result is cleared at once (else it would end the wait
+  // below too early).
+  expect(resultFinder, findsNothing);
   await pumpUntil(
       tester,
       () =>
           find.byType(AlertDialog).evaluate().isNotEmpty ||
-          find.byType(SnackBar).evaluate().isNotEmpty,
+          resultFinder.evaluate().isNotEmpty,
       'answer to "$label"');
   await tester.pumpAndSettle();
 }

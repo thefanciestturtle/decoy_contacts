@@ -496,49 +496,61 @@ void main() {
         'Deleted 0 of 1000');
   });
 
-  group('which results need attention (U8)', () {
+  group('which results are failures (U7)', () {
     StoppedPartway stopped(int? done) => StoppedPartway(
         done: done,
         planned: 4,
         cause: 'provider gone',
         stackTrace: StackTrace.empty);
 
-    test('plain successes and answers the user gave: no', () {
+    test('results, also stopped ones, notes about fakes left alone, '
+        'nothing to do, and answers the user gave: no', () {
       for (final message in [
         messages.createdMessage(created(4)),
         messages.createdMessage(created(2, alreadyExisted: 2)),
+        messages.createdMessage(created(2, stoppedOf: 4)),
         messages.deletedMessage(deleted(4)),
+        messages.deletedMessage(deleted(2, stoppedOf: 4)),
+        messages.deletedMessage(deleted(3, merged: 1)),
+        messages.deletedMessage(deleted(3, changed: 1)),
         messages.nothingToCreateMessage(
             toCreate(0, alreadyExisted: 4), settingsMake(2, 2)),
         messages.nothingToCreateMessage(toCreate(0), settingsMake(0, 2)),
         messages.nothingToDeleteMessage(toDelete(0)),
+        messages.nothingToDeleteMessage(toDelete(0, merged: 1)),
+        // The app refused on purpose.
+        messages.kChangedMeanwhileMessage,
         messages.kPermissionDeniedMessage,
       ]) {
-        expect(message.needsAttention, isFalse, reason: message.text);
+        expect(message.isError, isFalse, reason: message.text);
       }
     });
 
-    test('errors, partial or stopped results, and notes about fakes left '
-        'alone or not recorded: yes', () {
+    test('anything that went wrong, also partway, and fakes created but not '
+        'recorded: yes', () {
       for (final message in [
-        messages.createdMessage(created(2, stoppedOf: 4)),
-        messages.deletedMessage(deleted(2, stoppedOf: 4)),
         messages.createdMessage(created(4, untracked: 1)),
-        messages.deletedMessage(deleted(3, merged: 1)),
-        messages.deletedMessage(deleted(3, changed: 1)),
-        messages.nothingToDeleteMessage(toDelete(0, merged: 1)),
         messages.createFailedMessage(Exception('x')),
         messages.createFailedMessage(stopped(2)),
         messages.createFailedMessage(stopped(null)),
         messages.deleteFailedMessage(Exception('x')),
         messages.deleteFailedMessage(stopped(2)),
+        messages.deleteFailedMessage(stopped(null)),
         messages.kReadFailedMessage,
-        messages.kChangedMeanwhileMessage,
         messages.kPermissionRequestFailedMessage,
         messages.kOpenSettingsFailedMessage,
       ]) {
-        expect(message.needsAttention, isTrue, reason: message.text);
+        expect(message.isError, isTrue, reason: message.text);
       }
+    });
+
+    test('equality includes the kind', () {
+      expect(const messages.ResultMessage('x'),
+          const messages.ResultMessage('x'));
+      expect(const messages.ResultMessage('x'),
+          isNot(const messages.ResultMessage.error('x')));
+      expect(const messages.ResultMessage.error('x').toString(),
+          'ResultMessage(error: x)');
     });
   });
 }
