@@ -41,7 +41,8 @@ ButtonStyle destructiveButtonStyle(ColorScheme colors) =>
 ///
 /// With [focusNode], the ring shows while that node itself has the focus,
 /// not while something inside it has: for an area that takes the focus
-/// and holds buttons of its own.
+/// and holds buttons of its own. (It can change to another node, but not
+/// to or from none.)
 class FocusRing extends StatefulWidget {
   const FocusRing(
       {super.key,
@@ -77,11 +78,11 @@ class _FocusRingState extends State<FocusRing> {
   @override
   void didUpdateWidget(FocusRing oldWidget) {
     super.didUpdateWidget(oldWidget);
+    assert((oldWidget.focusNode == null) == (widget.focusNode == null),
+        'A FocusRing can change its focusNode, but not to or from none.');
     if (oldWidget.focusNode != widget.focusNode) {
       oldWidget.focusNode?.removeListener(_nodeChanged);
       widget.focusNode?.addListener(_nodeChanged);
-      // (Without a node, the ring shows again once the button in it gets
-      // the focus.)
       _bFocused = widget.focusNode?.hasPrimaryFocus ?? false;
     }
   }

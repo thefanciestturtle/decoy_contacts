@@ -217,8 +217,9 @@ void main() {
       handle.dispose();
     });
 
-    testWidgets('the message goes while the link is opened again, so a '
-        'second failure is read out again', (tester) async {
+    testWidgets('the message goes for a frame before the link is opened '
+        'again, so a second failure is read out again, however quick',
+        (tester) async {
       final browser = FakeBrowser()..answer = false;
       await pumpAbout(tester, browser);
       await tester.ensureVisible(link);
@@ -226,13 +227,12 @@ void main() {
       await tester.tap(link);
       await tester.pumpAndSettle();
       expect(linkFailed, findsOneWidget);
-      final opening = Completer<bool>();
-      browser.pending = opening;
+      // (This one fails at once.)
       await tester.tap(link);
       await tester.pump();
       expect(linkFailed, findsNothing);
-      opening.complete(false);
       await tester.pumpAndSettle();
+      expect(browser.opened, [kSourceUrl, kSourceUrl]);
       expect(linkFailed, findsOneWidget);
     });
 
@@ -362,8 +362,8 @@ void main() {
       expect(position(tester).pixels, 4 * kArrowScrollStep);
     });
 
-    testWidgets('a key held down at the end waits for the end to be in '
-        'view before it moves on', (tester) async {
+    testWidgets('a key held down stops at the end; only a fresh press '
+        'moves on', (tester) async {
       await pumpAbout(tester, FakeBrowser());
       textFocus(tester).requestFocus();
       await tester.pumpAndSettle();
@@ -380,10 +380,28 @@ void main() {
       await tester.pumpAndSettle();
       expect(scroll.pixels, scroll.maxScrollExtent);
       expect(textFocus(tester).hasPrimaryFocus, isTrue);
+      // Still held, now with the end in view.
       await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowDown);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowDown);
       await tester.pumpAndSettle();
+      expect(textFocus(tester).hasPrimaryFocus, isTrue);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowDown);
+      await press(tester, LogicalKeyboardKey.arrowDown);
       expect(focusOf(tester, link).hasPrimaryFocus, isTrue);
+    });
+
+    testWidgets('a second quick press, before the end is in view, waits too',
+        (tester) async {
+      await pumpAbout(tester, FakeBrowser());
+      textFocus(tester).requestFocus();
+      await tester.pumpAndSettle();
+      final scroll = position(tester);
+      scroll.jumpTo(scroll.maxScrollExtent - kArrowScrollStep / 2);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+      expect(scroll.pixels, scroll.maxScrollExtent);
+      expect(textFocus(tester).hasPrimaryFocus, isTrue);
     });
 
     testWidgets("on the link or Licenses, the arrows move the focus as "

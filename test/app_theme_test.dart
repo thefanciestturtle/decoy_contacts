@@ -130,14 +130,15 @@ void main() {
     });
 
     testWidgets('with focusNode: only while that node itself has the '
-        'focus; none once it no longer follows it', (tester) async {
+        'focus; none once it follows another node', (tester) async {
       final area = FocusNode();
       final inner = FocusNode();
+      final another = FocusNode();
       addTearDown(area.dispose);
       addTearDown(inner.dispose);
+      addTearDown(another.dispose);
       addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
-      Future<RenderFocusRing> pump(FocusNode? follows) async {
-        await tester.pumpWidget(MaterialApp(
+      Widget app(FocusNode follows) => MaterialApp(
             theme: appTheme(Brightness.light),
             home: Column(mainAxisSize: MainAxisSize.min, children: [
               FocusRing(
@@ -152,7 +153,9 @@ void main() {
                   ]),
                 ),
               ),
-            ])));
+            ]));
+      Future<RenderFocusRing> pump(FocusNode follows) async {
+        await tester.pumpWidget(app(follows));
         await tester.pump();
         return tester.renderObject<RenderFocusRing>(find.byType(FocusRing));
       }
@@ -170,7 +173,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(ring.ringRect, isNotNull);
-      ring = await pump(null);
+      ring = await pump(another);
       expect(ring.ringRect, isNull);
     });
 

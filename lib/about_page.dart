@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -175,9 +176,11 @@ class _AboutPageState extends State<AboutPage> {
     final double target = (from + step)
         .clamp(position.minScrollExtent, position.maxScrollExtent);
     if (target == from) {
-      // Not while it still scrolls there: a key held down waits for the
-      // end to be in view.
-      if (_scrollTarget != null) return KeyEventResult.handled;
+      // Only on a fresh press, once the end is in view: a key held down
+      // stops at the end.
+      if (_scrollTarget != null || event is KeyRepeatEvent) {
+        return KeyEventResult.handled;
+      }
       if (key == LogicalKeyboardKey.arrowDown) node.nextFocus();
       if (key == LogicalKeyboardKey.arrowUp) node.previousFocus();
       return KeyEventResult.handled;
@@ -196,9 +199,17 @@ class _AboutPageState extends State<AboutPage> {
   Future<void> _openSource() async {
     if (_bOpening) return;
     _bOpening = true;
-    setState(() => _bLinkFailed = false);
     bool bOpened;
     try {
+      if (_bLinkFailed) {
+        // Gone for a frame first, so TalkBack reads it out again if it
+        // fails again (as quickly as it can when no app can open it).
+        setState(() => _bLinkFailed = false);
+        if (SchedulerBinding.instance.framesEnabled) {
+          await WidgetsBinding.instance.endOfFrame;
+        }
+        if (!mounted) return;
+      }
       bOpened = await widget.openLink(kSourceUrl);
     } catch (e, st) {
       logError('AboutPage, opening the link', e, st);
@@ -277,7 +288,7 @@ class _AboutPageState extends State<AboutPage> {
                         ],
                       ],
                       const SizedBox(height: 8),
-                      _buildSourceLink(context),
+                      _buildSourceLink(theme),
                       // Read out if it appears.
                       Semantics(
                         container: true,
@@ -312,8 +323,7 @@ class _AboutPageState extends State<AboutPage> {
   /// Flutter passes it to Android inside the text, and TalkBack then reads
   /// out only the text, not that it can be opened (checked on API 36).
   /// Without it, TalkBack calls it a button, and says to double-tap it.
-  Widget _buildSourceLink(BuildContext context) {
-    final theme = Theme.of(context);
+  Widget _buildSourceLink(ThemeData theme) {
     final color = theme.colorScheme.primary;
     const corners = BorderRadius.all(Radius.circular(4));
     return Semantics(
