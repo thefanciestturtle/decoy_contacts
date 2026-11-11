@@ -436,6 +436,39 @@ void main() {
       expect(find.text('Delete Fake Contacts').hitTestable(), findsOneWidget);
     });
 
+    testWidgets('Reset to defaults: the menu and its dialog fit, and the '
+        'message is scrolled into view (U9)', (WidgetTester tester) async {
+      smallScreen(tester);
+      await pumpMyApp(tester, MyApp(contacts: InMemoryContactsGateway()));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('Menu')));
+      await tester.pumpAndSettle();
+      final item = find.byKey(const Key('Reset'));
+      expect(item.hitTestable(), findsOneWidget);
+      // On screen (over the app bar, as Android's own menus are).
+      final view = tester.view;
+      expect(
+          (Offset.zero & (view.physicalSize / view.devicePixelRatio))
+              .contains(tester.getRect(item).bottomRight - const Offset(1, 1)),
+          isTrue);
+      await tester.tap(item);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      for (final label in ['Cancel', 'Reset']) {
+        expect(find.widgetWithText(TextButton, label).hitTestable(),
+            findsOneWidget, reason: label);
+      }
+      await tester.tap(find.widgetWithText(TextButton, 'Reset'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      final result = find.byKey(const Key('Result'));
+      expect(tester.widget<Text>(result).data,
+          'Names and templates reset to the defaults.');
+      expect(containsVertically(visibleArea(tester), tester.getRect(result)),
+          isTrue);
+    });
+
     testWidgets('the progress is scrolled into view, with Stop in reach',
         (WidgetTester tester) async {
       smallScreen(tester);
@@ -567,6 +600,26 @@ void main() {
       store.loaded.complete();
       await tester.pumpAndSettle();
       expect(previewText(tester), kDefaultPreview);
+    });
+
+    testWidgets('the menu button is disabled too (U9)',
+        (WidgetTester tester) async {
+      final store = _SlowSettingsStore();
+      await tester.pumpWidget(MaterialApp(
+          home: MyHomePage(
+              title: 'Fake Contacts',
+              contacts: InMemoryContactsGateway(),
+              settingsStore: store)));
+      await tester.pump();
+      final menu = find.byKey(const Key('Menu'));
+      expect(tester.widget<PopupMenuButton<Object?>>(menu).enabled, isFalse);
+      await tester.tap(menu, warnIfMissed: false);
+      await tester.pump();
+      expect(find.byKey(const Key('Reset')), findsNothing);
+
+      store.loaded.complete();
+      await tester.pumpAndSettle();
+      expect(tester.widget<PopupMenuButton<Object?>>(menu).enabled, isTrue);
     });
 
     testWidgets('editing never touches the address book or asks for the '

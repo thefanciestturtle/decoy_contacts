@@ -17,6 +17,19 @@ import 'settings_store.dart';
 /// How long to wait after the last keystroke before saving the settings.
 const Duration kSaveDelay = Duration(milliseconds: 500);
 
+/// With TalkBack on, how long after a dialog is closed TalkBack's focus is
+/// back on what opened it: the dialog takes 150 ms to go, Flutter then waits
+/// 300 ms on Android before giving TalkBack's focus back (see Navigator),
+/// and TalkBack takes a moment to move it. TalkBack reads out the newly
+/// focused button, which would cut short a result shown before that.
+/// (Measured on the emulator, API 36: shown at once, the reset message was
+/// lost in 3 of 4 tries; after 700 ms it was read out in full each time,
+/// after the button.)
+const Duration kTalkBackRefocusDelay = Duration(milliseconds: 700);
+
+/// The items of the app bar's menu.
+enum _MenuAction { reset }
+
 class MyHomePage extends StatefulWidget {
   const MyHomePage({
     super.key,
@@ -54,6 +67,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   static const Key keyResult = Key("Result");
   static const Key keyCreate = Key("Create");
   static const Key keyDelete = Key("Delete");
+  static const Key keyMenu = Key("Menu");
+  static const Key keyReset = Key("Reset");
 
   final TextEditingController lastNamesController = TextEditingController();
   final TextEditingController firstNamesController = TextEditingController();
@@ -217,7 +232,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// A result that came while the app was out of sight, shown once it is
   /// back: TalkBack reads it out then (it doesn't while the app is out of
   /// sight), and it is scrolled into view.
-  ({ResultMessage message, FocusNode button})? _heldMessage;
+  ({ResultMessage message, FocusNode? button})? _heldMessage;
 
   /// Reads the settings once at startup (the store fills in defaults on
   /// first run).
@@ -378,13 +393,14 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     setState(() { _stopRequested = true; });
   }
 
-  /// The result of the last Create or Delete, or why it didn't run; shown
-  /// under the buttons until the next one starts. Null for none.
+  /// The result of the last Create or Delete, or why it didn't run, or
+  /// that the settings were reset to the defaults; shown under the buttons
+  /// until the next Create or Delete starts. Null for none.
   ResultMessage? _result;
 
   /// Shows [message] as the result of the Create or Delete whose [button]
-  /// was tapped (kept in view above it).
-  void _showResult(ResultMessage message, FocusNode button) {
+  /// was tapped (kept in view above it), or of a reset (no button).
+  void _showResult(ResultMessage message, FocusNode? button) {
     if (!mounted) return;
     if (_inBackground) {
       _heldMessage = (message: message, button: button);
@@ -469,13 +485,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     required ResultMessage Function(Object error) failed,
   }) async {
     if (_isBusy) return;
-    // If a text field has the focus, close the keyboard, so the dialog, the
-    // spinner and the result can be seen. (Otherwise the field gets the
-    // focus back after the dialog, the keyboard opens again and the page
-    // scrolls back up to the field.) A focused button gets it back at the
-    // end ([_refocus]).
-    final focus = FocusManager.instance.primaryFocus;
-    if (_editableOf(focus) != null) focus!.unfocus();
+    // So the dialog, the spinner and the result can be seen. A focused
+    // button gets the focus back at the end ([_refocus]).
+    _leaveTextField();
     final int run = ++_run;
     _refocus = [_createFocus, _deleteFocus]
         .where((node) => node.hasPrimaryFocus)
@@ -626,6 +638,39 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         failed: createFailedMessage,
       );
 
+  /// Asks, then puts the name lists and templates back to the defaults
+  /// ([Settings.defaults]) and saves them at once. Says so under the
+  /// buttons, in place of the last result. The ledger isn't touched, so
+  /// Delete can still remove what was created, nor is the status line,
+  /// which doesn't depend on the settings.
+  Future<void> _resetToDefaults() async {
+    if (!_settingsLoaded || _isBusy) return;
+    // (Create and Delete count their runs; one that starts before the
+    // message shows has its own.)
+    final int run = _run;
+    if (!await _confirm(kResetConfirmation)) return;
+    if (!mounted || _isBusy) return;
+    const defaults = Settings.defaults;
+    // The preview and the warnings follow (see [_fieldsChanged]).
+    lastNamesController.text = defaults.lastNamesText;
+    firstNamesController.text = defaults.firstNamesText;
+    phoneNumberTemplateController.text = defaults.phoneTemplateText;
+    emailAddressTemplateController.text = defaults.emailTemplateText;
+    // Cleared first, so TalkBack reads the message out even if the last
+    // result was the same.
+    setState(() { _result = null; });
+    await _saveSettingsNow();
+    if (!mounted) return;
+    // With TalkBack, after its focus is back on the menu button; else once
+    // the cleared result is on screen.
+    if (MediaQuery.accessibleNavigationOf(context)) {
+      await Future<void>.delayed(kTalkBackRefocusDelay);
+    } else if (SchedulerBinding.instance.framesEnabled) {
+      await WidgetsBinding.instance.endOfFrame;
+    }
+    if (mounted && run == _run) _showResult(kResetMessage, null);
+  }
+
   Future<void> _deleteAllContacts() => _runContactsAction(
         name: "_deleteAllContacts",
         button: _deleteFocus,
@@ -656,6 +701,14 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// The text field that [focus] belongs to, if any.
   static EditableTextState? _editableOf(FocusNode? focus) =>
       focus?.context?.findAncestorStateOfType<EditableTextState>();
+
+  /// If a text field has the focus, takes it away, which closes the
+  /// keyboard. Otherwise the field gets the focus back after a dialog or
+  /// menu, the keyboard opens again and the page scrolls back up to it.
+  void _leaveTextField() {
+    final focus = FocusManager.instance.primaryFocus;
+    if (_editableOf(focus) != null) focus!.unfocus();
+  }
 
   /// Calls [_revealPreview] after the next frame, once the preview and the
   /// keyboard have their new size, if a template field has the focus.
@@ -765,6 +818,30 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.title),
+          actions: <Widget>[
+            FocusRing(
+              child: PopupMenuButton<_MenuAction>(
+                key: keyMenu,
+                // Android's name for it.
+                tooltip: "More options",
+                // Not while Create or Delete runs, which uses the settings.
+                enabled: bCanAct,
+                onOpened: _leaveTextField,
+                onSelected: (action) => switch (action) {
+                  _MenuAction.reset => _resetToDefaults(),
+                },
+                // (Built as the menu opens.)
+                itemBuilder: (context) => <PopupMenuEntry<_MenuAction>>[
+                  RingedMenuItem(
+                    key: keyReset,
+                    value: _MenuAction.reset,
+                    enabled: _settings != Settings.defaults,
+                    child: const Text("Reset to defaults"),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
         body: SafeArea(
           // From the top (not centred), so what shows below the buttons

@@ -46,6 +46,21 @@ void main() {
             4.5),
         ('the focus ring in the dialog', colors.secondary,
             colors.surfaceContainerHigh, 3.0),
+        // The app bar's menu button; the app bar turns surfaceContainer
+        // when the page is scrolled under it.
+        ('the menu button', colors.onSurfaceVariant, background, 3.0),
+        ('the menu button, scrolled under', colors.onSurfaceVariant,
+            colors.surfaceContainer, 3.0),
+        ('the focus ring on a scrolled app bar', colors.secondary,
+            colors.surfaceContainer, 3.0),
+        // Its menu is surfaceContainer (Material 3's popup menu); a
+        // focused item is tinted in the theme's focus colour, and has the
+        // ring inside its edge.
+        ('the menu\'s items', colors.onSurface, colors.surfaceContainer, 4.5),
+        ('a focused menu item', colors.onSurface,
+            Color.alphaBlend(theme.focusColor, colors.surfaceContainer), 4.5),
+        ('the focus ring on a menu item', colors.secondary,
+            Color.alphaBlend(theme.focusColor, colors.surfaceContainer), 3.0),
       ]) {
         test('contrast: $what', () {
           expect(contrast(color, on), greaterThanOrEqualTo(minimum),
@@ -61,6 +76,65 @@ void main() {
       });
     });
   }
+
+  group('focus ring', () {
+    setUp(() => FocusManager.instance.highlightStrategy =
+        FocusHighlightStrategy.alwaysTraditional);
+    tearDown(() => FocusManager.instance.highlightStrategy =
+        FocusHighlightStrategy.automatic);
+
+    /// Another box that can take the focus.
+    late FocusNode other;
+
+    /// A focused box 100 x 40 in a [FocusRing] ([inward] or not), and the
+    /// ring's render object.
+    Future<RenderFocusRing> pumpRing(WidgetTester tester,
+        {required bool inward}) async {
+      other = FocusNode();
+      addTearDown(other.dispose);
+      // (Unmounted first, so the node is free when it is disposed.)
+      addTearDown(() => tester.pumpWidget(const SizedBox.shrink()));
+      await tester.pumpWidget(MaterialApp(
+          theme: appTheme(Brightness.light),
+          home: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FocusRing(
+                inward: inward,
+                shape: const RoundedRectangleBorder(),
+                child: const Focus(
+                    autofocus: true, child: SizedBox(width: 100, height: 40)),
+              ),
+              Focus(focusNode: other, child: const SizedBox(height: 10)),
+            ],
+          )));
+      await tester.pump();
+      return tester.renderObject<RenderFocusRing>(find.byType(FocusRing));
+    }
+
+    testWidgets('outside the edge, around a box without a Material',
+        (tester) async {
+      final ring = await pumpRing(tester, inward: false);
+      expect(ring.ringRect,
+          const Rect.fromLTWH(0, 0, 100, 40).inflate(FocusRing.outset));
+    });
+
+    testWidgets('inward: on the edge, drawn inside it', (tester) async {
+      final ring = await pumpRing(tester, inward: true);
+      expect(ring.ringRect, const Rect.fromLTWH(0, 0, 100, 40));
+      expect(ring.shape!.side.strokeAlign, BorderSide.strokeAlignInside);
+      expect(ring.shape!.side.width, 3);
+    });
+
+    testWidgets('none without the focus', (tester) async {
+      final ring = await pumpRing(tester, inward: true);
+      other.requestFocus();
+      await tester.pump();
+      expect(other.hasPrimaryFocus, isTrue);
+      await tester.pump();
+      expect(ring.ringRect, isNull);
+    });
+  });
 
   test('the contrast ratio is worked out as WCAG does', () {
     expect(contrast(Colors.black, Colors.white), closeTo(21, 0.01));

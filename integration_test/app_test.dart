@@ -451,6 +451,50 @@ void main() {
     expect(describeAll(await readAddressBook()), describeAll(real));
   });
 
+  testWidgets('U9: Reset to defaults puts the settings back and saves them; '
+      'the fakes made before stay recorded, and Delete removes them',
+      (tester) async {
+    await startWithEmptyAddressBook(tester);
+    final real = await seed(kRealContacts);
+    await launchApp(tester);
+    expect(
+        await tapAndWaitForResult(tester, kCreate,
+            confirm: 'Create 4 fake contacts?'),
+        'Created 4 fake contacts.');
+    final ledger = await storedLedger();
+    await expectStatus(tester, '4 fake contacts on this phone.');
+
+    await tester.tap(find.byKey(const Key('Menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('Reset')));
+    await tester.pumpAndSettle();
+    expectDialog(tester, 'Reset to defaults?');
+    await tester.tap(dialogButton('Reset'));
+    await pumpUntil(tester, () => resultFinder.evaluate().isNotEmpty,
+        'the reset message');
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(resultFinder).data,
+        'Names and templates reset to the defaults.');
+
+    // On disk, not only in the plugin's memory.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    expect({for (final key in kSettings.keys) key: prefs.getString(key)}, {
+      SettingsStore.kLastNamesKey: kDefaultLastNames,
+      SettingsStore.kFirstNamesKey: kDefaultFirstNames,
+      SettingsStore.kPhoneTemplateKey: kDefaultPhoneTemplate,
+      SettingsStore.kEmailTemplateKey: kDefaultEmailTemplate,
+    });
+    expect(await storedLedger(), ledger);
+    await expectStatus(tester, '4 fake contacts on this phone.');
+
+    expect(
+        await tapAndWaitForResult(tester, kDelete,
+            confirm: 'Delete 4 fake contacts?'),
+        'Deleted 4 fake contacts.');
+    expect(describeAll(await readAddressBook()), describeAll(real));
+  });
+
   testWidgets('S1: a ledger whose raw IDs point at real contacts deletes '
       'nothing', (tester) async {
     await startWithEmptyAddressBook(tester);
