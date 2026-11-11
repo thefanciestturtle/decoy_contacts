@@ -89,7 +89,7 @@ const List<(String, List<String>)> kAboutSections = [
         'this phone.',
   ]),
   ('New phone or backup', [
-    "That list isn't backed up or moved to a new phone. After a move to a "
+    "None of this is backed up or moved to a new phone. After a move to a "
         "new phone, clearing the app's data, uninstalling it or restoring "
         "your contacts from a backup, Delete can't find the fake contacts "
         'made before. Delete them in your Contacts app.',
@@ -101,8 +101,8 @@ const List<(String, List<String>)> kAboutSections = [
 /// Shown under the link if no app could open it.
 const String kLinkFailedText = "Couldn't open the link in a browser.";
 
-/// How far an arrow key scrolls the text (as Flutter's own scrolling by
-/// keyboard: a line, about).
+/// How far an arrow key scrolls the text (as far as Flutter's own
+/// scrolling by keyboard does).
 const double kArrowScrollStep = 50;
 
 /// Opens [url] in the browser (another app: this one has no internet

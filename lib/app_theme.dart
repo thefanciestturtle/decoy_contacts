@@ -72,7 +72,7 @@ class _FocusRingState extends State<FocusRing> {
     super.initState();
     FocusManager.instance.addHighlightModeListener(_highlightModeChanged);
     widget.focusNode?.addListener(_nodeChanged);
-    _nodeChanged();
+    _bFocused = widget.focusNode?.hasPrimaryFocus ?? false;
   }
 
   @override
