@@ -377,7 +377,8 @@ void main() {
     }
 
     testWidgets('a long result shows under the buttons, scrolled into view '
-        'from its start, and covers nothing (U7)', (WidgetTester tester) async {
+        'from the button that was tapped, and covers nothing (U7)',
+        (WidgetTester tester) async {
       smallScreen(tester);
       final book = InMemoryContactsGateway();
       final alice = book.add('Alice Example');
@@ -399,9 +400,12 @@ void main() {
           allOf(contains('was merged'), contains('no longer matches')));
       final visible = visibleArea(tester);
       final rect = tester.getRect(result);
-      // Its start is in view (all of it, if it fits).
-      expect(rect.top, greaterThanOrEqualTo(visible.top - 0.01));
-      expect(rect.top, lessThan(visible.bottom));
+      // The button tapped stays in view (with a keyboard it has the focus
+      // again), and the result's start below it.
+      expect(containsVertically(visible,
+              tester.getRect(find.byKey(const Key('Delete')))),
+          isTrue);
+      expect(rect.top, lessThan(visible.bottom - 40));
       if (rect.height <= visible.height) {
         expect(containsVertically(visible, rect), isTrue);
       }

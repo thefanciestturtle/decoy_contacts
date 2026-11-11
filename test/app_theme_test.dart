@@ -23,7 +23,8 @@ void main() {
         expect(theme.inputDecorationTheme.border, isA<OutlineInputBorder>());
       });
 
-      // Everything is drawn on the page's background (Scaffold: surface).
+      // The page's background is surface (Scaffold); the dialog's is
+      // surfaceContainerHigh (Material 3's AlertDialog).
       // WCAG AA: 4.5:1 for text, 3:1 for the edges of controls.
       final background = colors.surface;
       for (final (what, color, on, minimum) in [
@@ -36,6 +37,13 @@ void main() {
         ('Create\'s button on the page', colors.primary, background, 3.0),
         ('the edges of the fields', colors.outline, background, 3.0),
         ('the focus ring around a button', colors.secondary, background, 3.0),
+        // The dialog that asks before Create and Delete.
+        ('the dialog\'s title and text', colors.onSurface,
+            colors.surfaceContainerHigh, 4.5),
+        ('the dialog\'s buttons', colors.primary, colors.surfaceContainerHigh,
+            4.5),
+        ('the focus ring in the dialog', colors.secondary,
+            colors.surfaceContainerHigh, 3.0),
       ]) {
         test('contrast: $what', () {
           expect(contrast(color, on), greaterThanOrEqualTo(minimum),

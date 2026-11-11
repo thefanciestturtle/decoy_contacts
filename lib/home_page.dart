@@ -203,7 +203,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       _inBackground = false;
       final held = _heldMessage;
       _heldMessage = null;
-      if (held != null) _showResult(held);
+      if (held != null) _showResult(held.message, held.button);
       if (bWasInBackground && _settingsLoaded && !_isBusy) {
         unawaited(_refreshStatus());
       }
@@ -217,7 +217,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// A result that came while the app was out of sight, shown once it is
   /// back: TalkBack reads it out then (it doesn't while the app is out of
   /// sight), and it is scrolled into view.
-  ResultMessage? _heldMessage;
+  ({ResultMessage message, FocusNode button})? _heldMessage;
 
   /// Reads the settings once at startup (the store fills in defaults on
   /// first run).
@@ -287,9 +287,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     await widget.settingsStore.save(_settings);
   }
 
-  /// Set from a tap on Create or Delete until its result is shown (or it's
-  /// cancelled). The buttons are disabled meanwhile, so they lose the
-  /// keyboard focus; see [_refocus].
+  /// Set from a tap on Create or Delete until it has ended (also if it was
+  /// cancelled). Its result, if any, shows then, or a frame later if the
+  /// button gets the keyboard focus back. The buttons are disabled
+  /// meanwhile, so they lose the keyboard focus; see [_refocus].
   bool _isBusy = false;
 
   /// Set while one of the app's dialogs asks the user ([_confirm]), and
@@ -324,8 +325,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// After the next frame, scrolls what [box] holds into view, if it is
   /// below (or above) the edge, as on a small screen: all of it if it fits,
   /// else as much as fits from its top (Flutter's way with a box taller
-  /// than the view).
-  void _revealAfterFrame(GlobalKey box) {
+  /// than the view). With [keep], from there down: e.g. the button above a
+  /// long result stays in view, with as much of the result as fits.
+  void _revealAfterFrame(GlobalKey box, {FocusNode? keep}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final context = box.currentContext;
       final render = context?.findRenderObject();
@@ -333,7 +335,16 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
           !render.attached) {
         return;
       }
-      render.showOnScreen(duration: const Duration(milliseconds: 200));
+      var rect = Offset.zero & render.size;
+      final kept = keep?.context?.findRenderObject();
+      if (kept is RenderBox && kept.attached) {
+        // (With room for the focus ring around it.)
+        rect = rect.expandToInclude(MatrixUtils.transformRect(
+                kept.getTransformTo(render), Offset.zero & kept.size)
+            .inflate(FocusRing.outset));
+      }
+      render.showOnScreen(
+          rect: rect, duration: const Duration(milliseconds: 200));
     });
   }
 
@@ -343,23 +354,24 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   final FocusNode _deleteFocus = FocusNode(debugLabel: "Delete");
   final FocusNode _stopFocus = FocusNode(debugLabel: "Stop");
 
-  /// The button of the Create or Delete that is running.
-  FocusNode? _actionButton;
-
   /// The button to give the keyboard focus back to when the running Create
   /// or Delete ends, if any: Create or Delete, whichever had the focus when
-  /// it was tapped (a keyboard, D-pad or Switch Access user; a tap on the
-  /// screen doesn't focus a button), or the one that is running if Stop had
-  /// it. They are disabled meanwhile, so they lose the focus, and nothing
-  /// else gives it back. (TalkBack's focus is given back by Flutter itself
+  /// it was tapped (a keyboard or D-pad user; a tap on the screen, or
+  /// TalkBack's double-tap, doesn't focus a button). They are disabled
+  /// meanwhile, so they lose the focus, and nothing else gives it back.
+  /// (If Stop had it, the button that ran gets it: see finish() in
+  /// [_runContactsAction]. TalkBack's own focus is given back by Flutter
   /// after a dialog.)
   FocusNode? _refocus;
+
+  /// Whether Stop had the keyboard focus when it was pressed: it is
+  /// disabled then, so it loses it at once.
+  bool _bStopHadFocus = false;
 
   void _requestStop() {
     if (_progress == null || _stopRequested) return;
     log("stop requested");
-    // Stop is disabled once tapped, so it loses the focus too.
-    if (_stopFocus.hasPrimaryFocus) _refocus = _actionButton;
+    _bStopHadFocus = _stopFocus.hasPrimaryFocus;
     setState(() { _stopRequested = true; });
   }
 
@@ -367,14 +379,16 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// under the buttons until the next one starts. Null for none.
   ResultMessage? _result;
 
-  void _showResult(ResultMessage message) {
+  /// Shows [message] as the result of the Create or Delete whose [button]
+  /// was tapped (kept in view above it).
+  void _showResult(ResultMessage message, FocusNode button) {
     if (!mounted) return;
     if (_inBackground) {
-      _heldMessage = message;
+      _heldMessage = (message: message, button: button);
       return;
     }
     setState(() { _result = message; });
-    _revealAfterFrame(_resultBox);
+    _revealAfterFrame(_resultBox, keep: button);
   }
 
   /// Asks before going ahead. True only if the user taps the action button;
@@ -451,7 +465,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     // end ([_refocus]).
     final focus = FocusManager.instance.primaryFocus;
     if (_editableOf(focus) != null) focus!.unfocus();
-    _actionButton = button;
+    _bStopHadFocus = false;
     _refocus = [_createFocus, _deleteFocus]
         .where((node) => node.hasPrimaryFocus)
         .firstOrNull;
@@ -477,9 +491,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     void finish(ResultMessage? message) {
       if (!mounted) return;
       // Stop goes away now, so it loses the focus too.
-      final refocus = _stopFocus.hasFocus ? _actionButton : _refocus;
+      final refocus =
+          _stopFocus.hasFocus || _bStopHadFocus ? button : _refocus;
       _refocus = null;
-      _actionButton = null;
+      _bStopHadFocus = false;
       setState(() {
         _isBusy = false;
         _waitingForUser = false;
@@ -488,7 +503,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       });
       unawaited(_refreshStatus());
       if (refocus == null) {
-        if (message != null) _showResult(message);
+        if (message != null) _showResult(message, button);
         return;
       }
       // Once it is enabled again. (Nothing else can have taken the focus
@@ -500,7 +515,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         refocus.requestFocus();
-        if (message != null) _showResult(message);
+        if (message != null) _showResult(message, button);
       });
     }
 
