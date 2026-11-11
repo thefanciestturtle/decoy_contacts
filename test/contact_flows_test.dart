@@ -2381,14 +2381,18 @@ void main() {
     }
 
     /// Settles, checking in every update TalkBack gets that a result never
-    /// shows before the button with [key] has the focus back (TalkBack reads
-    /// out the newly focused button, which would cut short a result read
-    /// out before it).
+    /// shows before an earlier update gave the button with [key] the focus
+    /// back (TalkBack reads out the newly focused button, which would cut
+    /// short a result read out before it or with it).
     Future<void> settleFocusFirst(WidgetTester tester, String key) async {
       final handle = tester.ensureSemantics();
       final owner = tester.binding.renderViews.first.owner!.semanticsOwner!;
       final label = key == 'Create' ? kCreateButton : kDeleteButton;
       final problems = <String>[];
+      // The update before this one: its result, and whether it had the
+      // button focused.
+      String? previousResult;
+      var bFocusedBefore = false;
       void check() {
         String? result;
         var bFocused = false;
@@ -2403,7 +2407,16 @@ void main() {
         }
 
         visit(owner.rootSemanticsNode!);
-        if (result != null && !bFocused) problems.add(result!);
+        // A new result needs the focus in the update before (in the same
+        // one, Android may announce the result first, then the focus), and
+        // still in its own.
+        if (result != null &&
+            previousResult == null &&
+            !(bFocusedBefore && bFocused)) {
+          problems.add(result!);
+        }
+        previousResult = result;
+        bFocusedBefore = bFocused;
       }
 
       owner.addListener(check);

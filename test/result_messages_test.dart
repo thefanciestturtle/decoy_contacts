@@ -16,8 +16,8 @@ import 'package:fake_contacts/result_messages.dart'
         kChangedMeanwhileMessage;
 import 'package:flutter_test/flutter_test.dart';
 
-// The texts of the result messages; whether each needs attention is tested
-// in the group 'which results need attention'.
+// The texts of the result messages; which are failures is tested in the
+// group 'which results are failures (U7)'.
 String createdMessage(CreateResult r) => messages.createdMessage(r).text;
 String deletedMessage(DeleteResult r) => messages.deletedMessage(r).text;
 String createFailedMessage(Object e) => messages.createFailedMessage(e).text;

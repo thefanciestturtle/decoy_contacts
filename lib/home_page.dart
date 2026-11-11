@@ -359,19 +359,22 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// it was tapped (a keyboard or D-pad user; a tap on the screen, or
   /// TalkBack's double-tap, doesn't focus a button). They are disabled
   /// meanwhile, so they lose the focus, and nothing else gives it back.
-  /// (If Stop had it, the button that ran gets it: see finish() in
-  /// [_runContactsAction]. TalkBack's own focus is given back by Flutter
-  /// after a dialog.)
+  /// (If Stop had it, the button that ran gets it: Stop is disabled once
+  /// pressed and goes away at the end. TalkBack's own focus is given back
+  /// by Flutter after a dialog.)
   FocusNode? _refocus;
 
-  /// Whether Stop had the keyboard focus when it was pressed: it is
-  /// disabled then, so it loses it at once.
-  bool _bStopHadFocus = false;
+  /// Counts Create and Delete runs, so a step left over from one that has
+  /// ended (see finish() in [_runContactsAction]) doesn't act on the next.
+  int _run = 0;
 
   void _requestStop() {
-    if (_progress == null || _stopRequested) return;
+    final progress = _progress;
+    if (progress == null || _stopRequested) return;
     log("stop requested");
-    _bStopHadFocus = _stopFocus.hasPrimaryFocus;
+    if (_stopFocus.hasPrimaryFocus) {
+      _refocus = progress.creating ? _createFocus : _deleteFocus;
+    }
     setState(() { _stopRequested = true; });
   }
 
@@ -465,7 +468,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     // end ([_refocus]).
     final focus = FocusManager.instance.primaryFocus;
     if (_editableOf(focus) != null) focus!.unfocus();
-    _bStopHadFocus = false;
+    final int run = ++_run;
     _refocus = [_createFocus, _deleteFocus]
         .where((node) => node.hasPrimaryFocus)
         .firstOrNull;
@@ -491,10 +494,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     void finish(ResultMessage? message) {
       if (!mounted) return;
       // Stop goes away now, so it loses the focus too.
-      final refocus =
-          _stopFocus.hasFocus || _bStopHadFocus ? button : _refocus;
+      final refocus = _stopFocus.hasFocus ? button : _refocus;
       _refocus = null;
-      _bStopHadFocus = false;
       setState(() {
         _isBusy = false;
         _waitingForUser = false;
@@ -509,13 +510,22 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       // Once it is enabled again. (Nothing else can have taken the focus
       // meanwhile: the fields are out of its reach and the buttons
       // disabled, and Stop goes away. Flutter may have moved it to the
-      // other button, the one focused before, once enabled again.) Then
-      // the result: TalkBack reads out the newly focused button, which
-      // would cut short a result that came first.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
+      // other button, the one focused before, once enabled again.) Then,
+      // a frame later, the result: TalkBack reads out the newly focused
+      // button, which would cut short a result that came first or in the
+      // same update. (Neither if another run has started meanwhile.)
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted || run != _run) return;
         refocus.requestFocus();
-        if (message != null) _showResult(message, button);
+        if (message == null) return;
+        // Flutter applies the focus change before the next frame, and
+        // TalkBack hears of it with the one after; the result comes after
+        // that. (Shown even if the focus didn't move, e.g. with a D-pad,
+        // where a disabled button may keep it.)
+        for (var i = 0; i < 2; i++) {
+          await WidgetsBinding.instance.endOfFrame;
+        }
+        if (mounted && run == _run) _showResult(message, button);
       });
     }
 
