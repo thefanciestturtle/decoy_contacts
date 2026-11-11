@@ -11,7 +11,9 @@ import 'package:fake_contacts/contact_actions.dart'
     show kCreateChunkSize, kDeleteChunkSize;
 import 'package:fake_contacts/contacts_gateway.dart';
 import 'package:fake_contacts/fake_contacts_core.dart';
-import 'package:fake_contacts/home_page.dart' show kSaveDelay;
+import 'package:fake_contacts/home_page.dart'
+    show kSaveDelay, kTalkBackRefocusTimeout;
+import 'package:fake_contacts/input_checks.dart' show phoneTemplateWarning;
 import 'package:fake_contacts/main.dart';
 import 'package:fake_contacts/settings_store.dart';
 import 'package:flutter/material.dart';
@@ -319,6 +321,53 @@ class _LosesFirstNewContact extends InMemoryContactsGateway {
     if (ids == null && !hideEverywhere) return found;
     return found.where((c) => c.id != _lost).toList();
   }
+}
+
+/// The focus rings shown, in global coordinates.
+List<(Rect, OutlinedBorder)> rings(WidgetTester tester) => [
+      for (final ring
+          in tester.renderObjectList<RenderFocusRing>(find.byType(FocusRing)))
+        if (ring.ringRect case final Rect rect)
+          (
+            MatrixUtils.transformRect(ring.getTransformTo(null), rect),
+            ring.shape!,
+          ),
+    ];
+
+/// Expects one focus ring on screen, 5 dp outside [button] as drawn
+/// (its Material) all round: not around the taller tap target.
+void expectRingAround(WidgetTester tester, Finder button) {
+  final shown = rings(tester);
+  expect(shown, hasLength(1));
+  final drawn = tester.getRect(
+      find.descendant(of: button, matching: find.byType(Material)).first);
+  expect(drawn.height, lessThan(tester.getSize(button).height),
+      reason: 'the tap target is taller than the button');
+  final (rect, shape) = shown.single;
+  expect(rect, drawn.inflate(FocusRing.outset));
+  expect(shape, isA<StadiumBorder>());
+  expect(shape.side.width, 3);
+  expect(shape.side.color,
+      Theme.of(tester.element(button)).colorScheme.secondary);
+}
+
+FocusNode focusOf(WidgetTester tester, String key) =>
+    Focus.of(tester.element(find.descendant(
+        of: find.byKey(Key(key)), matching: find.byType(Text))));
+
+/// The label of the button with the keyboard focus, or null if none
+/// has it.
+String? focusedButton() {
+  final focus = FocusManager.instance.primaryFocus;
+  final button = focus is FocusScopeNode
+      ? null
+      : focus?.context?.findAncestorWidgetOfExactType<TextButton>() ??
+          focus?.context?.findAncestorWidgetOfExactType<FilledButton>() ??
+          focus?.context?.findAncestorWidgetOfExactType<OutlinedButton>();
+  final child = button?.child;
+  return child is Text ? child.data : (child is Semantics
+      ? (child.child as Text?)?.data
+      : null);
 }
 
 void main() {
@@ -2366,53 +2415,6 @@ void main() {
   });
 
   group('focus after Create and Delete (U7)', () {
-    /// The focus rings shown, in global coordinates.
-    List<(Rect, OutlinedBorder)> rings(WidgetTester tester) => [
-          for (final ring
-              in tester.renderObjectList<RenderFocusRing>(find.byType(FocusRing)))
-            if (ring.ringRect case final Rect rect)
-              (
-                MatrixUtils.transformRect(ring.getTransformTo(null), rect),
-                ring.shape!,
-              ),
-        ];
-
-    /// Expects one focus ring on screen, 5 dp outside [button] as drawn
-    /// (its Material) all round: not around the taller tap target.
-    void expectRingAround(WidgetTester tester, Finder button) {
-      final shown = rings(tester);
-      expect(shown, hasLength(1));
-      final drawn = tester.getRect(
-          find.descendant(of: button, matching: find.byType(Material)).first);
-      expect(drawn.height, lessThan(tester.getSize(button).height),
-          reason: 'the tap target is taller than the button');
-      final (rect, shape) = shown.single;
-      expect(rect, drawn.inflate(FocusRing.outset));
-      expect(shape, isA<StadiumBorder>());
-      expect(shape.side.width, 3);
-      expect(shape.side.color,
-          Theme.of(tester.element(button)).colorScheme.secondary);
-    }
-
-    FocusNode focusOf(WidgetTester tester, String key) =>
-        Focus.of(tester.element(find.descendant(
-            of: find.byKey(Key(key)), matching: find.byType(Text))));
-
-    /// The label of the button with the keyboard focus, or null if none
-    /// has it.
-    String? focusedButton() {
-      final focus = FocusManager.instance.primaryFocus;
-      final button = focus is FocusScopeNode
-          ? null
-          : focus?.context?.findAncestorWidgetOfExactType<TextButton>() ??
-              focus?.context?.findAncestorWidgetOfExactType<FilledButton>() ??
-              focus?.context?.findAncestorWidgetOfExactType<OutlinedButton>();
-      final child = button?.child;
-      return child is Text ? child.data : (child is Semantics
-          ? (child.child as Text?)?.data
-          : null);
-    }
-
     /// Settles, checking in every update TalkBack gets that a result never
     /// shows before an earlier update gave the button with [key] the focus
     /// back (TalkBack reads out the newly focused button, which would cut
@@ -2633,6 +2635,530 @@ void main() {
         expect(resultText(tester), 'Deleted 4 fake contacts.');
         expect(focusOf(tester, 'Delete').hasPrimaryFocus, isTrue);
       });
+    });
+  });
+
+  group('reset to defaults (U9)', () {
+    final Finder menu = find.byKey(const Key('Menu'));
+    final Finder resetItem = find.byKey(const Key('Reset'));
+    const String kReset = 'Names and templates reset to the defaults.';
+    const kFieldKeys = [
+      'LastNames',
+      'FirstNames',
+      'PhoneNumberTemplate',
+      'EmailAddressTemplate',
+    ];
+    const kDefaults = [
+      kDefaultLastNames,
+      kDefaultFirstNames,
+      kDefaultPhoneTemplate,
+      kDefaultEmailTemplate,
+    ];
+
+    /// The four fields' text, in order.
+    List<String> fields(WidgetTester tester) => [
+          for (final key in kFieldKeys)
+            tester.widget<TextField>(find.byKey(Key(key))).controller!.text,
+        ];
+
+    /// The four settings as stored, in the same order.
+    Future<List<String?>> stored() async {
+      final prefs = await SharedPreferences.getInstance();
+      return [for (final key in kSettings.keys) prefs.getString(key)];
+    }
+
+    String preview(WidgetTester tester) =>
+        tester.widget<Text>(find.byKey(const Key('Preview'))).data!;
+
+    Future<void> openMenu(WidgetTester tester) async {
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      expect(resetItem, findsOneWidget);
+    }
+
+    bool itemEnabled(WidgetTester tester) =>
+        tester.widget<PopupMenuItem<Object?>>(resetItem).enabled;
+
+    bool menuEnabled(WidgetTester tester) =>
+        tester.widget<PopupMenuButton<Object?>>(menu).enabled;
+
+    /// Opens the menu, taps Reset to defaults, and expects the dialog.
+    Future<void> openResetDialog(WidgetTester tester) async {
+      await openMenu(tester);
+      await tester.tap(resetItem);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+    }
+
+    /// Whether the keyboard focus is on the menu button.
+    bool menuFocused(WidgetTester tester) {
+      final focused = FocusManager.instance.primaryFocus?.context;
+      if (focused == null) return false;
+      final button = tester.element(menu);
+      var bFound = false;
+      focused.visitAncestorElements((e) => !(bFound = e == button));
+      return bFound;
+    }
+
+    /// Expects one focus ring on screen, just inside the edge of [item].
+    void expectRingInside(WidgetTester tester, Finder item) {
+      final shown = rings(tester);
+      expect(shown, hasLength(1));
+      final (rect, shape) = shown.single;
+      expect(rect, tester.getRect(item));
+      expect(shape, isA<RoundedRectangleBorder>());
+      expect(shape.side.width, 3);
+      expect(shape.side.color,
+          Theme.of(tester.element(item)).colorScheme.secondary);
+    }
+
+    testWidgets('puts the name lists and templates back and saves them at '
+        'once; the ledger, the status line and the address book are left '
+        'alone, and Delete still removes what was created', (tester) async {
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      expect(statusText(tester), '4 fake contacts on this phone.');
+      final ledger = await storedLedgerJson();
+      // All four differ from the defaults (the names already do); the
+      // phone template with a warning, still to be saved.
+      await tester.enterText(
+          find.byKey(const Key('EmailAddressTemplate')), 'FIRST@example.org');
+      await tester.enterText(
+          find.byKey(const Key('PhoneNumberTemplate')), '+44 abc');
+      await tester.pump();
+      for (final (i, text) in fields(tester).indexed) {
+        expect(text, isNot(kDefaults[i]));
+      }
+      final warning = phoneTemplateWarning('+44 abc')!;
+      expect(find.text(warning), findsOneWidget);
+      final (reads, asks, checks) =
+          (book.getAllCalls, book.permissionRequests, book.permissionChecks);
+
+      await openMenu(tester);
+      expect(itemEnabled(tester), isTrue);
+      await tester.tap(resetItem);
+      await tester.pumpAndSettle();
+      expect(dialogText(tester), (
+        title: 'Reset to defaults?',
+        body: 'The name lists and templates go back to the defaults. Fake'
+            ' contacts already created are kept, and Delete can still remove'
+            ' them.',
+      ));
+      expect(dialogButton('Cancel'), findsOneWidget);
+      // Not in the error colour: no contacts are deleted.
+      expect(
+          tester.widget<TextButton>(dialogButton('Reset')).style?.foregroundColor,
+          isNull);
+      await tester.tap(dialogButton('Reset'));
+      await tester.pump();
+      // Saved at once, not once typing would have paused.
+      expect(await stored(), kDefaults);
+
+      await tester.pumpAndSettle();
+      expect(fields(tester), kDefaults);
+      expect(preview(tester),
+          '27 last names × 28 first names = 756 fake contacts.\n'
+          'For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com');
+      expect(find.text(warning), findsNothing);
+      expect(resultText(tester), kReset);
+      expect(resultIsError(tester), isFalse);
+      expect(statusText(tester), '4 fake contacts on this phone.');
+      expect(await storedLedgerJson(), ledger);
+      expect(
+          (book.getAllCalls, book.permissionRequests, book.permissionChecks),
+          (reads, asks, checks),
+          reason: 'neither the address book nor the permission is touched');
+      // Nothing saved later undoes it.
+      await tester.pump(kSaveDelay * 2);
+      expect(await stored(), kDefaults);
+
+      // The fakes made with the old settings are still deleted.
+      await tapDelete(tester);
+      expect(resultText(tester), 'Deleted 4 fake contacts.');
+      expect(book.displayNames, isEmpty);
+    });
+
+    testWidgets('Cancel, Back and tapping outside the dialog change nothing',
+        (tester) async {
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      await tester.enterText(find.byKey(const Key('LastNames')), 'Zelda');
+      await tester.pump(kSaveDelay);
+      final before = fields(tester);
+      final saved = await stored();
+      expect(saved.first, 'Zelda');
+
+      for (final dismiss in ['Cancel', 'Back', 'outside']) {
+        await openResetDialog(tester);
+        switch (dismiss) {
+          case 'Cancel':
+            await tester.tap(dialogButton('Cancel'));
+          case 'Back':
+            await tester.binding.handlePopRoute();
+          default:
+            await tester.tapAt(const Offset(10, 10));
+        }
+        await tester.pumpAndSettle();
+        expect(find.byType(AlertDialog), findsNothing, reason: dismiss);
+        expect(fields(tester), before, reason: dismiss);
+        expect(await stored(), saved, reason: dismiss);
+        // The last result stays.
+        expect(resultText(tester), 'Created 4 fake contacts.', reason: dismiss);
+      }
+    });
+
+    testWidgets('the item is greyed while the fields hold the defaults, and '
+        'the menu button while Create or Delete runs', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final slow = _SlowPermission();
+      await pumpApp(tester, slow);
+      expect(fields(tester), kDefaults);
+
+      await openMenu(tester);
+      expect(itemEnabled(tester), isFalse);
+      await tester.tap(resetItem, warnIfMissed: false);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+      await tester.binding.handlePopRoute(); // closes the menu
+      await tester.pumpAndSettle();
+      expect(resetItem, findsNothing);
+
+      // Any change counts, even one that makes the same contacts.
+      final email = find.byKey(const Key('EmailAddressTemplate'));
+      await tester.enterText(email, '$kDefaultEmailTemplate ');
+      await openMenu(tester);
+      expect(itemEnabled(tester), isTrue);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await tester.enterText(email, kDefaultEmailTemplate);
+      await openMenu(tester);
+      expect(itemEnabled(tester), isFalse);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      // Busy (here, waiting for the permission): the button is disabled.
+      expect(menuEnabled(tester), isTrue);
+      await tester.tap(find.text(kCreateButton));
+      await tester.pump();
+      expect(menuEnabled(tester), isFalse);
+      await tester.tap(menu, warnIfMissed: false);
+      await tester.pump();
+      expect(resetItem, findsNothing);
+      slow.answer.complete(PermissionAnswer.denied);
+      await tester.pumpAndSettle();
+      expect(menuEnabled(tester), isTrue);
+    });
+
+    testWidgets("a text field being edited loses the focus as the menu "
+        "opens; after Reset its keyboard doesn't come back, after Cancel it "
+        "does", (tester) async {
+      await pumpApp(tester, book);
+      for (final answer in ['Cancel', 'Reset']) {
+        await tester.tap(find.byKey(const Key('FirstNames')));
+        await tester.pump();
+        expect(tester.testTextInput.isVisible, isTrue);
+        await openMenu(tester);
+        expect(tester.testTextInput.isVisible, isFalse);
+        await tester.tap(resetItem);
+        await tester.pumpAndSettle();
+        await tester.tap(dialogButton(answer));
+        await tester.pumpAndSettle();
+        final bBack = answer == 'Cancel';
+        expect(tester.testTextInput.isVisible, bBack, reason: answer);
+        expect(
+            FocusManager.instance.primaryFocus?.context
+                ?.findAncestorWidgetOfExactType<TextField>()
+                ?.key,
+            bBack ? const Key('FirstNames') : null,
+            reason: answer);
+        if (bBack) {
+          FocusManager.instance.primaryFocus!.unfocus();
+          await tester.pump();
+        }
+      }
+      expect(resultText(tester), kReset);
+    });
+
+    testWidgets('closing the menu without a choice gives the field its focus '
+        'and keyboard back', (tester) async {
+      await pumpApp(tester, book);
+      final field = find.byKey(const Key('FirstNames'));
+      for (final close in ['Back', 'outside']) {
+        await tester.tap(field);
+        await tester.pump();
+        await openMenu(tester);
+        expect(tester.testTextInput.isVisible, isFalse);
+        if (close == 'Back') {
+          await tester.binding.handlePopRoute();
+        } else {
+          await tester.tapAt(const Offset(10, 500));
+        }
+        await tester.pumpAndSettle();
+        expect(resetItem, findsNothing);
+        expect(tester.testTextInput.isVisible, isTrue, reason: close);
+        expect(
+            FocusManager.instance.primaryFocus?.context
+                ?.findAncestorWidgetOfExactType<TextField>()
+                ?.key,
+            const Key('FirstNames'),
+            reason: close);
+        FocusManager.instance.primaryFocus!.unfocus();
+        await tester.pump();
+      }
+      // Without a field focused before, nothing gets the focus.
+      await openMenu(tester);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(tester.testTextInput.isVisible, isFalse);
+    });
+
+    group('with TalkBack', () {
+      setUp(() {
+        final dispatcher =
+            TestWidgetsFlutterBinding.instance.platformDispatcher;
+        dispatcher.accessibilityFeaturesTestValue =
+            const FakeAccessibilityFeatures(accessibleNavigation: true);
+        addTearDown(dispatcher.clearAccessibilityFeaturesTestValue);
+      });
+
+      /// Changes a field, then resets it, up to the tap on Reset.
+      Future<void> editAndReset(WidgetTester tester) async {
+        await tester.enterText(
+            find.byKey(const Key('LastNames')), 'Zelda');
+        await openResetDialog(tester);
+        await tester.tap(dialogButton('Reset'));
+        await tester.pump();
+      }
+
+      /// Pumps until the dialog has gone.
+      Future<void> untilDialogGone(WidgetTester tester) async {
+        while (find.byType(AlertDialog).evaluate().isNotEmpty) {
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+      }
+
+      /// TalkBack's focus lands on the menu button.
+      void talkBackFocusesMenu(WidgetTester tester) {
+        tester.binding.renderViews.first.owner!.semanticsOwner!.performAction(
+            tester.getSemantics(find.byTooltip('More options')).id,
+            SemanticsAction.didGainAccessibilityFocus);
+      }
+
+      testWidgets('the last result goes at once; the message comes once '
+          'its focus is back on the menu button, and is read out again if it '
+          'repeats', (tester) async {
+        final handle = tester.ensureSemantics();
+        await pumpApp(tester, book);
+        final region = find.byWidgetPredicate((w) =>
+            w is Semantics && w.container && w.properties.liveRegion == true);
+        SemanticsNode node() => tester.getSemantics(region);
+        final id = node().id;
+        await tapCreate(tester);
+        expect(node().label, 'Created 4 fake contacts.');
+
+        for (var i = 0; i < 2; i++) {
+          await editAndReset(tester);
+          // The last result goes at once.
+          expect(node().label, isEmpty);
+          // The fields at once; the message once TalkBack's focus is on the
+          // menu button (Flutter gives it back 300 ms after the dialog has
+          // gone).
+          expect(fields(tester), kDefaults);
+          await untilDialogGone(tester);
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(node().label, isEmpty);
+          talkBackFocusesMenu(tester);
+          await tester.pump();
+          await tester.pump();
+          expect(node().label, kReset);
+          expect(node().id, id);
+        }
+        handle.dispose();
+      });
+
+      testWidgets("if TalkBack's focus never comes back, the message shows "
+          'after a while', (tester) async {
+        await pumpApp(tester, book);
+        await editAndReset(tester);
+        await untilDialogGone(tester);
+        await tester.pump(
+            kTalkBackRefocusTimeout - const Duration(milliseconds: 20));
+        expect(resultFinder, findsNothing);
+        await tester.pump(const Duration(milliseconds: 40));
+        await tester.pump();
+        expect(resultText(tester), kReset);
+        // A later focus on the button changes nothing.
+        talkBackFocusesMenu(tester);
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets('fields edited before the message shows: no message, even '
+          'if they are back at the defaults', (tester) async {
+        await pumpApp(tester, book);
+        for (final edits in [
+          ['Zelda'],
+          ['Zelda', kDefaultFirstNames],
+        ]) {
+          final edit = edits.join(', then ');
+          await editAndReset(tester);
+          await untilDialogGone(tester);
+          for (final text in edits) {
+            await tester.enterText(find.byKey(const Key('FirstNames')), text);
+          }
+          expect(fields(tester)[1],
+              edits.length == 2 ? kDefaultFirstNames : 'Zelda');
+          await tester.pump();
+          talkBackFocusesMenu(tester);
+          await tester.pump(kTalkBackRefocusTimeout);
+          await tester.pumpAndSettle();
+          expect(resultFinder, findsNothing, reason: edit);
+        }
+      });
+
+      testWidgets('a message that comes while the app is out of sight shows '
+          'when it is back', (tester) async {
+        await pumpApp(tester, book);
+        await editAndReset(tester);
+        await untilDialogGone(tester);
+        for (final state in [
+          AppLifecycleState.inactive,
+          AppLifecycleState.hidden,
+          AppLifecycleState.paused,
+        ]) {
+          tester.binding.handleAppLifecycleStateChanged(state);
+        }
+        await tester.pump(kTalkBackRefocusTimeout);
+        expect(resultFinder, findsNothing);
+        for (final state in [
+          AppLifecycleState.hidden,
+          AppLifecycleState.inactive,
+          AppLifecycleState.resumed,
+        ]) {
+          tester.binding.handleAppLifecycleStateChanged(state);
+        }
+        await tester.pumpAndSettle();
+        expect(resultText(tester), kReset);
+      });
+
+      testWidgets('a Create started before the message shows keeps its own '
+          'result', (tester) async {
+        await pumpApp(tester, book);
+        await editAndReset(tester);
+        await tester.pump(const Duration(milliseconds: 300));
+        await tapAndOpenDialog(tester, kCreateButton);
+        talkBackFocusesMenu(tester);
+        await tester.pump(kTalkBackRefocusTimeout);
+        expect(resultFinder, findsNothing);
+        await tester.tap(dialogButton('Create'));
+        await tester.pumpAndSettle();
+        expect(resultText(tester), 'Created 756 fake contacts.');
+      });
+    });
+
+    testWidgets('the message goes once the fields are edited again; other '
+        'results stay', (tester) async {
+      await pumpApp(tester, book);
+      await tester.enterText(find.byKey(const Key('LastNames')), 'Zelda');
+      await openResetDialog(tester);
+      await tester.tap(dialogButton('Reset'));
+      await tester.pumpAndSettle();
+      expect(resultText(tester), kReset);
+      await tester.enterText(find.byKey(const Key('LastNames')), 'Zelda');
+      await tester.pump();
+      expect(resultFinder, findsNothing);
+
+      await tapCreate(tester);
+      await tester.enterText(find.byKey(const Key('LastNames')), 'Zora');
+      await tester.pump();
+      expect(resultText(tester), 'Created 28 fake contacts.');
+    });
+
+    testWidgets('all by keyboard: the menu button comes first; Enter, Down, '
+        'Enter, Tab to Reset, Enter; the focus is back on the menu button',
+        (tester) async {
+      await pumpApp(tester, book);
+      Future<void> press(LogicalKeyboardKey key) async {
+        await tester.sendKeyEvent(key);
+        await tester.pumpAndSettle();
+      }
+
+      await press(LogicalKeyboardKey.tab);
+      expect(menuFocused(tester), isTrue);
+      expectRingAround(tester, menu);
+      // All of it on screen, not cut off at the edge.
+      final (ring, _) = rings(tester).single;
+      expect(ring.right, lessThanOrEqualTo(tester.view.physicalSize.width /
+          tester.view.devicePixelRatio));
+      await press(LogicalKeyboardKey.enter);
+      expect(resetItem, findsOneWidget);
+      // (Flutter's menu opens with no item focused.)
+      await press(LogicalKeyboardKey.arrowDown);
+      expectRingInside(tester, resetItem);
+      await press(LogicalKeyboardKey.enter);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      for (var i = 0; i < 4 && focusedButton() != 'Reset'; i++) {
+        await press(LogicalKeyboardKey.tab);
+      }
+      expect(focusedButton(), 'Reset');
+      expectRingAround(tester, dialogButton('Reset'));
+      await press(LogicalKeyboardKey.enter);
+
+      expect(fields(tester), kDefaults);
+      expect(resultText(tester), kReset);
+      expect(menuFocused(tester), isTrue);
+      expectRingAround(tester, menu);
+    });
+
+    testWidgets('with a D-pad too', (tester) async {
+      await pumpApp(tester, book);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(menuFocused(tester), isTrue);
+      // The D-pad's centre button, and its arrows.
+      for (final key in [
+        LogicalKeyboardKey.select,
+        LogicalKeyboardKey.arrowDown,
+        LogicalKeyboardKey.select,
+        LogicalKeyboardKey.arrowDown,
+        LogicalKeyboardKey.arrowRight,
+      ]) {
+        await tester.sendKeyEvent(key);
+        await tester.pumpAndSettle();
+      }
+      expect(focusedButton(), 'Reset');
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pumpAndSettle();
+      expect(resultText(tester), kReset);
+      expect(menuFocused(tester), isTrue);
+    });
+
+    testWidgets('TalkBack hears "More options", and a greyed item as '
+        'disabled', (tester) async {
+      final handle = tester.ensureSemantics();
+      SharedPreferences.setMockInitialValues({});
+      final slow = _SlowPermission();
+      await pumpApp(tester, slow);
+      final button = find.byTooltip('More options');
+      // (Its name comes from the tooltip.)
+      expect(tester.getSemantics(button),
+          isSemantics(tooltip: 'More options', isButton: true,
+              hasEnabledState: true, isEnabled: true, hasTapAction: true));
+      await openMenu(tester);
+      expect(tester.getSemantics(find.text('Reset to defaults')),
+          isSemantics(label: 'Reset to defaults', isButton: true,
+              hasEnabledState: true, isEnabled: false, hasTapAction: false));
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text(kCreateButton));
+      await tester.pump();
+      expect(tester.getSemantics(button),
+          isSemantics(tooltip: 'More options', hasEnabledState: true,
+              isEnabled: false, hasTapAction: false));
+      slow.answer.complete(PermissionAnswer.denied);
+      await tester.pumpAndSettle();
+      handle.dispose();
     });
   });
 }

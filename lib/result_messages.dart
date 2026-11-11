@@ -1,5 +1,5 @@
-// The text of the dialogs that confirm Create and Delete, and of the
-// messages shown afterwards.
+// The text of the dialogs that confirm Create, Delete and Reset to defaults,
+// and of the messages shown afterwards.
 
 import 'contact_actions.dart';
 
@@ -152,6 +152,18 @@ String _leftAlone(int merged, int changed, {required bool done}) {
   }
   return sText;
 }
+
+/// The dialog before the settings are reset to the defaults.
+const Confirmation kResetConfirmation = (
+  title: "Reset to defaults?",
+  body: "The name lists and templates go back to the defaults. Fake contacts"
+      " already created are kept, and Delete can still remove them.",
+  action: "Reset",
+);
+
+/// Shown once the settings are reset to the defaults.
+const ResultMessage kResetMessage =
+    ResultMessage("Names and templates reset to the defaults.");
 
 /// The dialog before Create. Only shown if [CreatePreview.toCreate] > 0.
 Confirmation createConfirmation(CreatePreview preview) {

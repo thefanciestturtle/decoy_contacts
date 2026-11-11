@@ -34,12 +34,20 @@ ButtonStyle destructiveButtonStyle(ColorScheme colors) =>
 /// takes up: on Android a button is padded to a 48 dp tap target, taller
 /// than the 40 dp button. It takes up no space, so nothing moves when it
 /// shows. [shape] is the button's (all of the app's are stadiums).
+///
+/// With [inward], the ring is drawn just inside the edge of all of [child]
+/// instead, as Material 3 does for a menu item (see [RingedMenuItem]), which
+/// has no edge of its own and fills the menu's width.
 class FocusRing extends StatefulWidget {
   const FocusRing(
-      {super.key, required this.child, this.shape = const StadiumBorder()});
+      {super.key,
+      required this.child,
+      this.shape = const StadiumBorder(),
+      this.inward = false});
 
   final Widget child;
   final OutlinedBorder shape;
+  final bool inward;
 
   /// How far outside the button's edge the ring ends: a 2 dp gap, then the
   /// ring, 3 dp wide.
@@ -81,6 +89,7 @@ class _FocusRingState extends State<FocusRing> {
       includeSemantics: false,
       onFocusChange: (bFocused) => setState(() => _bFocused = bFocused),
       child: _FocusRingPainter(
+        inward: widget.inward,
         shape: bShow
             ? widget.shape.copyWith(
                 side: BorderSide(
@@ -93,25 +102,39 @@ class _FocusRingState extends State<FocusRing> {
 }
 
 /// Paints [shape] (with its side as the ring), if any, around the first
-/// [Material] in [child], [FocusRing.outset] outside it.
+/// [Material] in [child], [FocusRing.outset] outside it; or, if [inward],
+/// just inside the edge of all of [child].
 class _FocusRingPainter extends SingleChildRenderObjectWidget {
-  const _FocusRingPainter({required this.shape, required super.child});
+  const _FocusRingPainter(
+      {required this.shape, required this.inward, required super.child});
 
   final OutlinedBorder? shape;
+  final bool inward;
 
   @override
   RenderFocusRing createRenderObject(BuildContext context) =>
-      RenderFocusRing(shape);
+      RenderFocusRing(shape, inward: inward);
 
   @override
   void updateRenderObject(BuildContext context, RenderFocusRing renderObject) {
-    renderObject.shape = shape;
+    renderObject
+      ..shape = shape
+      ..inward = inward;
   }
 }
 
 /// The render object of [FocusRing]. Public for tests: [ringRect].
 class RenderFocusRing extends RenderProxyBox {
-  RenderFocusRing(this._shape);
+  RenderFocusRing(this._shape, {this._inward = false});
+
+  /// See [FocusRing.inward].
+  bool get inward => _inward;
+  bool _inward;
+  set inward(bool value) {
+    if (value == _inward) return;
+    _inward = value;
+    markNeedsPaint();
+  }
 
   /// The ring's shape, with its colour and width as the side; null while
   /// it isn't shown.
@@ -123,11 +146,13 @@ class RenderFocusRing extends RenderProxyBox {
     markNeedsPaint();
   }
 
-  /// Where the ring is (its outer edge), in this render object's
-  /// coordinates; null while it isn't shown.
+  /// Where the ring is (its outer edge; the ring is drawn inside it), in
+  /// this render object's coordinates: [FocusRing.outset] outside the
+  /// button, or, if [inward], all of this box. Null while it isn't shown.
   Rect? get ringRect {
     if (_shape == null || child == null) return null;
-    return _buttonRect().inflate(FocusRing.outset);
+    // (The ring is drawn inside the shape's edge.)
+    return _inward ? Offset.zero & size : _buttonRect().inflate(FocusRing.outset);
   }
 
   /// The button as drawn: the first [Material]'s shape inside (a button's
@@ -157,4 +182,36 @@ class RenderFocusRing extends RenderProxyBox {
     final rect = ringRect;
     if (rect != null) _shape!.paint(context.canvas, rect.shift(offset));
   }
+}
+
+/// A [PopupMenuItem] with a [FocusRing] inside its edge while it has the
+/// keyboard focus: Flutter shows that only as a faint tint.
+class RingedMenuItem<T> extends PopupMenuItem<T> {
+  const RingedMenuItem({
+    super.key,
+    super.value,
+    super.onTap,
+    super.enabled,
+    super.height,
+    super.padding,
+    super.textStyle,
+    super.labelTextStyle,
+    super.mouseCursor,
+    required super.child,
+  });
+
+  @override
+  PopupMenuItemState<T, RingedMenuItem<T>> createState() =>
+      _RingedMenuItemState<T>();
+}
+
+class _RingedMenuItemState<T>
+    extends PopupMenuItemState<T, RingedMenuItem<T>> {
+  @override
+  Widget build(BuildContext context) => FocusRing(
+        inward: true,
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(4))),
+        child: super.build(context),
+      );
 }

@@ -50,6 +50,20 @@ class _SlowSettingsStore extends SettingsStore {
   Future<void> save(Settings settings) async {}
 }
 
+/// Starts with settings other than the defaults; a save waits for [saving],
+/// if set.
+class _SlowSaveStore extends SettingsStore {
+  Completer<void>? saving;
+
+  @override
+  Future<Settings> load() async => const Settings(
+      lastNamesText: 'Zen', firstNamesText: 'Zoe', phoneTemplateText: '',
+      emailTemplateText: '');
+
+  @override
+  Future<void> save(Settings settings) async => saving?.future;
+}
+
 /// The part of the screen not covered by the app bar or the keyboard.
 Rect visibleArea(WidgetTester tester) {
   final view = tester.view;
@@ -436,6 +450,39 @@ void main() {
       expect(find.text('Delete Fake Contacts').hitTestable(), findsOneWidget);
     });
 
+    testWidgets('Reset to defaults: the menu and its dialog fit, and the '
+        'message is scrolled into view (U9)', (WidgetTester tester) async {
+      smallScreen(tester);
+      await pumpMyApp(tester, MyApp(contacts: InMemoryContactsGateway()));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('Menu')));
+      await tester.pumpAndSettle();
+      final item = find.byKey(const Key('Reset'));
+      expect(item.hitTestable(), findsOneWidget);
+      // On screen (over the app bar, as Android's own menus are).
+      final view = tester.view;
+      expect(
+          (Offset.zero & (view.physicalSize / view.devicePixelRatio))
+              .contains(tester.getRect(item).bottomRight - const Offset(1, 1)),
+          isTrue);
+      await tester.tap(item);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      for (final label in ['Cancel', 'Reset']) {
+        expect(find.widgetWithText(TextButton, label).hitTestable(),
+            findsOneWidget, reason: label);
+      }
+      await tester.tap(find.widgetWithText(TextButton, 'Reset'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      final result = find.byKey(const Key('Result'));
+      expect(tester.widget<Text>(result).data,
+          'Names and templates reset to the defaults.');
+      expect(containsVertically(visibleArea(tester), tester.getRect(result)),
+          isTrue);
+    });
+
     testWidgets('the progress is scrolled into view, with Stop in reach',
         (WidgetTester tester) async {
       smallScreen(tester);
@@ -460,6 +507,42 @@ void main() {
       expect(find.textContaining('Stopped after creating 2 of 4'),
           findsOneWidget);
     });
+  });
+
+  testWidgets("with TalkBack, the reset message doesn't miss TalkBack's "
+      'focus landing on the menu button while the settings are saved (U9)',
+      (WidgetTester tester) async {
+    final dispatcher = tester.platformDispatcher;
+    dispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(accessibleNavigation: true);
+    addTearDown(dispatcher.clearAccessibilityFeaturesTestValue);
+    final handle = tester.ensureSemantics();
+    final store = _SlowSaveStore();
+    await tester.pumpWidget(MaterialApp(
+        home: MyHomePage(
+            title: 'Fake Contacts',
+            contacts: InMemoryContactsGateway(),
+            settingsStore: store)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('Menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('Reset')));
+    await tester.pumpAndSettle();
+    store.saving = Completer();
+    await tester.tap(find.widgetWithText(TextButton, 'Reset'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+
+    // Still saving when TalkBack's focus lands on the menu button.
+    tester.binding.renderViews.first.owner!.semanticsOwner!.performAction(
+        tester.getSemantics(find.byTooltip('More options')).id,
+        SemanticsAction.didGainAccessibilityFocus);
+    store.saving!.complete();
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Names and templates reset to the defaults.'),
+        findsOneWidget);
+    handle.dispose();
   });
 
   group('preview under the fields (U2)', () {
@@ -567,6 +650,26 @@ void main() {
       store.loaded.complete();
       await tester.pumpAndSettle();
       expect(previewText(tester), kDefaultPreview);
+    });
+
+    testWidgets('the menu button is disabled too (U9)',
+        (WidgetTester tester) async {
+      final store = _SlowSettingsStore();
+      await tester.pumpWidget(MaterialApp(
+          home: MyHomePage(
+              title: 'Fake Contacts',
+              contacts: InMemoryContactsGateway(),
+              settingsStore: store)));
+      await tester.pump();
+      final menu = find.byKey(const Key('Menu'));
+      expect(tester.widget<PopupMenuButton<Object?>>(menu).enabled, isFalse);
+      await tester.tap(menu, warnIfMissed: false);
+      await tester.pump();
+      expect(find.byKey(const Key('Reset')), findsNothing);
+
+      store.loaded.complete();
+      await tester.pumpAndSettle();
+      expect(tester.widget<PopupMenuButton<Object?>>(menu).enabled, isTrue);
     });
 
     testWidgets('editing never touches the address book or asks for the '
