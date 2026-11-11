@@ -515,16 +515,15 @@ void main() {
       (kDelete, 'Delete 4 fake contacts?', 'Deleted 4 fake contacts.'),
     ]) {
       await tapAndConfirm(tester, label, title);
-      // With the real contacts provider, done before the dialog has gone.
-      var bShownUnderDialog = false;
-      await pumpUntil(tester, () {
-        final bDialog = find.byType(AlertDialog).evaluate().isNotEmpty;
-        if (bDialog && resultFinder.evaluate().isNotEmpty) {
-          bShownUnderDialog = true;
-        }
-        return !bDialog;
-      }, 'dialog of "$label" gone');
-      expect(bShownUnderDialog, isFalse, reason: label);
+      // With the real contacts provider, done before the dialog has gone;
+      // the result must wait. (Checked often: the dialog closes in 0.15 s.)
+      final deadline = DateTime.now().add(kActionTimeout);
+      while (find.byType(AlertDialog).evaluate().isNotEmpty) {
+        expect(resultFinder, findsNothing, reason: label);
+        expect(DateTime.now().isBefore(deadline), isTrue,
+            reason: 'dialog of "$label" gone');
+        await tester.pump(const Duration(milliseconds: 10));
+      }
       expect(await waitForResult(tester, label), result);
     }
     expect(heard.texts, ['Created 4 fake contacts.', 'Deleted 4 fake contacts.']);

@@ -13,8 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// dialog going away. (Measured on the emulator, API 36, TalkBack 16: a
 /// result shown while a dialog still covers the page comes back with the
 /// page, in the update in which the dialog goes, and is never read out;
-/// one shown an update later is.) Pump a frame after creating it, so it
-/// knows the page as it is.
+/// one shown an update later is.)
 ///
 /// Call [dispose] at the end of the test: flutter_test checks for open
 /// semantics handles before its tear-downs run. (A tear-down disposes of
@@ -23,6 +22,9 @@ class LiveRegionAnnouncements {
   LiveRegionAnnouncements(WidgetTester tester)
       : _handle = tester.ensureSemantics(),
         _owner = tester.binding.renderViews.first.owner!.semanticsOwner! {
+    // What TalkBack knows already, if anything (else the first update
+    // brings it all).
+    _read();
     _owner.addListener(_updated);
     addTearDown(dispose);
   }
@@ -42,7 +44,9 @@ class LiveRegionAnnouncements {
   /// The IDs of the nodes that scope a route, in the last update.
   List<int> _previousRoutes = [];
 
-  void _updated() {
+  /// Reads the tree as it is now (its live regions' texts, and its routes)
+  /// and keeps it as the last update's.
+  ({Map<int, String> live, List<int> routes}) _read() {
     final live = <int, String>{};
     final routes = <int>[];
     bool visit(SemanticsNode node) {
@@ -55,13 +59,20 @@ class LiveRegionAnnouncements {
 
     final root = _owner.rootSemanticsNode;
     if (root != null) visit(root);
-    final bRouteChanged = !listEquals(routes, _previousRoutes);
-    live.forEach((id, text) {
-      if (text.isEmpty || text == _previous[id]) return;
-      (bRouteChanged ? missed : texts).add(text);
-    });
     _previous = live;
     _previousRoutes = routes;
+    return (live: live, routes: routes);
+  }
+
+  void _updated() {
+    final before = _previous;
+    final routesBefore = _previousRoutes;
+    final (:live, :routes) = _read();
+    final bRouteChanged = !listEquals(routes, routesBefore);
+    live.forEach((id, text) {
+      if (text.isEmpty || text == before[id]) return;
+      (bRouteChanged ? missed : texts).add(text);
+    });
   }
 
   bool _bDisposed = false;

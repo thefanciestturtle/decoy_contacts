@@ -315,16 +315,17 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   }
 
   /// Set from a tap on Create or Delete until it has ended (also if it was
-  /// cancelled) and its dialog, if any, has gone (see [_ask]). Its result,
+  /// cancelled) and its dialog, if any, has gone (see [_confirm]). Its result,
   /// if any, shows then, or a few frames later if the button gets the
   /// keyboard focus back. The buttons are disabled meanwhile, so they lose
   /// the keyboard focus; see [_refocus].
   bool _isBusy = false;
 
-  /// Set while one of the app's dialogs asks the user ([_ask]), and
-  /// while the app's settings open for the user. No spinner then: the app
-  /// is waiting for the user, not working. (Android's own permission
-  /// dialog still has the spinner behind it.)
+  /// Set while one of the app's dialogs asks the user ([_confirm]), while
+  /// the app's settings open for the user, and while a Create or Delete
+  /// that has ended waits for its dialog to finish closing. No spinner
+  /// then: the app isn't working. (Android's own permission dialog still
+  /// has the spinner behind it.)
   bool _waitingForUser = false;
 
   /// Set while a Create or Delete of more than one chunk runs: how far it
@@ -423,10 +424,10 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     _revealAfterFrame(_resultBox, keep: button);
   }
 
-  /// Asks before going ahead. `yes` only if the user taps the action
+  /// Asks before going ahead. True only if the user taps the action
   /// button; Cancel, Back and tapping outside the dialog all count as no.
-  /// `gone` completes once the dialog has gone from the screen (its closing
-  /// animation done) and the page has been drawn without it.
+  /// [_dialogGone] then completes once the dialog has gone from the screen
+  /// (its closing animation done) and the page has been drawn without it.
   ///
   /// With [keepWaiting], [_waitingForUser] stays set after a yes, for
   /// whatever waits for the user next; finish() clears it. With
@@ -444,9 +445,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   /// TalkBack's focus goes back to the button that opened the dialog
   /// (Flutter does that 0.3 s after the dialog has gone), and TalkBack
   /// reads the button after the message, not over it.
-  Future<({bool yes, Future<void> gone})> _ask(Confirmation confirmation,
+  Future<bool> _confirm(Confirmation confirmation,
       {bool keepWaiting = false, bool destructive = false}) async {
-    if (!mounted) return (yes: false, gone: Future<void>.value());
+    if (!mounted) return false;
     setState(() { _waitingForUser = true; });
     ModalRoute<Object?>? dialog;
     final bool? bConfirmed = await showDialog<bool>(
@@ -483,12 +484,13 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     if (mounted && !(keepWaiting && bYes)) {
       setState(() { _waitingForUser = false; });
     }
-    final gone = _dialogGone = _drawnWithout(dialog);
-    return (yes: bYes, gone: gone);
+    _dialogGone = _drawnWithout(dialog);
+    return bYes;
   }
 
-  /// `gone` of the last dialog [_ask] showed: a Create or Delete stays
-  /// busy until it has completed, and only then shows its result.
+  /// Completes once the last dialog [_confirm] showed has gone (see
+  /// there). A Create or Delete stays busy until then, and a message about
+  /// what the dialog led to waits for it.
   Future<void> _dialogGone = Future<void>.value();
 
   /// Completes once [dialog] has gone (its closing animation done) and a
@@ -559,10 +561,12 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     if (!mounted) return;
 
     Future<void> finish(ResultMessage? message) async {
+      if (!mounted) return;
       // Busy until the last dialog, if any, has gone, and the result only
-      // then (see [_ask]), else TalkBack would never read it out. (Until
-      // then nothing else can be opened over the page either, nor take the
-      // focus that is given back below.)
+      // then (see [_confirm]), else TalkBack would never read it out.
+      // (Until then nothing else can be opened over the page either, nor
+      // take the focus that is given back below.) No spinner meanwhile.
+      setState(() { _waitingForUser = true; });
       await _dialogGone;
       if (!mounted) return;
       // Stop goes away now, so it loses the focus too.
@@ -622,7 +626,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       case PermissionAnswer.permanentlyDenied:
         // The buttons stay disabled until the settings have been started,
         // so a quick second tap can't ask again; no spinner meanwhile.
-        if (!(await _ask(permissionSettings, keepWaiting: true)).yes) {
+        if (!await _confirm(permissionSettings, keepWaiting: true)) {
           log("$name: settings not opened");
           return finish(null);
         }
@@ -648,7 +652,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     final sNothingToDo = nothingToDo(settings, planned);
     if (sNothingToDo != null) return finish(sNothingToDo);
 
-    if (!(await _ask(confirmation(planned), destructive: destructive)).yes) {
+    if (!await _confirm(confirmation(planned), destructive: destructive)) {
       log("$name: cancelled");
       return finish(null);
     }
@@ -666,7 +670,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       }
       return finish(failed(e));
     }
-    finish(result == null ? kChangedMeanwhileMessage : describe(result));
+    return finish(result == null ? kChangedMeanwhileMessage : describe(result));
   }
 
   Future<void> _createAllContacts() => _runContactsAction(
@@ -703,9 +707,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     // (Create and Delete count their runs; one that starts before the
     // message shows has its own.)
     final int run = _run;
-    final dialog = await _ask(kResetConfirmation);
+    final bool bYes = await _confirm(kResetConfirmation);
     if (!mounted) return;
-    if (!dialog.yes) {
+    if (!bYes) {
       // Back to the field being edited when the menu opened, if any.
       field?.requestFocus();
       return;
@@ -719,7 +723,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     // out), and not at all if the fields change again meanwhile.
     setState(() { _result = null; });
     await _saveSettingsNow();
-    await dialog.gone;
+    await _dialogGone;
     // Not if a Create or Delete has started meanwhile, or the fields were
     // edited since.
     if (mounted && run == _run && _edits == edits) {

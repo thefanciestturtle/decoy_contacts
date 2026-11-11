@@ -140,7 +140,8 @@ final Finder resultFinder = find.byKey(const Key('Result'));
 /// shows: it would come back with the page, in the update in which the
 /// dialog goes, and TalkBack would skip it (see LiveRegionAnnouncements).
 Future<void> noResultUntilDialogGone(WidgetTester tester) async {
-  while (find.byType(AlertDialog).evaluate().isNotEmpty) {
+  for (var i = 0; find.byType(AlertDialog).evaluate().isNotEmpty; i++) {
+    expect(i, lessThan(100), reason: 'the dialog should be gone within 1 s');
     expect(resultFinder, findsNothing);
     await tester.pump(const Duration(milliseconds: 10));
   }
@@ -2731,6 +2732,26 @@ void main() {
       ]);
       expect(heard.missed, isEmpty);
       heard.dispose();
+    });
+
+    testWidgets('no spinner while only the dialog is closing, after Cancel '
+        'or a quick Create', (tester) async {
+      await pumpApp(tester, book);
+      for (final answer in ['Cancel', 'Create']) {
+        await tapAndOpenDialog(tester, kCreateButton);
+        await tester.tap(dialogButton(answer));
+        await tester.pump();
+        await tester.pump();
+        expect(find.byType(AlertDialog), findsOneWidget, reason: answer);
+        while (find.byType(AlertDialog).evaluate().isNotEmpty) {
+          expect(find.byType(CircularProgressIndicator), findsNothing,
+              reason: answer);
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+        await tester.pumpAndSettle();
+        expect(buttonsEnabled(tester), isTrue, reason: answer);
+      }
+      expect(resultText(tester), 'Created 4 fake contacts.');
     });
 
     testWidgets('busy until the dialog has gone: taps meanwhile do '
