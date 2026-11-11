@@ -741,9 +741,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   FocusNode? _fieldBeforeMenu;
 
   void _menuOpened() {
-    final focus = FocusManager.instance.primaryFocus;
-    _fieldBeforeMenu = _editableOf(focus) == null ? null : focus;
-    _leaveTextField();
+    _fieldBeforeMenu = _leaveTextField();
   }
 
   void _menuCanceled() {
@@ -792,11 +790,14 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       focus?.context?.findAncestorStateOfType<EditableTextState>();
 
   /// If a text field has the focus, takes it away, which closes the
-  /// keyboard. Otherwise the field gets the focus back after a dialog or
-  /// menu, the keyboard opens again and the page scrolls back up to it.
-  void _leaveTextField() {
+  /// keyboard, and returns its focus node; else null. Otherwise the field
+  /// gets the focus back after a dialog or menu, the keyboard opens again
+  /// and the page scrolls back up to it.
+  FocusNode? _leaveTextField() {
     final focus = FocusManager.instance.primaryFocus;
-    if (_editableOf(focus) != null) focus!.unfocus();
+    if (focus == null || _editableOf(focus) == null) return null;
+    focus.unfocus();
+    return focus;
   }
 
   /// Calls [_revealPreview] after the next frame, once the preview and the
