@@ -61,6 +61,9 @@ void main() {
             Color.alphaBlend(theme.focusColor, colors.surfaceContainer), 4.5),
         ('the focus ring on a menu item', colors.secondary,
             Color.alphaBlend(theme.focusColor, colors.surfaceContainer), 3.0),
+        // The About page: its link, and the message if it can't be opened
+        // (the error colour, as above).
+        ('the link on About', colors.primary, background, 4.5),
       ]) {
         test('contrast: $what', () {
           expect(contrast(color, on), greaterThanOrEqualTo(minimum),

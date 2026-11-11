@@ -24,10 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The JDK that runs the build (the app's own Java/Kotlin level is set
+      # in android/app/build.gradle.kts). 21: on 17, the lint of release
+      # builds crashes on Javadoc comments, as in url_launcher_android's code
+      # (its parser calls a Java 21 method).
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       # The Gradle distribution and the Kotlin compiler are downloaded from
       # GitHub releases, which sometimes time out (HTTP 504). Restoring them
@@ -83,7 +87,7 @@ jobs:
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       # Same step as in the build job (a YAML alias), so the key can't drift.
       - *restore-gradle-cache

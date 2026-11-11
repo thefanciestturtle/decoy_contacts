@@ -9,6 +9,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fake_contacts/about_page.dart'
+    show kAppVersion, kLicensePackage;
 import 'package:fake_contacts/contact_actions.dart'
     show kCreateChunkSize, kDeleteChunkSize;
 import 'package:fake_contacts/contacts_gateway.dart' show NewContact;
@@ -495,6 +497,44 @@ void main() {
             confirm: 'Delete 4 fake contacts?'),
         'Deleted 4 fake contacts.');
     expect(describeAll(await readAddressBook()), describeAll(real));
+  });
+
+  testWidgets("U9: About shows the version, and its licence page lists the "
+      "app's own licence among the packages' (the real list, from the "
+      "build)", (tester) async {
+    await startWithEmptyAddressBook(tester);
+    await launchApp(tester);
+    await tester.tap(find.byKey(const Key('Menu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('About')));
+    await tester.pumpAndSettle();
+    expect(find.text('Version $kAppVersion'), findsOneWidget);
+
+    final licenses = find.byKey(const Key('Licenses'));
+    await tester.scrollUntilVisible(licenses, 300,
+        scrollable: find.byType(Scrollable).last);
+    await tester.tap(licenses);
+    // The list is read from the build's own notices, in the background.
+    await pumpUntil(
+        tester,
+        () =>
+            find.byType(LicensePage).evaluate().isNotEmpty &&
+            find.byType(CircularProgressIndicator).evaluate().isEmpty,
+        'the list of licences');
+    await tester.pumpAndSettle();
+    final app = find.text(kLicensePackage);
+    await tester.scrollUntilVisible(app, 300,
+        scrollable: find.byType(Scrollable).last);
+    await tester.tap(app);
+    await tester.pumpAndSettle();
+    expect(find.text('Copyright (c) 2021 Bill Dietrich'), findsOneWidget);
+
+    // Back to the app's page.
+    for (var i = 0; i < 3; i++) {
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+    }
+    expect(find.text('Create Fake Contacts'), findsOneWidget);
   });
 
   testWidgets('S1: a ledger whose raw IDs point at real contacts deletes '

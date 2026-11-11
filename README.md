@@ -16,9 +16,9 @@ The user can set lists of last names and first names for fake contacts, and phon
 
 ## Use
 
-<img src="UsingTheApp.jpg" width="185" height="413" />
+<img src="UsingTheApp.jpg" width="185" height="411" />
 
-The default values should be sensible.  All of the first and last names start with "Z", to try to keep them from colliding with names of real contacts, and to keep them out of the way (at the end of the Contacts list).  If you have changed them, "Reset to defaults" in the menu (⋮) at the top puts the name lists and templates back, after asking; the fake contacts already created are kept, and "Delete" can still remove them.
+The default values should be sensible.  All of the first and last names start with "Z", to try to keep them from colliding with names of real contacts, and to keep them out of the way (at the end of the Contacts list).  If you have changed them, "Reset to defaults" in the menu (⋮) at the top puts the name lists and templates back, after asking; the fake contacts already created are kept, and "Delete" can still remove them.  "About", in the same menu, explains what the app does and what it stores, and has its privacy policy, its version, a link to its source code and the licences of the software it uses.
 
 So, just install and launch the application, and click the "Create Fake Contacts" button.  The system should ask you to grant Contacts permission to the application.  Then the contacts (one for each firstname-lastname combination) will be created.  Launch your usual Contacts app and scroll to the end to see the new contacts.  Note: it may take a couple of minutes to update the list.
 
@@ -108,7 +108,7 @@ Now using:
 ---
 
 ## Privacy Policy
-This application doesn't collect, store or transmit your identity or personal information in any way.  It contains no advertising and no trackers.
+This application doesn't collect, store or transmit your identity or personal information in any way.  It contains no advertising and no trackers.  It has no internet access.
 
 
 ## License
