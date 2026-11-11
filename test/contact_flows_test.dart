@@ -2890,19 +2890,30 @@ void main() {
         await tester.pump();
       }
 
-      testWidgets('the message comes once its focus is back on the menu '
-          'button, and is read out again if it repeats', (tester) async {
+      testWidgets('the last result goes at once; the message comes once '
+          'its focus is back on the menu button, and is read out again if it '
+          'repeats', (tester) async {
         final handle = tester.ensureSemantics();
         await pumpApp(tester, book);
         final region = find.byWidgetPredicate((w) =>
             w is Semantics && w.container && w.properties.liveRegion == true);
         SemanticsNode node() => tester.getSemantics(region);
         final id = node().id;
+        await tapCreate(tester);
+        expect(node().label, 'Created 4 fake contacts.');
 
         for (var i = 0; i < 2; i++) {
           await editAndReset(tester);
-          // The fields at once; the message later.
+          // The last result goes at once.
+          expect(node().label, isEmpty);
+          // The fields at once; the message later, counted from when the
+          // dialog has gone, as Flutter's wait before it gives TalkBack's
+          // focus back is.
           expect(fields(tester), kDefaults);
+          expect(node().label, isEmpty);
+          while (find.byType(AlertDialog).evaluate().isNotEmpty) {
+            await tester.pump(const Duration(milliseconds: 10));
+          }
           expect(node().label, isEmpty);
           await tester.pump(
               kTalkBackRefocusDelay - const Duration(milliseconds: 20));
@@ -2912,6 +2923,17 @@ void main() {
           expect(node().id, id);
         }
         handle.dispose();
+      });
+
+      testWidgets('fields changed before the message shows: no message',
+          (tester) async {
+        await pumpApp(tester, book);
+        await editAndReset(tester);
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byKey(const Key('FirstNames')), 'Zelda');
+        await tester.pump(kTalkBackRefocusDelay);
+        await tester.pumpAndSettle();
+        expect(resultFinder, findsNothing);
       });
 
       testWidgets('a Create started before the message shows keeps its own '
@@ -2928,6 +2950,24 @@ void main() {
       });
     });
 
+    testWidgets('the message goes once the fields are edited again; other '
+        'results stay', (tester) async {
+      await pumpApp(tester, book);
+      await tester.enterText(find.byKey(const Key('LastNames')), 'Zelda');
+      await openResetDialog(tester);
+      await tester.tap(dialogButton('Reset'));
+      await tester.pumpAndSettle();
+      expect(resultText(tester), kReset);
+      await tester.enterText(find.byKey(const Key('LastNames')), 'Zelda');
+      await tester.pump();
+      expect(resultFinder, findsNothing);
+
+      await tapCreate(tester);
+      await tester.enterText(find.byKey(const Key('LastNames')), 'Zora');
+      await tester.pump();
+      expect(resultText(tester), 'Created 28 fake contacts.');
+    });
+
     testWidgets('all by keyboard: the menu button comes first; Enter, Down, '
         'Enter, Tab to Reset, Enter; the focus is back on the menu button',
         (tester) async {
@@ -2940,6 +2980,10 @@ void main() {
       await press(LogicalKeyboardKey.tab);
       expect(menuFocused(tester), isTrue);
       expectRingAround(tester, menu);
+      // All of it on screen, not cut off at the edge.
+      final (ring, _) = rings(tester).single;
+      expect(ring.right, lessThanOrEqualTo(tester.view.physicalSize.width /
+          tester.view.devicePixelRatio));
       await press(LogicalKeyboardKey.enter);
       expect(resetItem, findsOneWidget);
       // (Flutter's menu opens with no item focused.)

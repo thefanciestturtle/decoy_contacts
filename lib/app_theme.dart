@@ -185,8 +185,18 @@ class RenderFocusRing extends RenderProxyBox {
 /// A [PopupMenuItem] with a [FocusRing] inside its edge while it has the
 /// keyboard focus: Flutter shows that only as a faint tint.
 class RingedMenuItem<T> extends PopupMenuItem<T> {
-  const RingedMenuItem(
-      {super.key, required super.value, super.enabled, required super.child});
+  const RingedMenuItem({
+    super.key,
+    super.value,
+    super.onTap,
+    super.enabled,
+    super.height,
+    super.padding,
+    super.textStyle,
+    super.labelTextStyle,
+    super.mouseCursor,
+    required super.child,
+  });
 
   @override
   PopupMenuItemState<T, RingedMenuItem<T>> createState() =>

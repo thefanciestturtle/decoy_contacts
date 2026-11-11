@@ -17,15 +17,17 @@ import 'settings_store.dart';
 /// How long to wait after the last keystroke before saving the settings.
 const Duration kSaveDelay = Duration(milliseconds: 500);
 
-/// With TalkBack on, how long after a dialog is closed TalkBack's focus is
-/// back on what opened it: the dialog takes 150 ms to go, Flutter then waits
-/// 300 ms on Android before giving TalkBack's focus back (see Navigator),
-/// and TalkBack takes a moment to move it. TalkBack reads out the newly
-/// focused button, which would cut short a result shown before that.
+/// With TalkBack on, how long after a dialog has gone (its closing
+/// animation done) TalkBack's focus is back on what opened it: Flutter
+/// waits 300 ms from then on Android before giving TalkBack's focus back
+/// (see Navigator), and TalkBack takes a moment to move it. TalkBack reads
+/// out the newly focused button, which would cut short a result shown
+/// before that. Counted from the same moment as Flutter's wait, so a slow
+/// phone, whose dialog takes longer to go, delays both.
 /// (Measured on the emulator, API 36: shown at once, the reset message was
-/// lost in 3 of 4 tries; after 700 ms it was read out in full each time,
-/// after the button.)
-const Duration kTalkBackRefocusDelay = Duration(milliseconds: 700);
+/// lost in 3 of 4 tries; 550 ms after the dialog had gone, it was read out
+/// in full each time, after the button.)
+const Duration kTalkBackRefocusDelay = Duration(milliseconds: 550);
 
 /// The items of the app bar's menu.
 enum _MenuAction { reset }
@@ -101,7 +103,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
 
   /// Called on any change to a text field, the cursor included.
   void _fieldsChanged() {
-    if (!_settingsLoaded) return;
+    if (!_settingsLoaded || _settingFields) return;
     final settings = _settings;
     if (settings == _previewSettings) return;
     _previewSettings = settings;
@@ -239,10 +241,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   Future<void> _loadSettings() async {
     final settings = await widget.settingsStore.load();
     if (!mounted) return;
-    lastNamesController.text = settings.lastNamesText;
-    firstNamesController.text = settings.firstNamesText;
-    phoneNumberTemplateController.text = settings.phoneTemplateText;
-    emailAddressTemplateController.text = settings.emailTemplateText;
+    _setFields(settings);
     setState(() { _settingsLoaded = true; });
     _fieldsChanged();
     unawaited(_refreshStatus());
@@ -289,8 +288,28 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     });
   }
 
+  /// Set while [_setFields] fills in the fields.
+  bool _settingFields = false;
+
+  /// Puts [settings] into the fields; then works out the preview and the
+  /// checks once ([_fieldsChanged]), not after each field.
+  void _setFields(Settings settings) {
+    _settingFields = true;
+    try {
+      lastNamesController.text = settings.lastNamesText;
+      firstNamesController.text = settings.firstNamesText;
+      phoneNumberTemplateController.text = settings.phoneTemplateText;
+      emailAddressTemplateController.text = settings.emailTemplateText;
+    } finally {
+      _settingFields = false;
+    }
+    _fieldsChanged();
+  }
+
   /// Called on every keystroke; saves once typing pauses.
   void _settingsChanged(String _) {
+    // "Reset to the defaults" is no longer true.
+    if (_result == kResetMessage) setState(() { _result = null; });
     _saveTimer?.cancel();
     _saveTimer = Timer(kSaveDelay, _saveSettingsNow);
   }
@@ -410,8 +429,29 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     _revealAfterFrame(_resultBox, keep: button);
   }
 
+  /// Completes once the dialog of the last [_confirm] has gone from the
+  /// screen (its closing animation done).
+  Future<void> _dialogGone = Future.value();
+
+  /// Completes once [route]'s closing animation is done (at once if it
+  /// is, or if there is none). (Not later than 1 s: no frames are drawn
+  /// while the app is out of sight.)
+  static Future<void> _whenGone(ModalRoute<Object?>? route) async {
+    final animation = route?.animation;
+    if (animation == null || animation.isDismissed) return;
+    final gone = Completer<void>();
+    void listener(AnimationStatus status) {
+      if (status.isDismissed && !gone.isCompleted) gone.complete();
+    }
+    animation.addStatusListener(listener);
+    await gone.future
+        .timeout(const Duration(seconds: 1), onTimeout: () {});
+    animation.removeStatusListener(listener);
+  }
+
   /// Asks before going ahead. True only if the user taps the action button;
-  /// Cancel, Back and tapping outside the dialog all count as no.
+  /// Cancel, Back and tapping outside the dialog all count as no. Sets
+  /// [_dialogGone].
   ///
   /// With [keepWaiting], [_waitingForUser] stays set after a yes, for
   /// whatever waits for the user next; finish() clears it. With
@@ -421,33 +461,38 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       {bool keepWaiting = false, bool destructive = false}) async {
     if (!mounted) return false;
     setState(() { _waitingForUser = true; });
+    ModalRoute<Object?>? dialog;
     final bool? bConfirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        // Long text at a large font size scrolls instead of being cut off.
-        scrollable: true,
-        title: Text(confirmation.title),
-        content: Text(confirmation.body),
-        actions: <Widget>[
-          FocusRing(
-            child: TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text("Cancel"),
+      builder: (context) {
+        dialog ??= ModalRoute.of(context);
+        return AlertDialog(
+          // Long text at a large font size scrolls instead of being cut off.
+          scrollable: true,
+          title: Text(confirmation.title),
+          content: Text(confirmation.body),
+          actions: <Widget>[
+            FocusRing(
+              child: TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Cancel"),
+              ),
             ),
-          ),
-          FocusRing(
-            child: TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: destructive
-                  ? TextButton.styleFrom(
-                      foregroundColor: Theme.of(context).colorScheme.error)
-                  : null,
-              child: Text(confirmation.action),
+            FocusRing(
+              child: TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: destructive
+                    ? TextButton.styleFrom(
+                        foregroundColor: Theme.of(context).colorScheme.error)
+                    : null,
+                child: Text(confirmation.action),
+              ),
             ),
-          ),
-        ],
-      ),
+          ],
+        );
+      },
     );
+    _dialogGone = _whenGone(dialog);
     final bool bYes = bConfirmed ?? false;
     if (mounted && !(keepWaiting && bYes)) {
       setState(() { _waitingForUser = false; });
@@ -650,25 +695,26 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     final int run = _run;
     if (!await _confirm(kResetConfirmation)) return;
     if (!mounted || _isBusy) return;
-    const defaults = Settings.defaults;
-    // The preview and the warnings follow (see [_fieldsChanged]).
-    lastNamesController.text = defaults.lastNamesText;
-    firstNamesController.text = defaults.firstNamesText;
-    phoneNumberTemplateController.text = defaults.phoneTemplateText;
-    emailAddressTemplateController.text = defaults.emailTemplateText;
-    // Cleared first, so TalkBack reads the message out even if the last
-    // result was the same.
+    // The preview and the warnings follow.
+    _setFields(Settings.defaults);
+    // The last result goes at once (the message, with TalkBack, comes a
+    // little later, and not at all if the fields change again meanwhile).
     setState(() { _result = null; });
     await _saveSettingsNow();
     if (!mounted) return;
     // With TalkBack, after its focus is back on the menu button; else once
     // the cleared result is on screen.
     if (MediaQuery.accessibleNavigationOf(context)) {
+      await _dialogGone;
       await Future<void>.delayed(kTalkBackRefocusDelay);
     } else if (SchedulerBinding.instance.framesEnabled) {
       await WidgetsBinding.instance.endOfFrame;
     }
-    if (mounted && run == _run) _showResult(kResetMessage, null);
+    // Not if a Create or Delete has started meanwhile, or the fields were
+    // changed again.
+    if (mounted && run == _run && _settings == Settings.defaults) {
+      _showResult(kResetMessage, null);
+    }
   }
 
   Future<void> _deleteAllContacts() => _runContactsAction(
@@ -818,6 +864,9 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.title),
+          // Material 3's 4 dp at the end, which also leaves room for the
+          // menu button's focus ring.
+          actionsPadding: const EdgeInsetsDirectional.only(end: 4),
           actions: <Widget>[
             FocusRing(
               child: PopupMenuButton<_MenuAction>(
