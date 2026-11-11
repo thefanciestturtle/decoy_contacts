@@ -16,7 +16,7 @@ The user can set lists of last names and first names for fake contacts, and phon
 
 ## Use
 
-<img src="UsingTheApp.jpg" width="185" height="395" />
+<img src="UsingTheApp.jpg" width="185" height="413" />
 
 The default values should be sensible.  All of the first and last names start with "Z", to try to keep them from colliding with names of real contacts, and to keep them out of the way (at the end of the Contacts list).
 
@@ -40,7 +40,7 @@ You could uninstall this app after creating the fake contacts, without causing a
 
 ### Quirks
 
-* The app is designed to be very simple.  A message at the bottom of the screen reports how many contacts were created/deleted (or that permission was denied; once Android no longer asks for it, a dialog offers to open the app's settings instead), so you can tell the operation finished; errors and partial results stay longer and have a close button.  Since the operation loops over all firstname/lastname combinations, it may take a while to finish (about half a minute for 10,000 contacts); the buttons are disabled while it's working, and a big batch shows how far it got, with a Stop button (Back stops it too) that stops it after the current group of contacts.  If the app is closed or killed partway through a Create, it still knows which contacts it made, so "Delete" can remove them.  If you click the "Create" button multiple times, you just get one set of fake contacts; if you add names to the lists, only the new combinations are created.
+* The app is designed to be very simple.  Under the buttons, the app reports how many contacts were created/deleted (or that permission was denied; once Android no longer asks for it, a dialog offers to open the app's settings instead), so you can tell the operation finished; errors are marked with an icon.  The message stays until you tap Create or Delete again.  Since the operation loops over all firstname/lastname combinations, it may take a while to finish (about half a minute for 10,000 contacts); the buttons are disabled while it's working, and a big batch shows how far it got, with a Stop button (Back stops it too) that stops it after the current group of contacts.  With a keyboard or D-pad, the button you used has the focus again afterwards.  The app follows the phone's dark theme setting.  If the app is closed or killed partway through a Create, it still knows which contacts it made, so "Delete" can remove them.  If you click the "Create" button multiple times, you just get one set of fake contacts; if you add names to the lists, only the new combinations are created.
 
 * "Delete" only removes contacts this app created.  When it creates contacts, the app privately records their internal IDs in its own storage (nothing is written into the contacts themselves, so other apps can't use it to filter out the fakes).  Delete removes only those recorded contacts, so a real contact that happens to have the same name as a fake one is never touched.  If Android has merged a fake contact with one of your real contacts, the app leaves that contact alone and tells you how many it skipped; you can remove the fake details by hand.
 

@@ -10,27 +10,25 @@ const int kManyFakeContacts = 10000;
 class ResultMessage {
   final String text;
 
-  /// Not a plain success: an error, a result that is only partial (it
-  /// failed or was stopped partway), or a note about fake contacts left
-  /// alone or not recorded. Such a message is longer, or calls for action,
-  /// so it shows longer and can be closed.
-  final bool needsAttention;
+  /// Something went wrong: the app couldn't do what it was asked, or did
+  /// only part of it, or couldn't record what it created. Shown with an
+  /// error icon, in the error colour. Not a failure: a result (also one the
+  /// user stopped), nothing to do, a note about contacts left alone, or the
+  /// user's own "no" to the permission.
+  final bool isError;
 
-  const ResultMessage(this.text) : needsAttention = false;
-  const ResultMessage.attention(this.text) : needsAttention = true;
+  const ResultMessage(this.text) : isError = false;
+  const ResultMessage.error(this.text) : isError = true;
 
   @override
   bool operator ==(Object other) =>
-      other is ResultMessage &&
-      other.text == text &&
-      other.needsAttention == needsAttention;
+      other is ResultMessage && other.text == text && other.isError == isError;
 
   @override
-  int get hashCode => Object.hash(text, needsAttention);
+  int get hashCode => Object.hash(text, isError);
 
   @override
-  String toString() =>
-      'ResultMessage(${needsAttention ? 'attention: ' : ''}$text)';
+  String toString() => 'ResultMessage(${isError ? 'error: ' : ''}$text)';
 }
 
 const ResultMessage kPermissionDeniedMessage =
@@ -50,11 +48,11 @@ Confirmation permissionSettingsConfirmation(String verb) => (
 
 /// Shown if the app's settings couldn't be opened from that dialog.
 const ResultMessage kOpenSettingsFailedMessage =
-    ResultMessage.attention("Couldn't open Settings.");
+    ResultMessage.error("Couldn't open Settings.");
 
 /// Shown if asking for the contacts permission failed (rather than being
 /// answered), e.g. while the app's screen was being recreated.
-const ResultMessage kPermissionRequestFailedMessage = ResultMessage.attention(
+const ResultMessage kPermissionRequestFailedMessage = ResultMessage.error(
     "Couldn't ask for permission to access contacts. Try again.");
 
 // The error messages below are plain sentences; the error itself goes to
@@ -67,7 +65,7 @@ const ResultMessage kPermissionRequestFailedMessage = ResultMessage.attention(
 /// Shown if reading the address book failed before Create or Delete
 /// changed anything.
 const ResultMessage kReadFailedMessage =
-    ResultMessage.attention("Couldn't read your contacts. Try again.");
+    ResultMessage.error("Couldn't read your contacts. Try again.");
 
 const String _kStorageFull = "your phone's storage is full";
 
@@ -79,7 +77,7 @@ String _doneOf(int done, int planned) =>
 /// Shown if Create failed: how far it got if it stopped partway (see
 /// [StoppedPartway]).
 ResultMessage createFailedMessage(Object error) =>
-    ResultMessage.attention(_createFailedText(error));
+    ResultMessage.error(_createFailedText(error));
 
 String _createFailedText(Object error) => switch (error) {
       // What the last chunk created is still pending in the ledger, and
@@ -103,7 +101,7 @@ String _createFailedText(Object error) => switch (error) {
 /// Shown if Delete failed: how far it got if it stopped partway (see
 /// [StoppedPartway]).
 ResultMessage deleteFailedMessage(Object error) =>
-    ResultMessage.attention(_deleteFailedText(error));
+    ResultMessage.error(_deleteFailedText(error));
 
 String _deleteFailedText(Object error) => switch (error) {
       StoppedPartway(done: null) => storageFull(error)
@@ -122,7 +120,8 @@ String _deleteFailedText(Object error) => switch (error) {
 
 /// Shown when, after the user said yes, Create or Delete would do more than
 /// the dialog said, because the address book changed while it was open.
-const ResultMessage kChangedMeanwhileMessage = ResultMessage.attention(
+/// (Not a failure: the app refused, on purpose.)
+const ResultMessage kChangedMeanwhileMessage = ResultMessage(
     "Your contacts changed meanwhile, so nothing was done. Try again.");
 
 /// What a dialog that asks before Create or Delete says. [action] is the
@@ -287,10 +286,8 @@ ResultMessage nothingToCreateMessage(
 
 /// Shown instead of the dialog when Delete has nothing to delete.
 ResultMessage nothingToDeleteMessage(DeletePreview preview) {
-  final skipped = preview.skippedMerged + preview.skippedChanged;
-  final text = "No fake contacts to delete."
-      "${_leftAlone(preview.skippedMerged, preview.skippedChanged, done: true)}";
-  return skipped > 0 ? ResultMessage.attention(text) : ResultMessage(text);
+  return ResultMessage("No fake contacts to delete."
+      "${_leftAlone(preview.skippedMerged, preview.skippedChanged, done: true)}");
 }
 
 /// What Create did; if the user stopped it, how far it got.
@@ -305,21 +302,18 @@ ResultMessage createdMessage(CreateResult result) {
     sMessage += " Warning: ${result.untracked}"
         " could not be recorded and must be deleted by hand.";
   }
-  return result.stopped || result.untracked > 0
-      ? ResultMessage.attention(sMessage)
+  // Created, but not recorded: Delete can't remove those.
+  return result.untracked > 0
+      ? ResultMessage.error(sMessage)
       : ResultMessage(sMessage);
 }
 
 /// What Delete did; if the user stopped it, how far it got.
-ResultMessage deletedMessage(DeleteResult result) {
-  final text = (result.stopped
-          ? "Stopped after deleting ${_doneOf(result.deleted, result.planned)}."
-          : "Deleted ${_fakeContacts(result.deleted)}.") +
-      _leftAlone(result.skippedMerged, result.skippedChanged, done: true);
-  return result.stopped || result.skippedMerged + result.skippedChanged > 0
-      ? ResultMessage.attention(text)
-      : ResultMessage(text);
-}
+ResultMessage deletedMessage(DeleteResult result) => ResultMessage(
+    (result.stopped
+            ? "Stopped after deleting ${_doneOf(result.deleted, result.planned)}."
+            : "Deleted ${_fakeContacts(result.deleted)}.") +
+        _leftAlone(result.skippedMerged, result.skippedChanged, done: true));
 
 /// How far a Create or Delete of more than one chunk has got, shown under
 /// the buttons while it runs, e.g. "Created 312 of 756".

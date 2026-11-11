@@ -98,9 +98,9 @@ void main() {
     expect(find.text('First names'), findsOneWidget);
     expect(find.text('Phone number template'), findsOneWidget);
     expect(find.text('Email address template'), findsOneWidget);
-    expect(find.widgetWithText(ElevatedButton, 'Create Fake Contacts'),
+    expect(find.widgetWithText(FilledButton, 'Create Fake Contacts'),
         findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'Delete Fake Contacts'),
+    expect(find.widgetWithText(OutlinedButton, 'Delete Fake Contacts'),
         findsOneWidget);
     // There is no contacts plugin in widget tests, so the permission can't
     // be checked: no status line, and no error.
@@ -197,17 +197,63 @@ void main() {
     expect(find.text('Delete Fake Contacts').hitTestable(), findsOneWidget);
   });
 
-  testWidgets('Delete button text is readable and it greys out when disabled',
+  testWidgets('Delete is in the error colour, and greys out when disabled',
       (WidgetTester tester) async {
+    for (final brightness in Brightness.values) {
+      tester.platformDispatcher.platformBrightnessTestValue = brightness;
+      addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+      await pumpMyApp(tester);
+      await tester.pumpAndSettle();
+      final colors =
+          Theme.of(tester.element(find.byKey(const Key('Delete')))).colorScheme;
+      expect(colors.brightness, brightness);
+
+      final style = tester
+          .widget<OutlinedButton>(find.byKey(const Key('Delete')))
+          .style!;
+      expect(style.foregroundColor!.resolve({}), colors.error);
+      expect(style.side!.resolve({})!.color, colors.error);
+      const disabled = {WidgetState.disabled};
+      expect(style.side!.resolve(disabled)!.color, isNot(colors.error));
+      // (Null: Material's own disabled colour.)
+      expect(style.foregroundColor!.resolve(disabled), isNot(colors.error));
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
+  });
+
+  testWidgets('Dark mode follows the system (U7)', (WidgetTester tester) async {
+    for (final brightness in Brightness.values) {
+      tester.platformDispatcher.platformBrightnessTestValue = brightness;
+      addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+      await pumpMyApp(tester);
+      await tester.pumpAndSettle();
+      final colors = Theme.of(tester.element(find.byType(Scaffold))).colorScheme;
+      expect(colors.brightness, brightness);
+      expect(tester.widget<Material>(find.descendant(
+              of: find.byType(Scaffold), matching: find.byType(Material)).first)
+          .color, colors.surface);
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
+  });
+
+  testWidgets('The fields are standard outlined fields, greyed while '
+      'disabled (U7)', (WidgetTester tester) async {
     await pumpMyApp(tester);
     await tester.pumpAndSettle();
-
-    final button = tester.widget<FilledButton>(find.byType(FilledButton));
-    final style = button.style!;
-    expect(style.foregroundColor!.resolve({}), Colors.white);
-    expect(style.backgroundColor!.resolve({}), Colors.pink);
-    expect(style.backgroundColor!.resolve({WidgetState.disabled}),
-        isNot(Colors.pink));
+    for (final key in ['LastNames', 'FirstNames', 'PhoneNumberTemplate',
+        'EmailAddressTemplate']) {
+      final decoration =
+          tester.widget<TextField>(find.byKey(Key(key))).decoration!;
+      // No borders of their own: the theme's.
+      expect(decoration.border, isNull, reason: key);
+      expect(decoration.enabledBorder, isNull, reason: key);
+      expect(decoration.focusedBorder, isNull, reason: key);
+      expect(decoration.disabledBorder, isNull, reason: key);
+      final decorator = tester.widget<InputDecorator>(find.descendant(
+          of: find.byKey(Key(key)), matching: find.byType(InputDecorator)));
+      expect(decorator.decoration.border, isA<OutlineInputBorder>(),
+          reason: key);
+    }
   });
 
   testWidgets('The dialog before Delete fits a small screen at a large font '
@@ -244,11 +290,6 @@ void main() {
     // reasons.
     book.merge(into: alice, from: book.idOf('Zach Zen'));
     book.setPhones(book.idOf('Zoe Zen'), ['+1 555 0199']);
-    // On a screen this small, the result of Create covers the Delete button.
-    tester
-        .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
-        .removeCurrentSnackBar();
-    await tester.pumpAndSettle();
     await tapButton('Delete Fake Contacts');
     expect(tester.takeException(), isNull);
 
@@ -335,36 +376,63 @@ void main() {
       await tester.tap(find.widgetWithText(TextButton, answer));
     }
 
-    testWidgets('a long result: its close button is in reach, and clears '
-        'it off the buttons', (WidgetTester tester) async {
+    testWidgets('a long result shows under the buttons, scrolled into view '
+        'from the button that was tapped, and covers nothing (U7)',
+        (WidgetTester tester) async {
       smallScreen(tester);
       final book = InMemoryContactsGateway();
+      final alice = book.add('Alice Example');
       await pumpMyApp(tester, MyApp(contacts: book));
       await tester.pumpAndSettle();
       await tapAndConfirm(tester, 'Create Fake Contacts', 'Create');
       await tester.pumpAndSettle();
-      tester
-          .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
-          .removeCurrentSnackBar();
-      await tester.pumpAndSettle();
-      // A long result (24 words). (The longest, with fakes left alone for
-      // both reasons, 35 words, was checked on a device: there it takes 11
-      // lines, with the close button in reach; in tests twice that.)
+      // The longest result: fakes left alone for both reasons (35 words; on
+      // a device 11 lines, in tests, where every letter is as wide as it is
+      // high, about twice that: taller than the screen).
+      book.merge(into: alice, from: book.idOf('Zach Zen'));
       book.setPhones(book.idOf('Zoe Zen'), ['+1 555 0199']);
       await tapAndConfirm(tester, 'Delete Fake Contacts', 'Delete');
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
 
-      // (Whether all of it fits is checked on a device: in tests every
-      // letter is as wide as it is high, so the text needs twice the lines.)
-      expect(find.textContaining('no longer matches'), findsOneWidget);
-      // It covers the buttons, and can be closed.
-      final close = find.byIcon(Icons.close);
-      expect(close.hitTestable(), findsOneWidget);
-      expect(find.text('Delete Fake Contacts').hitTestable(), findsNothing);
-      await tester.tap(close);
+      final result = find.byKey(const Key('Result'));
+      expect(tester.widget<Text>(result).data,
+          allOf(contains('was merged'), contains('no longer matches')));
+      final visible = visibleArea(tester);
+      final rect = tester.getRect(result);
+      // The button tapped stays in view (with a keyboard it has the focus
+      // again), and the result's start below it.
+      expect(containsVertically(visible,
+              tester.getRect(find.byKey(const Key('Delete')))),
+          isTrue);
+      expect(rect.top, lessThan(visible.bottom - 40));
+      if (rect.height <= visible.height) {
+        expect(containsVertically(visible, rect), isTrue);
+      }
+      expect(tester
+              .renderObject<RenderParagraph>(result)
+              .didExceedMaxLines,
+          isFalse);
+      // Nothing covers the buttons: scrolled back, both can be tapped.
+      for (final label in ['Create Fake Contacts', 'Delete Fake Contacts']) {
+        await tester.scrollUntilVisible(find.text(label), -100,
+            scrollable: find.byType(Scrollable).first);
+        expect(find.text(label).hitTestable(), findsOneWidget, reason: label);
+      }
+    });
+
+    testWidgets('a short result fits in view with the button that was '
+        'tapped (U7)', (WidgetTester tester) async {
+      smallScreen(tester);
+      await pumpMyApp(tester, MyApp(contacts: InMemoryContactsGateway()));
       await tester.pumpAndSettle();
-      expect(find.byType(SnackBar), findsNothing);
+      await tapAndConfirm(tester, 'Create Fake Contacts', 'Create');
+      await tester.pumpAndSettle();
+
+      final visible = visibleArea(tester);
+      final result = find.byKey(const Key('Result'));
+      expect(tester.widget<Text>(result).data, 'Created 4 fake contacts.');
+      expect(containsVertically(visible, tester.getRect(result)), isTrue);
       expect(find.text('Delete Fake Contacts').hitTestable(), findsOneWidget);
     });
 
@@ -810,7 +878,7 @@ void main() {
       // Warnings never stop Create.
       await type(tester, 'PhoneNumberTemplate', 'call me');
       await type(tester, 'EmailAddressTemplate', 'nope');
-      expect(tester.widget<ElevatedButton>(find.byType(ElevatedButton)).enabled,
+      expect(tester.widget<FilledButton>(find.byKey(const Key('Create'))).enabled,
           isTrue);
       await tester.pumpAndSettle(kSaveDelay);
     });
@@ -864,7 +932,7 @@ void main() {
       await pumpMyApp(tester);
       await tester.pumpAndSettle();
       SemanticsNode create() =>
-          tester.getSemantics(find.widgetWithText(ElevatedButton, 'Create Fake Contacts'));
+          tester.getSemantics(find.widgetWithText(FilledButton, 'Create Fake Contacts'));
       expect(create().hint, isEmpty);
 
       await type(tester, 'FirstNames', '');
