@@ -136,16 +136,21 @@ Finder dialogButton(String label) => find.descendant(
 /// The result under the buttons, if any.
 final Finder resultFinder = find.byKey(const Key('Result'));
 
-/// Pumps until the dialog has gone, checking meanwhile that no result
-/// shows: it would come back with the page, in the update in which the
-/// dialog goes, and TalkBack would skip it (see LiveRegionAnnouncements).
-Future<void> noResultUntilDialogGone(WidgetTester tester) async {
+/// Pumps 10 ms at a time until the dialog has gone (within 1 s), calling
+/// [check] before each pump.
+Future<void> untilDialogGone(WidgetTester tester, void Function() check) async {
   for (var i = 0; find.byType(AlertDialog).evaluate().isNotEmpty; i++) {
     expect(i, lessThan(100), reason: 'the dialog should be gone within 1 s');
-    expect(resultFinder, findsNothing);
+    check();
     await tester.pump(const Duration(milliseconds: 10));
   }
 }
+
+/// Pumps until the dialog has gone, checking meanwhile that no result
+/// shows: it would come back with the page, in the update in which the
+/// dialog goes, and TalkBack would skip it (see LiveRegionAnnouncements).
+Future<void> noResultUntilDialogGone(WidgetTester tester) => untilDialogGone(
+    tester, () => expect(resultFinder, findsNothing));
 
 /// The text of the result under the buttons; fails if there is none.
 String resultText(WidgetTester tester) =>
@@ -2743,11 +2748,10 @@ void main() {
         await tester.pump();
         await tester.pump();
         expect(find.byType(AlertDialog), findsOneWidget, reason: answer);
-        while (find.byType(AlertDialog).evaluate().isNotEmpty) {
-          expect(find.byType(CircularProgressIndicator), findsNothing,
-              reason: answer);
-          await tester.pump(const Duration(milliseconds: 10));
-        }
+        await untilDialogGone(
+            tester,
+            () => expect(find.byType(CircularProgressIndicator), findsNothing,
+                reason: answer));
         await tester.pumpAndSettle();
         expect(buttonsEnabled(tester), isTrue, reason: answer);
       }

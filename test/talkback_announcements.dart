@@ -38,8 +38,9 @@ class LiveRegionAnnouncements {
   /// The texts that appeared or changed, but weren't read out.
   final List<String> missed = [];
 
-  /// The text of each live region in the last update, by node ID.
-  Map<int, String> _previous = {};
+  /// The last text of each live region, by node ID; also of one hidden
+  /// since by a route (e.g. a menu), as long as it may come back with it.
+  final Map<int, String> _previous = {};
 
   /// The IDs of the nodes that scope a route, in the last update.
   List<int> _previousRoutes = [];
@@ -59,13 +60,13 @@ class LiveRegionAnnouncements {
 
     final root = _owner.rootSemanticsNode;
     if (root != null) visit(root);
-    _previous = live;
+    _previous.addAll(live);
     _previousRoutes = routes;
     return (live: live, routes: routes);
   }
 
   void _updated() {
-    final before = _previous;
+    final before = Map<int, String>.of(_previous);
     final routesBefore = _previousRoutes;
     final (:live, :routes) = _read();
     final bRouteChanged = !listEquals(routes, routesBefore);
@@ -73,6 +74,8 @@ class LiveRegionAnnouncements {
       if (text.isEmpty || text == before[id]) return;
       (bRouteChanged ? missed : texts).add(text);
     });
+    // Gone without a change of route: emptied, not hidden.
+    if (!bRouteChanged) _previous.removeWhere((id, _) => !live.containsKey(id));
   }
 
   bool _bDisposed = false;
