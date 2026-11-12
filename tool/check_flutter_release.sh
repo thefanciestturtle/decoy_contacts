@@ -9,10 +9,9 @@
 # it opens an issue saying so. If a still newer one comes out while it is
 # open, it updates the issue and comments on it (one issue, however many
 # runs); notes go in comments (a text changed by hand is left alone, and
-# only gets a comment for a newer release). Once
-# FLUTTER_VERSION has caught up, it closes it. To put the upgrade off until
-# a newer release comes out, close it as "not planned". It finds the issue
-# by its title, so keep that.
+# only gets a comment for a newer release). Once FLUTTER_VERSION has caught
+# up, it closes it. To put the upgrade off until a newer release comes out,
+# close it as "not planned". It finds the issue by its title, so keep that.
 #
 # It only touches issues opened by GitHub Actions: it runs in the weekly
 # workflow (.github/workflows/flutter_release.yml), with that workflow's
@@ -86,8 +85,8 @@ echo "CI builds with Flutter $ours; the current stable release is $latest."
 # or "-current" if it was opened after the current release came out (so it
 # was about that one). STATE is open, closed, or put-off: closed as not
 # planned while it named the current release (or, with its text changed,
-# after that came out). (Not found through GitHub's search, which can lag behind by a
-# minute.)
+# after that came out). (Not found through GitHub's search, which can lag
+# behind by a minute.)
 issues="$(gh issue list --state all --limit 1000 \
             --json number,title,author,state,stateReason,createdAt,closedAt,body)"
 ours_issues="$(python3 -c '

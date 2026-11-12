@@ -8,14 +8,14 @@
 # (AGP), Kotlin and its own plugin loader in its project template. The app
 # uses the same minor version of each (e.g. AGP 9.3), and the newest patch
 # release of it (e.g. 9.3.3) when it moves to a new Flutter. This script
-# checks the minor version, and that the patch release is a release and
-# not older than the template's; whether a newer one is out is left to the
-# upgrade. The app also uses the same plugins. Its gradle.properties sets what the
-# template's sets, except org.gradle.jvmargs (the template's larger heap
-# didn't make this app's build any faster, and CI's runner also has to fit
-# the emulator). This script makes a new project from the template in a
-# temporary folder, compares, and fails with what to change. Run it after
-# a Flutter upgrade, before building (a build adds missing flags to
+# checks the minor version, and that the patch release is a release and not
+# older than the template's; whether a newer one is out is left to the
+# upgrade. The app also uses the same plugins. Its gradle.properties sets
+# what the template's sets, except org.gradle.jvmargs (the template's larger
+# heap didn't make this app's build any faster, and CI's runner also has to
+# fit the emulator). This script makes a new project from the template in a
+# temporary folder, compares, and fails with what to change. Run it after a
+# Flutter upgrade, before building (a build adds missing flags to
 # gradle.properties by itself); CI runs it in a job that builds nothing.
 #
 # Also checked: that the Gradle wrapper downloads Gradle from Gradle's own
@@ -93,9 +93,11 @@ def load(path):
         if pending is None and (not line or line[0] in "#!"):
             continue
         line = (pending or "") + line
-        # An odd number of backslashes at the end continues the line.
+        # An odd number of backslashes at the end continues the line (and
+        # if nothing came before it, the next line starts afresh, as in
+        # Java).
         if (len(line) - len(line.rstrip("\\"))) % 2 == 1:
-            pending = line[:-1]
+            pending = line[:-1] or None
             continue
         pending = None
         lines.append(line)
@@ -235,9 +237,7 @@ gradle_of() { sed -n 's|.*/gradle-\(.*\)-[a-z]*\.zip$|\1|p' <<<"$1"; }
 compare Gradle "$(gradle_of "$ours_url")" "$(gradle_of "$theirs_url")" \
   "$WRAPPER (distributionUrl, and distributionSha256Sum to match)"
 
-# The plugins with versions in settings.gradle.kts. The template's must
-# include AGP: if not, it is written in some other way, which this script
-# can't compare (and advice about the other plugins would be wrong).
+# The plugins with versions in settings.gradle.kts.
 # Reads the plugins with versions in settings.gradle.kts $1 into the
 # associative array named $2 (id -> version).
 read_plugins() {
@@ -252,6 +252,9 @@ read_plugins() {
 declare -A ours_plugins=() theirs_plugins=()
 read_plugins "$SETTINGS" ours_plugins
 read_plugins "$template/${SETTINGS#android/}" theirs_plugins
+# The template's must include AGP: if not, it is written in some other way,
+# which this script can't compare (and advice about the other plugins
+# would be wrong).
 if ! has theirs_plugins com.android.application; then
   problem "couldn't read the Android Gradle plugin's (com.android.application) version in Flutter $flutter_version's template (settings.gradle.kts), so the plugins weren't compared; this script needs updating."
   theirs_plugins=() ours_plugins=()

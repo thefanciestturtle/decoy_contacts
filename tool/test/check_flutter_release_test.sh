@@ -78,8 +78,8 @@ readonly TITLE='A newer stable Flutter is out'
 readonly RELEASES=https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json
 
 # One issue as gh lists it: issue NUMBER STATE VERSION [AUTHOR [REASON
-# [CLOSED_AT [CREATED_AT]]]]. VERSION is the release its text names ("-":
-# text that names none); REASON is why it was closed (COMPLETED,
+# [CLOSED_AT [CREATED_AT [TITLE]]]]]. VERSION is the release its text names
+# ("-": text that names none); REASON is why it was closed (COMPLETED,
 # NOT_PLANNED or DUPLICATE), and CLOSED_AT when (by default a day after the
 # release); CREATED_AT when it was opened (by default ten days before).
 issue() {
@@ -93,7 +93,7 @@ print(json.dumps({"number": int(number), "title": title, "state": state,
                   "closedAt": closed_at if state == "CLOSED" else None,
                   "author": {"login": author, "is_bot": author != "someone"}}))
 ' "$1" "$2" "$3" "${4:-app/github-actions}" "${5:-}" \
-    "${6:-2026-11-12T08:00:00Z}" "${7:-2026-11-01T08:00:00Z}" "$TITLE"
+    "${6:-2026-11-12T08:00:00Z}" "${7:-2026-11-01T08:00:00Z}" "${8:-$TITLE}"
 }
 # A list of issues: issues "$(issue ...)" ...
 issues() { local IFS=,; echo "[$*]"; }
@@ -209,6 +209,12 @@ ISSUES="$(issues "$(issue 5 OPEN 3.51.0 someone)")" expect \
   "Opening an issue" "create"
 ISSUES="$(issues "$(issue 5 OPEN 3.51.0 someone)")" expect \
   "and isn't closed either" 3.51.0 3.51.0 0 "Nothing to do." ""
+ISSUES="$(issues "$(issue 7 OPEN 3.51.0 app/github-actions "" "" "" "Another report")")" expect \
+  "an issue of GitHub Actions with another title is left alone" 3.51.0 3.51.0 0 \
+  "Nothing to do." ""
+ISSUES="$(issues "$(issue 7 OPEN 3.50.1)" "$(issue 9 OPEN 3.51.0)")" expect \
+  "two open naming different releases: the newer issue's counts" 3.50.0 3.51.0 0 \
+  "Issue #9 already says so." "close7:duplicate-of-9"
 ISSUES="$(issues "$(issue 7 OPEN 3.51.0 github-actions)")" expect \
   "GitHub Actions also counts without 'app/'" 3.51.0 3.51.0 0 \
   "Closing issue #7" "close7:completed"
@@ -221,6 +227,9 @@ ISSUES="$(issues "$(issue 7 CLOSED 3.50.1 app/github-actions NOT_PLANNED)")" exp
   3.50.0 3.51.0 0 "Opening an issue: Flutter 3.51.0 is out." "create"
 ISSUES="$(issues "$(issue 7 CLOSED - app/github-actions NOT_PLANNED)")" expect \
   "with its text changed by hand, closed after the release came out: put off" \
+  3.50.0 3.51.0 0 "Nothing to do: the issue about Flutter 3.51.0 was closed as not planned." ""
+ISSUES="$(issues "$(issue 7 CLOSED - app/github-actions NOT_PLANNED 2026-11-01T08:00:00Z 2026-11-12T00:00:00Z)")" expect \
+  "with its text changed by hand, opened after the release: put off" \
   3.50.0 3.51.0 0 "Nothing to do: the issue about Flutter 3.51.0 was closed as not planned." ""
 ISSUES="$(issues "$(issue 7 CLOSED - app/github-actions NOT_PLANNED 2026-11-01T08:00:00Z)")" expect \
   "with its text changed by hand, closed before: a new issue" 3.50.0 3.51.0 0 \
@@ -242,6 +251,8 @@ IN_ACTIONS="" expect "(where --dry-run works)" 3.50.0 3.51.0 0 \
 expect "FLUTTER_VERSION in quotes, with a comment" "'3.50.0' # pinned" 3.51.0 0 \
   "CI builds with Flutter 3.50.0;" "create"
 expect "FLUTTER_VERSION that isn't exact is an error" "3.50.x" 3.51.0 1 \
+  "error: no FLUTTER_VERSION with an exact version" ""
+expect "nor is one with a # that isn't a comment (no space before it)" "3.50.0#x" 3.51.0 1 \
   "error: no FLUTTER_VERSION with an exact version" ""
 expect "nor is one without its patch" "3.50" 3.51.0 1 \
   "error: no FLUTTER_VERSION with an exact version" ""

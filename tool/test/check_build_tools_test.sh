@@ -204,6 +204,8 @@ expect "trailing spaces in a value count, as in Java" 1 \
   9.5.1 9.3.3 2.4.21 "${GOOD_PROPERTIES/newDsl=false/newDsl=false  }"
 expect "an empty key is read as Java does" 1 "remove (an empty key)=foo" \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\n=foo'
+expect "a line that is only a backslash ends there, as in Java" 0 "gradle.properties: OK" \
+  9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\n\\\n\n  \\\n#c=d'
 expect "and so is a line that is only =" 1 "remove (an empty key)= (Flutter" \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\n='
 expect "an escaped newline stays in its value" 1 'remove foo=a\nb (Flutter' \
@@ -229,6 +231,8 @@ CURL_EXIT=28 IN_ACTIONS=true expect "(in GitHub Actions, as an annotation)" 0 \
   "::warning::couldn't reach Gradle's site for the checksum"
 HTTP_STATUS=503 expect "Gradle's site failing: only a warning" 0 \
   "warning: Gradle's site answered HTTP 503 for the checksum"
+HTTP_STATUS=410 expect "a checksum Gradle took away fails" 1 \
+  "Gradle's site has no checksum for gradle-9.5.1-all.zip"
 HTTP_STATUS=404 expect "no checksum on Gradle's site fails" 1 \
   "Gradle's site has no checksum for gradle-9.5.1-all.zip (https://services.gradle.org/distributions/gradle-9.5.1-all.zip.sha256): is distributionUrl right?"
 EDIT='sed -i "s|services.gradle.org|mirror.example|" gradle/wrapper/gradle-wrapper.properties' \
