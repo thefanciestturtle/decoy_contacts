@@ -29,7 +29,9 @@ concurrency:
 
 jobs:
   check:
-    if: github.ref_name == github.event.repository.default_branch
+    # (Not the event's default branch: a scheduled run's event may not
+    # name the repository.)
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # The only job here that may write: it opens, edits, comments on and

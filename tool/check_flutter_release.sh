@@ -82,13 +82,14 @@ echo "CI builds with Flutter $ours; the current stable release is $latest."
 
 # The issues this script opened (by GitHub Actions, with its title), as
 # lines "STATE NUMBER VERSION", newest first. VERSION is the release the
-# issue names ("Flutter VERSION is out"), or "-" if its text no longer
-# says. STATE is open, closed, or put-off: closed as not planned while it
-# named the current release (or, with its text changed, after that came
-# out). (Not found through GitHub's search, which can lag behind by a
+# issue names ("Flutter VERSION is out"); if its text no longer says, "-",
+# or "-current" if it was opened after the current release came out (so it
+# was about that one). STATE is open, closed, or put-off: closed as not
+# planned while it named the current release (or, with its text changed,
+# after that came out). (Not found through GitHub's search, which can lag behind by a
 # minute.)
 issues="$(gh issue list --state all --limit 1000 \
-            --json number,title,author,state,stateReason,closedAt,body)"
+            --json number,title,author,state,stateReason,createdAt,closedAt,body)"
 ours_issues="$(python3 -c '
 import json, re, sys
 from datetime import datetime
@@ -103,18 +104,21 @@ for i in sorted(json.load(sys.stdin), key=lambda i: -i["number"]):
         continue
     named = re.match(r"Flutter (\S+) is out", i["body"] or "")
     named = named.group(1) if named else "-"
+    if named == "-" and i.get("createdAt") and when(i["createdAt"]) >= released:
+        named = "-current"
     state = i["state"].lower()
     if state == "closed" and i.get("stateReason") == "NOT_PLANNED" and (
-            named == latest or named == "-" and i.get("closedAt")
+            named in (latest, "-current") or named == "-" and i.get("closedAt")
             and when(i["closedAt"]) >= released):
         state = "put-off"
     print(state, i["number"], named)
 ' "$TITLE" "$latest" "$latest_date" <<<"$issues")"
-open_issues=() open_named=()
+# The open ones, newest first, and the release the newest names.
+open_issues=() newest_named=""
 while read -r state number named; do
   if [[ "$state" == open ]]; then
     open_issues+=("$number")
-    open_named+=("$named")
+    if [[ -z "$newest_named" ]]; then newest_named=$named; fi
   fi
 done <<<"$ours_issues"
 
@@ -155,9 +159,11 @@ done
 # Its text is only rewritten for a newer release (so notes added to it
 # meanwhile are kept until then), and not at all if it no longer names one:
 # someone changed it.
-if [[ "${open_named[0]}" == "$latest" ]]; then
+if [[ "$newest_named" == "$latest" ]]; then
   echo "Issue #$issue already says so."
-elif [[ "${open_named[0]}" == - ]]; then
+elif [[ "$newest_named" == -current ]]; then
+  echo "Issue #$issue's text was changed by hand; it was opened about Flutter $latest."
+elif [[ "$newest_named" == - ]]; then
   # Someone changed its text: that stays, but it is told of a newer
   # release (once: whether it was is in its comments).
   comments="$(gh issue view "$issue" --json comments)"
@@ -171,9 +177,9 @@ sys.exit(0 if any(c["body"].strip() == sys.argv[1]
     echo "Issue #$issue's text was changed by hand; leaving it, but commenting: Flutter $latest is out."
     act gh issue comment "$issue" --body "Flutter $latest is out now."
   fi
-elif ! version_older "${open_named[0]}" "$latest"; then
+elif ! version_older "$newest_named" "$latest"; then
   # (Flutter can withdraw a release.)
-  echo "Issue #$issue names Flutter ${open_named[0]}, newer than the current stable release; leaving it."
+  echo "Issue #$issue names Flutter $newest_named, newer than the current stable release; leaving it."
 else
   # (Editing the text notifies nobody; a comment does. The comment first:
   # if editing then fails, the next run tries again, and only comments

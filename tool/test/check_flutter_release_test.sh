@@ -78,20 +78,22 @@ readonly TITLE='A newer stable Flutter is out'
 readonly RELEASES=https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json
 
 # One issue as gh lists it: issue NUMBER STATE VERSION [AUTHOR [REASON
-# [CLOSED_AT]]]. VERSION is the release its text names ("-": text that
-# names none); REASON is why it was closed (COMPLETED, NOT_PLANNED or
-# DUPLICATE), and CLOSED_AT when (by default a day after the release).
+# [CLOSED_AT [CREATED_AT]]]]. VERSION is the release its text names ("-":
+# text that names none); REASON is why it was closed (COMPLETED,
+# NOT_PLANNED or DUPLICATE), and CLOSED_AT when (by default a day after the
+# release); CREATED_AT when it was opened (by default ten days before).
 issue() {
   python3 -c '
 import json, sys
-number, state, version, author, reason, closed_at, title = sys.argv[1:]
+number, state, version, author, reason, closed_at, created_at, title = sys.argv[1:]
 body = "Notes first" if version == "-" else f"Flutter {version} is out; ..."
 print(json.dumps({"number": int(number), "title": title, "state": state,
                   "stateReason": reason or None, "body": body,
+                  "createdAt": created_at,
                   "closedAt": closed_at if state == "CLOSED" else None,
                   "author": {"login": author, "is_bot": author != "someone"}}))
 ' "$1" "$2" "$3" "${4:-app/github-actions}" "${5:-}" \
-    "${6:-2026-11-12T08:00:00Z}" "$TITLE"
+    "${6:-2026-11-12T08:00:00Z}" "${7:-2026-11-01T08:00:00Z}" "$TITLE"
 }
 # A list of issues: issues "$(issue ...)" ...
 issues() { local IFS=,; echo "[$*]"; }
@@ -185,6 +187,9 @@ ISSUES="$(issues "$(issue 7 OPEN -)")" \
   ISSUE_COMMENTS='["A note", "Flutter 3.51.0 is out now.\n"]' expect \
   "only once" 3.50.0 3.51.0 0 \
   "Issue #7's text was changed by hand; it was told of Flutter 3.51.0 already." ""
+ISSUES="$(issues "$(issue 7 OPEN - app/github-actions "" "" 2026-11-12T08:00:00Z)")" expect \
+  "and not at all if it was opened about this release" 3.50.0 3.51.0 0 \
+  "Issue #7's text was changed by hand; it was opened about Flutter 3.51.0." ""
 ISSUES="$(issues "$(issue 7 OPEN 3.51.0)")" expect \
   "caught up: the issue is closed as completed" 3.51.0 3.51.0 0 \
   "Closing issue #7: CI now builds with Flutter 3.51.0." "close7:completed"

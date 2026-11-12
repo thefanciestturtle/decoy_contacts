@@ -195,8 +195,9 @@ has() {
   [[ -n "${has_array[$2]+set}" ]]
 }
 
-flutter_version="$(flutter --version --machine 2>/dev/null |
-  sed -n 's/^ *"frameworkVersion": *"\([^"]*\)".*/\1/p' || true)"
+flutter_version="$(flutter --version --machine 2>/dev/null | python3 -c '
+import json, sys
+print(json.load(sys.stdin)["frameworkVersion"])' 2>/dev/null || true)"
 [[ -n "$flutter_version" ]] ||
   { echo "error: couldn't get the version of flutter" >&2; exit 1; }
 if ! ci_version="$(ci_flutter_version)"; then
@@ -237,15 +238,20 @@ compare Gradle "$(gradle_of "$ours_url")" "$(gradle_of "$theirs_url")" \
 # The plugins with versions in settings.gradle.kts. The template's must
 # include AGP: if not, it is written in some other way, which this script
 # can't compare (and advice about the other plugins would be wrong).
+# Reads the plugins with versions in settings.gradle.kts $1 into the
+# associative array named $2 (id -> version).
+read_plugins() {
+  local -n into=$2
+  local list id version
+  list="$(plugins "$1")"
+  while read -r id version; do
+    # shellcheck disable=SC2034 # (into is the caller's array)
+    if [[ -n "$id" ]]; then into["$id"]=$version; fi
+  done <<<"$list"
+}
 declare -A ours_plugins=() theirs_plugins=()
-ours_list="$(plugins "$SETTINGS")"
-theirs_list="$(plugins "$template/${SETTINGS#android/}")"
-while read -r id version; do
-  if [[ -n "$id" ]]; then ours_plugins["$id"]=$version; fi
-done <<<"$ours_list"
-while read -r id version; do
-  if [[ -n "$id" ]]; then theirs_plugins["$id"]=$version; fi
-done <<<"$theirs_list"
+read_plugins "$SETTINGS" ours_plugins
+read_plugins "$template/${SETTINGS#android/}" theirs_plugins
 if ! has theirs_plugins com.android.application; then
   problem "couldn't read the Android Gradle plugin's (com.android.application) version in Flutter $flutter_version's template (settings.gradle.kts), so the plugins weren't compared; this script needs updating."
   theirs_plugins=() ours_plugins=()
@@ -268,6 +274,16 @@ while IFS= read -r id; do
     problem "$name: Flutter $flutter_version's template uses it (version ${theirs_plugins[$id]}); add it to $SETTINGS as the template does, and see whether android/app/build.gradle.kts needs it too."
   fi
 done < <(printf '%s\n' "${!ours_plugins[@]}" "${!theirs_plugins[@]}" | sort -u)
+# A plugin the template uses in a form this script can't read, and the app
+# doesn't have: not seen above.
+if ((${#theirs_plugins[@]})); then
+  while IFS= read -r id; do
+    if [[ -n "$id" ]] && ! has theirs_plugins "$id" && ! has ours_plugins "$id"; then
+      problem "$(plugin_name "$id"): Flutter $flutter_version's template uses it, but this script can't read how; this script needs updating."
+    fi
+  done < <(grep -v '^[[:space:]]*//' "$template/${SETTINGS#android/}" |
+             grep -o 'id[[:space:]]*([[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"/\1/' | sort -u || true)
+fi
 
 # gradle.properties.
 props_problems="$(props compare "$PROPERTIES" "$template/${PROPERTIES#android/}" \

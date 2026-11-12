@@ -22,7 +22,7 @@ mkdir "$tmp/bin" "$tmp/bin_no_flutter"
 cat >"$tmp/bin/flutter" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
-  --version) printf '{\n  "frameworkVersion": "9.99.0",\n  "channel": "stable"\n}\n' ;;
+  --version) echo '{"frameworkVersion":"9.99.0","channel":"stable"}' ;;
   create)
     echo "$*" >>"$FLUTTER_LOG"
     [[ "${CREATE_FAILS:-}" != 1 ]] || { echo "create went wrong" >&2; exit 1; }
@@ -270,6 +270,11 @@ expect "an older plugin loader than the template's fails" 1 \
 write_template 9.5.0 9.4.0-rc01
 expect "a pre-release in the template fails" 1 \
   "Flutter 9.99.0's template has Android Gradle plugin (com.android.application) '9.4.0-rc01', which isn't a release version this script can compare."
+write_template
+printf '%s\n' 'plugins {' '    id("org.example.new").version("1.2.3")' '}' \
+  >>"$tmp/template/android/settings.gradle.kts"
+expect "a plugin the template adds in a form the check can't read fails" 1 \
+  "org.example.new: Flutter 9.99.0's template uses it, but this script can't read how; this script needs updating."
 write_template
 printf '%s\n' 'plugins {' '    id("org.example.new") version "1.2.3"' '}' \
   >>"$tmp/template/android/settings.gradle.kts"
