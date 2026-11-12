@@ -18,11 +18,11 @@ import 'package:fake_contacts/fake_contacts_core.dart';
 import 'package:fake_contacts/flutter_contacts_gateway.dart';
 import 'package:fake_contacts/main.dart';
 import 'package:fake_contacts/settings_store.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../test/focus_helpers.dart';

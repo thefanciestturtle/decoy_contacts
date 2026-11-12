@@ -1,8 +1,8 @@
 // The app's look: Material 3 colours worked out from one seed colour, in a
 // light and a dark version. The app follows the system's dark theme setting.
 
-import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// The theme for [brightness]: the colours from the seed, and outlined text
 /// fields (the name lists, several lines long, keep a clear edge).

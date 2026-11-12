@@ -16,10 +16,10 @@ import 'package:fake_contacts/home_page.dart' show kSaveDelay;
 import 'package:fake_contacts/input_checks.dart' show phoneTemplateWarning;
 import 'package:fake_contacts/main.dart';
 import 'package:fake_contacts/settings_store.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'failing_ledger_store.dart';
