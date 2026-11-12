@@ -12,15 +12,22 @@ readonly SCRIPT="$PWD/tool/check_flutter_release.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# Stand-ins. `curl` prints a list of releases whose current stable one is
-# $LATEST, after an older stable hotfix and a beta (it fails if $LATEST is
-# empty). `gh` writes each call to $GH_LOG (the --body of a new issue also
-# to $GH_LOG.body), lists $ISSUES (JSON) as the issues, shows
-# $ISSUE_BODY as an issue's text, and fails at that with VIEW_FAILS=1.
+# Stand-ins. `curl` writes the URL it was given to $CURL_LOG and prints a
+# list of releases whose current stable one is $LATEST, after an older
+# stable hotfix and a beta; it fails if $LATEST is empty, and gives a list
+# without the current release with BAD_LIST=1. `gh` writes each call to
+# $GH_LOG on one line (the --body of a new issue also to $GH_LOG.body),
+# and lists $ISSUES (JSON) as the issues, or fails at that with
+# LIST_FAILS=1.
 mkdir "$tmp/bin"
 cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
+echo "${*: -1}" >>"$CURL_LOG"
 [[ -n "${LATEST:-}" ]] || exit 22
+if [[ "${BAD_LIST:-}" == 1 ]]; then
+  echo '{"current_release": {"stable": "zzz"}, "releases": []}'
+  exit 0
+fi
 cat <<JSON
 {"base_url": "https://example.invalid",
  "current_release": {"beta": "bbb", "stable": "sss"},
@@ -33,12 +40,12 @@ JSON
 EOF
 cat >"$tmp/bin/gh" <<'EOF'
 #!/usr/bin/env bash
-echo "gh $1 $2 $3" >>"$GH_LOG"
+all="$*"
+echo "gh ${all//$'\n'/ }" >>"$GH_LOG"
 case "$1 $2" in
-  "issue list") echo "${ISSUES:-[]}" ;;
-  "issue view")
-    [[ "${VIEW_FAILS:-}" != 1 ]] || { echo "HTTP 502" >&2; exit 1; }
-    python3 -c 'import json, os; print(json.dumps({"body": os.environ["ISSUE_BODY"]}))' ;;
+  "issue list")
+    [[ "${LIST_FAILS:-}" != 1 ]] || { echo "HTTP 502" >&2; exit 1; }
+    echo "${ISSUES:-[]}" ;;
   "issue create")
     while (($#)); do
       if [[ "$1" == --body ]]; then printf '%s' "$2" >"$GH_LOG.body"; fi
@@ -49,17 +56,18 @@ EOF
 chmod +x "$tmp/bin/"*
 
 readonly TITLE='A newer stable Flutter is out'
+readonly RELEASES=https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json
 
-# One issue as gh lists it: issue NUMBER STATE VERSION [AUTHOR [REASON]],
-# where VERSION is the release its text names and REASON why it was closed
-# (COMPLETED, NOT_PLANNED or DUPLICATE).
+# One issue as gh lists it: issue NUMBER STATE VERSION [AUTHOR [REASON]].
+# VERSION is the release its text names ("-": text that names none);
+# REASON is why it was closed (COMPLETED, NOT_PLANNED or DUPLICATE).
 issue() {
   python3 -c '
 import json, sys
 number, state, version, author, reason, title = sys.argv[1:]
+body = "Notes first" if version == "-" else f"Flutter {version} is out; ..."
 print(json.dumps({"number": int(number), "title": title, "state": state,
-                  "stateReason": reason or None,
-                  "body": f"Flutter {version} is out; ...",
+                  "stateReason": reason or None, "body": body,
                   "author": {"login": author, "is_bot": author != "someone"}}))
 ' "$1" "$2" "$3" "${4:-app/github-actions}" "${5:-}" "$TITLE"
 }
@@ -70,13 +78,12 @@ failures=0
 case_number=0
 
 # expect NAME OURS LATEST STATUS TEXT CALLS [ARGS...] : runs the script with
-# FLUTTER_VERSION OURS (none if empty) and Flutter's stable release LATEST,
-# and wants exit STATUS, TEXT in its output, and exactly the gh calls that
-# change something in CALLS, in order, each with its issue number (e.g.
-# "create", "edit7 comment7", "" for none). OURS is written as given
-# after "FLUTTER_VERSION: ". It runs as in GitHub Actions unless
-# IN_ACTIONS is empty. The environment can set ISSUES, ISSUE_BODY and
-# VIEW_FAILS.
+# FLUTTER_VERSION OURS (written as given; none if empty) and Flutter's
+# stable release LATEST, and wants exit STATUS, TEXT in its output, and
+# exactly the gh calls that change something in CALLS, in order: "create",
+# "editN", "commentN", "closeN:REASON" ("" for none). It runs as in GitHub
+# Actions unless IN_ACTIONS is empty. The environment can also set ISSUES,
+# LIST_FAILS and BAD_LIST.
 expect() {
   local name=$1 ours=$2 latest=$3 want_status=$4 want_text=$5 want_calls=$6
   shift 6
@@ -91,10 +98,14 @@ expect() {
   local out status=0 calls
   : >"$proj/gh.log"
   out="$(PATH="$tmp/bin:/usr/bin:/bin" LATEST="$latest" GH_LOG="$proj/gh.log" \
-    ISSUES="${ISSUES:-[]}" ISSUE_BODY="${ISSUE_BODY:-}" VIEW_FAILS="${VIEW_FAILS:-}" \
+    CURL_LOG="$proj/curl.log" ISSUES="${ISSUES:-[]}" \
+    LIST_FAILS="${LIST_FAILS:-}" BAD_LIST="${BAD_LIST:-}" \
     GITHUB_ACTIONS="${IN_ACTIONS-true}" \
     "$proj/tool/check_flutter_release.sh" "$@" 2>&1)" || status=$?
-  calls="$(sed -n 's/^gh issue \(edit\|comment\|close\) \([0-9]*\).*/\1\2/p; s/^gh issue create .*/create/p' \
+  calls="$(sed -n \
+    -e 's/^gh issue create .*/create/p' \
+    -e 's/^gh issue \(edit\|comment\) \([0-9]*\) .*/\1\2/p' \
+    -e 's/^gh issue close \([0-9]*\) --reason \([a-z]*\) .*/close\1:\2/p' \
     "$proj/gh.log" | tr '\n' ' ' | sed 's/ $//')"
   if [[ "$status" == "$want_status" && "$out" == *"$want_text"* &&
         "$calls" == "$want_calls" ]]; then
@@ -107,39 +118,42 @@ expect() {
 }
 
 expect "up to date: nothing to do" 3.50.0 3.50.0 0 "Nothing to do." ""
+[[ "$(cat "$tmp/case$case_number/curl.log")" == "$RELEASES" ]] ||
+  { echo "FAIL: the list's URL: $(cat "$tmp/case$case_number/curl.log")"; failures=$((failures + 1)); }
 expect "newer than the stable release: nothing to do" 3.51.0 3.50.0 0 \
   "Nothing to do." ""
 expect "the current stable release is found by its hash" 3.50.0 3.51.0 0 \
   "the current stable release is 3.51.0." "create"
 body="$(cat "$tmp/case$case_number/gh.log.body" 2>/dev/null || true)"
-[[ "$body" == "Flutter 3.51.0 is out; CI builds with Flutter 3.50.0 (\`FLUTTER_VERSION\` in \`.github/workflows/dart.yml\`)."* ]] ||
+[[ "$body" == "Flutter 3.51.0 is out; CI builds with Flutter 3.50.0 (\`FLUTTER_VERSION\` in \`.github/workflows/dart.yml\`)."*"close it as not planned." ]] ||
   { echo "FAIL: the issue's text: $body"; failures=$((failures + 1)); }
-expect "Flutter's list can't be read: an error" 3.50.0 "" 22 "" ""
+expect "Flutter's list can't be downloaded: an error" 3.50.0 "" 22 "" ""
+BAD_LIST=1 expect "Flutter's list without the current release: an error" \
+  3.50.0 3.51.0 1 "error: unexpected list of Flutter releases (StopIteration" ""
+LIST_FAILS=1 expect "the issues can't be listed: an error" 3.50.0 3.51.0 1 \
+  "HTTP 502" ""
 
-ISSUES="$(issues "$(issue 7 OPEN 3.51.0)")" ISSUE_BODY="$body" expect \
-  "the issue already says so: nothing changes" 3.50.0 3.51.0 0 \
+ISSUES="$(issues "$(issue 7 OPEN 3.51.0)")" expect \
+  "the issue already names the release: nothing changes" 3.50.0 3.51.0 0 \
   "Issue #7 already says so." ""
-ISSUES="$(issues "$(issue 7 OPEN 3.51.0)")" ISSUE_BODY="${body//$'\n'/$'\r\n'}" expect \
-  "the same text with Windows line ends: nothing changes" 3.50.0 3.51.0 0 \
-  "Issue #7 already says so." ""
-ISSUES="$(issues "$(issue 7 OPEN 3.50.1)")" ISSUE_BODY="${body//3.51.0/3.50.1}" expect \
+ISSUES="$(issues "$(issue 7 OPEN 3.51.0)")" expect \
+  "nor when FLUTTER_VERSION moved but isn't there yet (notes are kept)" \
+  3.50.1 3.51.0 0 "Issue #7 already says so." ""
+ISSUES="$(issues "$(issue 7 OPEN 3.50.1)")" expect \
   "a still newer release: the text is updated, with a comment" 3.50.0 3.51.0 0 \
   "Updating issue #7: Flutter 3.51.0 is out." "edit7 comment7"
-ISSUES="$(issues "$(issue 7 OPEN 3.51.0)")" ISSUE_BODY="$body" expect \
-  "only the rest of the text changed: updated without a comment" 3.50.1 3.51.0 0 \
-  "Updating the text of issue #7 (still about Flutter 3.51.0)." "edit7"
-ISSUES="$(issues "$(issue 7 OPEN 3.51.0)")" VIEW_FAILS=1 expect \
-  "the issue can't be read: an error, nothing changes" 3.50.0 3.51.0 1 \
-  "HTTP 502" ""
+ISSUES="$(issues "$(issue 7 OPEN -)")" expect \
+  "text that names no release is put right, with a comment" 3.50.0 3.51.0 0 \
+  "Updating issue #7: Flutter 3.51.0 is out." "edit7 comment7"
 ISSUES="$(issues "$(issue 7 OPEN 3.51.0)")" expect \
-  "caught up: the issue is closed" 3.51.0 3.51.0 0 \
-  "Closing issue #7: CI now builds with Flutter 3.51.0." "close7"
+  "caught up: the issue is closed as completed" 3.51.0 3.51.0 0 \
+  "Closing issue #7: CI now builds with Flutter 3.51.0." "close7:completed"
 ISSUES="$(issues "$(issue 7 OPEN 3.50.1)" "$(issue 9 OPEN 3.51.0)")" expect \
   "caught up with two open: both are closed" 3.51.0 3.51.0 0 \
-  "Closing issue #7" "close9 close7"
-ISSUES="$(issues "$(issue 7 OPEN 3.51.0)" "$(issue 9 OPEN 3.51.0)")" ISSUE_BODY="$body" expect \
-  "two open: the newer one is kept, the other closed" 3.50.0 3.51.0 0 \
-  "Closing issue #7: #9 says the same." "close7"
+  "Closing issue #7" "close9:completed close7:completed"
+ISSUES="$(issues "$(issue 7 OPEN 3.51.0)" "$(issue 9 OPEN 3.51.0)")" expect \
+  "two open: the newer one is kept, the other closed as a duplicate" \
+  3.50.0 3.51.0 0 "Closing issue #7: #9 says the same." "close7:duplicate"
 
 ISSUES="$(issues "$(issue 5 OPEN 3.51.0 someone)")" expect \
   "someone else's issue with the same title is left alone" 3.50.0 3.51.0 0 \
@@ -148,7 +162,7 @@ ISSUES="$(issues "$(issue 5 OPEN 3.51.0 someone)")" expect \
   "and isn't closed either" 3.51.0 3.51.0 0 "Nothing to do." ""
 ISSUES="$(issues "$(issue 7 OPEN 3.51.0 github-actions)")" expect \
   "GitHub Actions also counts without 'app/'" 3.51.0 3.51.0 0 \
-  "Closing issue #7" "close7"
+  "Closing issue #7" "close7:completed"
 
 ISSUES="$(issues "$(issue 7 CLOSED 3.51.0 app/github-actions NOT_PLANNED)")" expect \
   "closed as not planned while it named this release: stays closed" 3.50.0 3.51.0 0 \
@@ -164,7 +178,7 @@ expect "--dry-run changes nothing" 3.50.0 3.51.0 0 \
   "(dry run) would run: gh issue create --title $TITLE" "" --dry-run
 ISSUES="$(issues "$(issue 7 OPEN 3.51.0)")" expect \
   "--dry-run doesn't close either" 3.51.0 3.51.0 0 \
-  "(dry run) would run: gh issue close 7" "" --dry-run
+  "(dry run) would run: gh issue close 7 --reason completed" "" --dry-run
 expect "an unknown argument is refused" 3.50.0 3.51.0 2 "usage:" "" --dryrun
 IN_ACTIONS="" expect "outside GitHub Actions, only --dry-run" 3.50.0 3.51.0 2 \
   "error: outside GitHub Actions, run this with --dry-run" ""

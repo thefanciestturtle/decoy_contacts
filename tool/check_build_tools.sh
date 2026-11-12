@@ -21,9 +21,16 @@
 # there (this needs the internet; if the site can't be reached, it only
 # warns).
 #
+# Needs bash 4.3 or newer.
+#
 # Not compared: the app's own Java level, and the SDK versions, which come
 # from Flutter itself (flutter.compileSdkVersion etc.).
 set -euo pipefail
+
+if ((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 403)); then
+  echo "error: this needs bash 4.3 or newer (this is $BASH_VERSION)" >&2
+  exit 1
+fi
 
 cd "$(dirname "$0")/.."
 
@@ -52,7 +59,8 @@ warning() {
 # The properties of a .properties file, one "key<SEP>value" line each, read
 # as java.util.Properties (and so Gradle) reads them: # and ! comments, "=",
 # ":" or spaces between key and value, lines continued with \, escapes, any
-# line ends. Values keep their trailing spaces, as in Java.
+# line ends. Values keep their trailing spaces, as in Java. (A newline or
+# carriage return in a key or value is printed as \n or \r.)
 properties() {
   python3 - "$1" <<'EOF'
 import re, sys
@@ -87,7 +95,9 @@ for line in lines:
     key, rest = line[:i], line[i:].lstrip(" \t\f")
     if rest[:1] in ("=", ":"):
         rest = rest[1:].lstrip(" \t\f")
-    print(f"{unescape(key)}\x1f{unescape(rest)}")
+    def one_line(s):
+        return s.replace("\n", "\\n").replace("\r", "\\r")
+    print(f"{one_line(unescape(key))}\x1f{one_line(unescape(rest))}")
 EOF
 }
 
@@ -164,7 +174,8 @@ flutter_version="$(flutter --version --machine 2>/dev/null |
   sed -n 's/^ *"frameworkVersion": *"\([^"]*\)".*/\1/p' || true)"
 [[ -n "$flutter_version" ]] ||
   { echo "error: couldn't get the version of flutter" >&2; exit 1; }
-ci_version="$(sed -n 's/^[[:space:]]*FLUTTER_VERSION:[[:space:]]*["'\'']\{0,1\}\([0-9.]*\).*/\1/p' \
+# (As tool/check_flutter_release.sh reads it.)
+ci_version="$(sed -n 's/^[[:space:]]*FLUTTER_VERSION:[[:space:]]*["'\'']\{0,1\}\([0-9][0-9.]*\)["'\'']\{0,1\}[[:space:]]*\(#.*\)\{0,1\}$/\1/p' \
   .github/workflows/dart.yml 2>/dev/null || true)"
 if [[ -n "$ci_version" && "$ci_version" != "$flutter_version" ]]; then
   warning "this is Flutter $flutter_version, CI builds with $ci_version (FLUTTER_VERSION in .github/workflows/dart.yml): comparing with $flutter_version's template."
@@ -252,14 +263,22 @@ fi
 
 # The Gradle distribution: from Gradle's site, with its published checksum.
 distribution="${ours_url##*/}"
+sum_url="$GRADLE_DISTRIBUTIONS$distribution.sha256"
 ours_sum="${ours_wrapper[distributionSha256Sum]:-}"
+published="" curl_status=0
+if [[ "$ours_url" == "$GRADLE_DISTRIBUTIONS"gradle-*.zip && -n "$ours_sum" ]]; then
+  published="$(curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 "$sum_url")" ||
+    curl_status=$?
+fi
 if [[ "$ours_url" != "$GRADLE_DISTRIBUTIONS"gradle-*.zip ]]; then
   problem "$WRAPPER: distributionUrl is '$ours_url', not a Gradle distribution on Gradle's own site ($GRADLE_DISTRIBUTIONS)."
 elif [[ -z "$ours_sum" ]]; then
-  problem "$WRAPPER has no distributionSha256Sum: add Gradle's checksum of the distribution ($GRADLE_DISTRIBUTIONS$distribution.sha256)."
-elif ! published="$(curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 \
-                      "$GRADLE_DISTRIBUTIONS$distribution.sha256")"; then
-  warning "couldn't download Gradle's checksum ($GRADLE_DISTRIBUTIONS$distribution.sha256), so distributionSha256Sum wasn't compared with it."
+  problem "$WRAPPER has no distributionSha256Sum: add Gradle's checksum of the distribution ($sum_url)."
+elif ((curl_status == 22)); then
+  # The site answered with an error, e.g. 404: there is no such checksum.
+  problem "Gradle's site has no checksum for $distribution ($sum_url): is distributionUrl right?"
+elif ((curl_status != 0)); then
+  warning "couldn't reach Gradle's site for the checksum ($sum_url; curl exit $curl_status), so distributionSha256Sum wasn't compared with it."
 elif [[ "$ours_sum" != "$published" ]]; then
   problem "$WRAPPER: distributionSha256Sum is $ours_sum, but Gradle publishes $published for $distribution."
 else

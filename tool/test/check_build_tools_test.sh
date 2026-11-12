@@ -12,15 +12,17 @@ readonly SCRIPT="$PWD/tool/check_build_tools.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# Stand-ins. `flutter create` copies $TEMPLATE (fails with
-# CREATE_FAILS=1); `curl` prints $PUBLISHED_SUM (fails if it is empty)
-# and writes the URL it was given to $CURL_LOG.
+# Stand-ins. `flutter create` writes its arguments to $FLUTTER_LOG and
+# copies $TEMPLATE (fails with CREATE_FAILS=1). `curl` writes the URL it
+# was given to $CURL_LOG and prints $PUBLISHED_SUM, or exits with
+# $CURL_EXIT if set.
 mkdir "$tmp/bin" "$tmp/bin_no_flutter"
 cat >"$tmp/bin/flutter" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
   --version) printf '{\n  "frameworkVersion": "9.99.0",\n  "channel": "stable"\n}\n' ;;
   create)
+    echo "$*" >>"$FLUTTER_LOG"
     [[ "${CREATE_FAILS:-}" != 1 ]] || { echo "create went wrong" >&2; exit 1; }
     mkdir -p "${*: -1}" && cp -R "$TEMPLATE/." "${*: -1}/" ;;
   *) exit 64 ;;
@@ -29,7 +31,7 @@ EOF
 cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 echo "${*: -1}" >>"$CURL_LOG"
-[[ -n "${PUBLISHED_SUM:-}" ]] || exit 22
+if [[ -n "${CURL_EXIT:-}" ]]; then exit "$CURL_EXIT"; fi
 echo "$PUBLISHED_SUM"
 EOF
 cp "$tmp/bin/curl" "$tmp/bin_no_flutter/curl"
@@ -90,8 +92,9 @@ case_number=0
 # expect NAME STATUS TEXT [GRADLE AGP KOTLIN PROPERTIES SUM LOADER] : runs
 # the check on an app made with those (by default the good ones) and the
 # template in $tmp/template, and wants exit STATUS and TEXT in the output.
-# The environment can set PATH_TO_USE, PUBLISHED_SUM, CREATE_FAILS, and
-# EDIT, a command run in the app's android folder before the check.
+# The environment can set PATH_TO_USE, PUBLISHED_SUM, CURL_EXIT,
+# CREATE_FAILS, IN_ACTIONS (to run as in GitHub Actions), and EDIT, a
+# command run in the app's android folder before the check.
 expect() {
   local name=$1 want_status=$2 want_text=$3
   local proj="$tmp/case$((++case_number))"
@@ -102,8 +105,10 @@ expect() {
   if [[ -n "${EDIT:-}" ]]; then (cd "$proj/android" && eval "$EDIT"); fi
   local out status=0
   out="$(PATH="${PATH_TO_USE:-$tmp/bin:/usr/bin:/bin}" TEMPLATE="$tmp/template" \
-    PUBLISHED_SUM="${PUBLISHED_SUM-abc123}" CREATE_FAILS="${CREATE_FAILS:-}" \
-    CURL_LOG="$proj/curl.log" "$proj/tool/check_build_tools.sh" 2>&1)" || status=$?
+    PUBLISHED_SUM="${PUBLISHED_SUM-abc123}" CURL_EXIT="${CURL_EXIT:-}" \
+    CREATE_FAILS="${CREATE_FAILS:-}" GITHUB_ACTIONS="${IN_ACTIONS:-}" \
+    CURL_LOG="$proj/curl.log" FLUTTER_LOG="$proj/flutter.log" \
+    "$proj/tool/check_build_tools.sh" 2>&1)" || status=$?
   if [[ "$status" == "$want_status" && "$out" == *"$want_text"* ]]; then
     echo "ok: $name"
   else
@@ -119,6 +124,9 @@ expect "matching tools pass" 0 "The build tools match Flutter 9.99.0"
 [[ "$(cat "$tmp/case$case_number/curl.log")" == \
    https://services.gradle.org/distributions/gradle-9.5.1-all.zip.sha256 ]] ||
   { echo "FAIL: the checksum's URL: $(cat "$tmp/case$case_number/curl.log")"; failures=$((failures + 1)); }
+[[ "$(cat "$tmp/case$case_number/flutter.log")" == \
+   "create --platforms=android --no-pub --project-name template_check /"*/template_check ]] ||
+  { echo "FAIL: flutter create's arguments: $(cat "$tmp/case$case_number/flutter.log")"; failures=$((failures + 1)); }
 expect "the same versions as the template pass" 0 "Kotlin (org.jetbrains.kotlin.android) 2.4.20: OK" \
   9.5.0 9.3.1 2.4.20
 expect "a newer patch release passes" 0 "Kotlin (org.jetbrains.kotlin.android) 2.4.99: OK" 9.5.1 9.3.3 2.4.99
@@ -172,6 +180,8 @@ expect "trailing spaces in a value count, as in Java" 1 \
   9.5.1 9.3.3 2.4.21 "${GOOD_PROPERTIES/newDsl=false/newDsl=false  }"
 expect "an empty key is read as Java does" 1 "remove (an empty key)=foo" \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\n=foo'
+expect "an escaped newline stays in its value" 1 'remove foo=a\nb (Flutter' \
+  9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\nfoo=a\\nb'
 expect "escapes are read as Java does" 1 'remove a:b=\u0041 and B' \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\na\\:b=\\\\u0041 and \\u0042'
 
@@ -179,8 +189,12 @@ PUBLISHED_SUM=def456 expect "a wrong checksum fails" 1 \
   "distributionSha256Sum is abc123, but Gradle publishes def456 for gradle-9.5.1-all.zip"
 expect "no checksum fails" 1 "has no distributionSha256Sum" \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES" ""
-PUBLISHED_SUM="" expect "a checksum that can't be downloaded only warns" 0 \
-  "warning: couldn't download Gradle's checksum (https://services.gradle.org/distributions/gradle-9.5.1-all.zip.sha256), so distributionSha256Sum wasn't compared with it."
+CURL_EXIT=6 expect "Gradle's site out of reach: only a warning" 0 \
+  "warning: couldn't reach Gradle's site for the checksum (https://services.gradle.org/distributions/gradle-9.5.1-all.zip.sha256; curl exit 6), so distributionSha256Sum wasn't compared with it."
+CURL_EXIT=28 IN_ACTIONS=true expect "(in GitHub Actions, as an annotation)" 0 \
+  "::warning::couldn't reach Gradle's site for the checksum"
+CURL_EXIT=22 expect "no checksum on Gradle's site fails" 1 \
+  "Gradle's site has no checksum for gradle-9.5.1-all.zip (https://services.gradle.org/distributions/gradle-9.5.1-all.zip.sha256): is distributionUrl right?"
 EDIT='sed -i "s|services.gradle.org|mirror.example|" gradle/wrapper/gradle-wrapper.properties' \
   expect "Gradle from another site fails" 1 \
   "distributionUrl is 'https://mirror.example/distributions/gradle-9.5.1-all.zip', not a Gradle distribution on Gradle's own site"

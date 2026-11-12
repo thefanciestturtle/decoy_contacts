@@ -8,8 +8,9 @@
 # current stable release, from Flutter's list of releases. If that is newer,
 # it opens an issue saying so. If a still newer one comes out while it is
 # open, it updates the issue and comments on it (one issue, however many
-# runs). Once FLUTTER_VERSION has caught up, it closes it. To put the
-# upgrade off until the next release, close the issue as "not planned".
+# runs); the issue's text is the script's, notes go in comments. Once
+# FLUTTER_VERSION has caught up, it closes it. To put the upgrade off until
+# a newer release than the one the issue names, close it as "not planned".
 #
 # It only touches issues opened by GitHub Actions: it runs in the weekly
 # workflow (.github/workflows/flutter_release.yml), with that workflow's
@@ -54,18 +55,21 @@ ours="$(sed -n 's/^[[:space:]]*FLUTTER_VERSION:[[:space:]]*["'\'']\{0,1\}\([0-9]
 releases="$(curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 "$RELEASES")"
 latest="$(python3 -c '
 import json, sys
-releases = json.load(sys.stdin)
-current = releases["current_release"]["stable"]
-print(next(r["version"] for r in releases["releases"]
-           if r["hash"] == current and r["channel"] == "stable"))
+try:
+    releases = json.load(sys.stdin)
+    current = releases["current_release"]["stable"]
+    print(next(r["version"] for r in releases["releases"]
+               if r["hash"] == current and r["channel"] == "stable"))
+except (ValueError, KeyError, TypeError, StopIteration) as e:
+    sys.exit(f"error: unexpected list of Flutter releases ({type(e).__name__}: {e})")
 ' <<<"$releases")"
 echo "CI builds with Flutter $ours; the current stable release is $latest."
 
 # The issues this script opened (by GitHub Actions, with its title), as
 # lines "STATE NUMBER VERSION", newest first. STATE is open, closed or
 # put-off (closed as not planned); VERSION is the release the issue names
-# ("Flutter VERSION is out"). (Not found through GitHub's search, which can
-# lag behind by a minute.)
+# ("Flutter VERSION is out"), or "-" if its text no longer says. (Not found
+# through GitHub's search, which can lag behind by a minute.)
 issues="$(gh issue list --state all --limit 1000 \
             --json number,title,author,state,stateReason,body)"
 ours_issues="$(python3 -c '
@@ -81,9 +85,12 @@ for i in sorted(json.load(sys.stdin), key=lambda i: -i["number"]):
         state = "put-off"
     print(state, i["number"], named.group(1) if named else "-")
 ' "$TITLE" <<<"$issues")"
-open_issues=()
-while read -r state number _; do
-  [[ "$state" == open ]] && open_issues+=("$number")
+open_issues=() open_named=()
+while read -r state number named; do
+  if [[ "$state" == open ]]; then
+    open_issues+=("$number")
+    open_named+=("$named")
+  fi
 done <<<"$ours_issues"
 
 if [[ "$(printf '%s\n%s\n' "$ours" "$latest" | sort -V | tail -n 1)" == "$ours" ]]; then
@@ -102,7 +109,7 @@ body="Flutter $latest is out; CI builds with Flutter $ours (\`FLUTTER_VERSION\` 
 
 To move to it: change \`FLUTTER_VERSION\` and the minimums in \`pubspec.yaml\`, and line the build tools up with it (\`tool/check_build_tools.sh\` says what to change). What's new: https://docs.flutter.dev/release/release-notes
 
-This issue is kept by \`tool/check_flutter_release.sh\`, which runs weekly, and is closed once \`FLUTTER_VERSION\` has caught up. To put the upgrade off until the next release, close it as not planned."
+This issue is kept by \`tool/check_flutter_release.sh\`, which runs weekly: it rewrites this text when a newer release comes out (notes go in comments), and closes the issue once \`FLUTTER_VERSION\` has caught up. To put the upgrade off until a newer release than this one, close it as not planned."
 
 if ((${#open_issues[@]} == 0)); then
   if awk -v v="$latest" '$1 == "put-off" && $3 == v { found = 1 } END { exit !found }' \
@@ -121,20 +128,13 @@ for number in "${open_issues[@]:1}"; do
   echo "Closing issue #$number: #$issue says the same."
   act gh issue close "$number" --reason duplicate --comment "Closed: #$issue says the same."
 done
-current_body="$(gh issue view "$issue" --json body)"
-current_body="$(python3 -c '
-import json, sys
-print(json.load(sys.stdin)["body"].replace("\r\n", "\n").strip())
-' <<<"$current_body")"
-named="$(sed -n '1s/^Flutter \([^ ]*\) is out.*/\1/p' <<<"$current_body")"
-if [[ "$current_body" == "$body" ]]; then
+# Its text is only rewritten for a newer release, so notes added to it
+# meanwhile are kept until then.
+if [[ "${open_named[0]}" == "$latest" ]]; then
   echo "Issue #$issue already says so."
-elif [[ "$named" != "$latest" ]]; then
+else
   # (Editing the text notifies nobody; a comment does.)
   echo "Updating issue #$issue: Flutter $latest is out."
   act gh issue edit "$issue" --body "$body"
   act gh issue comment "$issue" --body "Flutter $latest is out now."
-else
-  echo "Updating the text of issue #$issue (still about Flutter $latest)."
-  act gh issue edit "$issue" --body "$body"
 fi
