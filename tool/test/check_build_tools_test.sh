@@ -53,8 +53,8 @@ android.builtInKotlin=false'
 # Writes an Android project's build files under $1/android: Gradle $2, the
 # Android Gradle plugin $3, Kotlin $4 (no Kotlin plugin if empty),
 # gradle.properties $5, the wrapper's checksum $6 (none if empty), and
-# Flutter's plugin loader $7. A version may instead be a whole plugin line,
-# for lines the check can't read.
+# Flutter's plugin loader $7. AGP's or Kotlin's version may instead be a
+# whole plugin line, for lines the check can't read.
 write_project() {
   local dir=$1/android
   mkdir -p "$dir/gradle/wrapper"
@@ -72,7 +72,8 @@ write_project() {
     echo "    id(\"dev.flutter.flutter-plugin-loader\") version \"$7\""
     if [[ "$3" == *'('* ]]; then echo "    $3"
     else echo "    id(\"com.android.application\") version \"$3\" apply false"; fi
-    if [[ -n "$4" ]]; then
+    if [[ "$4" == *'('* ]]; then echo "    $4"
+    elif [[ -n "$4" ]]; then
       echo "    id(\"org.jetbrains.kotlin.android\") version \"$4\" apply false"
     fi
     echo '}'
@@ -191,6 +192,9 @@ expect "a broken \\u escape fails, as in Java" 1 \
 expect "escapes are read as Java does" 1 'remove a:b=\u0041 and B' \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\na\\:b=\\\\u0041 and \\u0042'
 
+PUBLISHED_SUM=$'abc123  gradle-9.5.1-all.zip\n' expect \
+  "a checksum file that also names the file, with a newline, is fine" 0 \
+  "Gradle distribution checksum: OK"
 PUBLISHED_SUM=def456 expect "a wrong checksum fails" 1 \
   "distributionSha256Sum is abc123, but Gradle publishes def456 for gradle-9.5.1-all.zip"
 expect "no checksum fails" 1 "has no distributionSha256Sum" \
@@ -224,9 +228,9 @@ EDIT='sed -i "s|^    id(\"org.jetbrains.kotlin|    // id(\"org.jetbrains.kotlin|
 EDIT='printf "%s\n" "plugins {" "    id(\"org.example.own\") version \"1.0\"" "}" >>settings.gradle.kts' \
   expect "a plugin the template doesn't use fails" 1 \
   "org.example.own: Flutter 9.99.0's template doesn't use it. Remove it"
-EDIT='printf "%s\n" "plugins {" "    id(\"org.example.own\") version \"1.0\"" "}" >>settings.gradle.kts &&
-      sed -i "s/^readonly OWN_PLUGINS=()/readonly OWN_PLUGINS=(org.example.own)/" ../tool/check_build_tools.sh' \
-  expect "unless the app lists it as its own" 0 "The build tools match"
+own='printf "%s\n" "plugins {" "    id(\"org.example.own\") version \"1.0\"" "}" >>settings.gradle.kts &&
+     sed -i "s/^readonly OWN_PLUGINS=()/readonly OWN_PLUGINS=(org.example.own)/" ../tool/check_build_tools.sh'
+EDIT=$own expect "unless the app lists it as its own" 0 "The build tools match"
 
 # Templates that change.
 write_template 9.5.0 9.3.1 2.4.20 "$TEMPLATE_PROPERTIES" 1.0.1
@@ -248,9 +252,19 @@ expect "a plugin the template no longer uses fails" 1 \
 expect "without it in the app too, it passes" 0 "The build tools match" \
   9.5.1 9.3.3 "" "${GOOD_PROPERTIES/builtInKotlin=false/builtInKotlin=true}"
 write_template 9.5.0 'id("com.android.application").version("9.3.1")'
-expect "a template whose AGP version can't be read fails" 1 \
-  "couldn't read the Android Gradle plugin's version in Flutter 9.99.0's template" \
+expect "AGP that neither file gives in a form the check reads fails" 1 \
+  "couldn't read the Android Gradle plugin's (com.android.application) version in Flutter 9.99.0's template" \
   9.5.1 'id("com.android.application").version("7.0.0")'
+expect "and so does the template's alone" 1 \
+  "Android Gradle plugin (com.android.application): couldn't read its version in Flutter 9.99.0's template (settings.gradle.kts); this script needs updating."
+write_template 9.5.0 9.3.1 'id("org.jetbrains.kotlin.android").version("2.4.20")'
+expect "a template plugin the check can't read isn't to be removed" 1 \
+  "Kotlin (org.jetbrains.kotlin.android): couldn't read its version in Flutter 9.99.0's template"
+write_template
+printf '%s\n' 'plugins {' '    id("org.example.own") version "2.0"' '}' \
+  >>"$tmp/template/android/settings.gradle.kts"
+EDIT=$own expect "an own plugin that the template also uses is compared" 1 \
+  "org.example.own 1.0 is on the 1.0 line, Flutter 9.99.0's template on 2.0"
 write_template
 rm "$tmp/template/android/gradle.properties"
 expect "a template without gradle.properties fails" 1 \

@@ -40,4 +40,6 @@ jobs:
       - name: Compare with Flutter's current stable release
         env:
           GH_TOKEN: ${{ github.token }}
+          # (This repository's issues, whatever git remotes say.)
+          GH_REPO: ${{ github.repository }}
         run: tool/check_flutter_release.sh

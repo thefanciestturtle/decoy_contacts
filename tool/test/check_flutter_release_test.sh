@@ -14,12 +14,13 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 # Stand-ins. `curl` writes the URL it was given to $CURL_LOG and prints a
-# list of releases whose current stable one is $LATEST, after an older
-# stable hotfix and a beta; it fails if $LATEST is empty, and gives a list
-# without the current release with BAD_LIST=1. `gh` writes each call to
-# $GH_LOG on one line (the --body of a new issue also to $GH_LOG.body),
-# and lists $ISSUES (JSON) as the issues, or fails at that with
-# LIST_FAILS=1.
+# list of releases whose current stable one is $LATEST, out on
+# 2026-11-11T19:05:47.758707Z, after an older stable hotfix and a beta; it
+# fails if $LATEST is empty, and gives a list without the current release
+# with BAD_LIST=1. `gh` writes each call to $GH_LOG on one line (the
+# --body of a new issue also to $GH_LOG.body), and lists $ISSUES (JSON) as
+# the issues, as asked: only the open ones without --state all, only the
+# fields named after --json. It fails at that with LIST_FAILS=1.
 mkdir "$tmp/bin"
 cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -35,7 +36,8 @@ cat <<JSON
  "releases": [
   {"hash": "hhh", "channel": "stable", "version": "3.44.12"},
   {"hash": "bbb", "channel": "beta", "version": "9.0.0-1.0.pre"},
-  {"hash": "sss", "channel": "stable", "version": "$LATEST"},
+  {"hash": "sss", "channel": "stable", "version": "$LATEST",
+   "release_date": "2026-11-11T19:05:47.758707Z"},
   {"hash": "ooo", "channel": "stable", "version": "3.47.9"}]}
 JSON
 EOF
@@ -46,7 +48,15 @@ echo "gh ${all//$'\n'/ }" >>"$GH_LOG"
 case "$1 $2" in
   "issue list")
     [[ "${LIST_FAILS:-}" != 1 ]] || { echo "HTTP 502" >&2; exit 1; }
-    echo "${ISSUES:-[]}" ;;
+    python3 -c '
+import json, os, sys
+args = sys.argv[1:]
+fields = args[args.index("--json") + 1].split(",")
+everything = "--state" in args and args[args.index("--state") + 1] == "all"
+print(json.dumps([{k: v for k, v in i.items() if k in fields}
+                  for i in json.loads(os.environ.get("ISSUES") or "[]")
+                  if everything or i["state"] == "OPEN"]))
+' "$@" ;;
   "issue create")
     while (($#)); do
       if [[ "$1" == --body ]]; then printf '%s' "$2" >"$GH_LOG.body"; fi
@@ -59,18 +69,21 @@ chmod +x "$tmp/bin/"*
 readonly TITLE='A newer stable Flutter is out'
 readonly RELEASES=https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json
 
-# One issue as gh lists it: issue NUMBER STATE VERSION [AUTHOR [REASON]].
-# VERSION is the release its text names ("-": text that names none);
-# REASON is why it was closed (COMPLETED, NOT_PLANNED or DUPLICATE).
+# One issue as gh lists it: issue NUMBER STATE VERSION [AUTHOR [REASON
+# [CLOSED_AT]]]. VERSION is the release its text names ("-": text that
+# names none); REASON is why it was closed (COMPLETED, NOT_PLANNED or
+# DUPLICATE), and CLOSED_AT when (by default a day after the release).
 issue() {
   python3 -c '
 import json, sys
-number, state, version, author, reason, title = sys.argv[1:]
+number, state, version, author, reason, closed_at, title = sys.argv[1:]
 body = "Notes first" if version == "-" else f"Flutter {version} is out; ..."
 print(json.dumps({"number": int(number), "title": title, "state": state,
                   "stateReason": reason or None, "body": body,
+                  "closedAt": closed_at if state == "CLOSED" else None,
                   "author": {"login": author, "is_bot": author != "someone"}}))
-' "$1" "$2" "$3" "${4:-app/github-actions}" "${5:-}" "$TITLE"
+' "$1" "$2" "$3" "${4:-app/github-actions}" "${5:-}" \
+    "${6:-2026-11-12T08:00:00Z}" "$TITLE"
 }
 # A list of issues: issues "$(issue ...)" ...
 issues() { local IFS=,; echo "[$*]"; }
@@ -168,10 +181,13 @@ ISSUES="$(issues "$(issue 7 OPEN 3.51.0 github-actions)")" expect \
   "Closing issue #7" "close7:completed"
 
 ISSUES="$(issues "$(issue 7 CLOSED 3.51.0 app/github-actions NOT_PLANNED)")" expect \
-  "closed as not planned while it named this release: stays closed" 3.50.0 3.51.0 0 \
-  "Nothing to do: the issue about Flutter 3.51.0 was closed as not planned." ""
-ISSUES="$(issues "$(issue 7 CLOSED 3.50.1 app/github-actions NOT_PLANNED)")" expect \
-  "put off for an older release: a newer one opens an issue" 3.50.0 3.51.0 0 \
+  "closed as not planned since the release came out: stays closed" 3.50.0 3.51.0 0 \
+  "Nothing to do: the issue was closed as not planned after Flutter 3.51.0 came out." ""
+ISSUES="$(issues "$(issue 7 CLOSED - app/github-actions NOT_PLANNED)")" expect \
+  "also with its text changed by hand" 3.50.0 3.51.0 0 \
+  "Nothing to do: the issue was closed as not planned after" ""
+ISSUES="$(issues "$(issue 7 CLOSED 3.50.1 app/github-actions NOT_PLANNED 2026-11-01T08:00:00Z)")" expect \
+  "put off before this release came out: a new issue" 3.50.0 3.51.0 0 \
   "Opening an issue: Flutter 3.51.0 is out." "create"
 ISSUES="$(issues "$(issue 7 CLOSED 3.51.0 app/github-actions COMPLETED)")" expect \
   "closed as done, then FLUTTER_VERSION went back: a new issue" 3.50.0 3.51.0 0 \

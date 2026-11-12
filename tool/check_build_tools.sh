@@ -15,8 +15,8 @@
 # didn't make this app's build any faster, and CI's runner also has to fit
 # the emulator). This script makes a new project from the template in a
 # temporary folder, compares, and fails with what to change. Run it after
-# a Flutter upgrade; CI runs it on every build, before building (a build
-# can add missing flags to gradle.properties by itself).
+# a Flutter upgrade, before building (a build adds missing flags to
+# gradle.properties by itself); CI runs it in a job that builds nothing.
 #
 # Also checked: that the Gradle wrapper downloads Gradle from Gradle's own
 # site, and that its distributionSha256Sum is the checksum Gradle publishes
@@ -59,7 +59,14 @@ problems=()
 problem() { problems+=("$*"); }
 
 warning() {
-  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then echo "::warning::$*"; else echo "warning: $*"; fi
+  if [[ "${GITHUB_ACTIONS:-}" == true ]]; then echo "::warning::$*"; else echo "warning: $*"; fi
+}
+
+# Whether settings.gradle.kts $1 mentions the plugin $2 outside a //
+# comment. (grep -c reads to the end: with -q, the grep before it could be
+# cut off, and pipefail would take that for no match.)
+mentions_plugin() {
+  grep -v '^[[:space:]]*//' "$1" | grep -cF "\"$2\"" >/dev/null
 }
 
 # The properties of a .properties file, one "key<SEP>value" line each, read
@@ -215,8 +222,8 @@ compare Gradle "$(gradle_of "$ours_url")" \
   "$(gradle_of "${theirs_wrapper[distributionUrl]:-}")" \
   "$WRAPPER (distributionUrl, and distributionSha256Sum to match)"
 
-# The plugins with versions in settings.gradle.kts. The template must have
-# AGP among them, or nothing would be compared.
+# The plugins with versions in settings.gradle.kts. AGP must be among
+# them, or nothing would be compared.
 declare -A ours_plugins=() theirs_plugins=()
 ours_list="$(plugins "$SETTINGS")"
 theirs_list="$(plugins "$template/${SETTINGS#android/}")"
@@ -226,18 +233,25 @@ done <<<"$ours_list"
 while read -r id version; do
   if [[ -n "$id" ]]; then theirs_plugins["$id"]=$version; fi
 done <<<"$theirs_list"
-if [[ ! -v "theirs_plugins[com.android.application]" ]]; then
-  problem "couldn't read the Android Gradle plugin's version in Flutter $flutter_version's template (settings.gradle.kts); this script needs updating."
+# (The loop below doesn't see AGP if neither file gives it a version it
+# can read.)
+if [[ ! -v "theirs_plugins[com.android.application]" &&
+      ! -v "ours_plugins[com.android.application]" ]]; then
+  problem "couldn't read the Android Gradle plugin's (com.android.application) version in Flutter $flutter_version's template (settings.gradle.kts); this script needs updating."
 fi
 while IFS= read -r id; do
   [[ -n "$id" ]] || continue
-  for own in "${OWN_PLUGINS[@]}"; do [[ "$id" != "$own" ]] || continue 2; done
   name="$(plugin_name "$id")"
-  if [[ ! -v "theirs_plugins[$id]" ]]; then
+  if [[ ! -v "theirs_plugins[$id]" ]] &&
+     mentions_plugin "$template/${SETTINGS#android/}" "$id"; then
+    problem "$name: couldn't read its version in Flutter $flutter_version's template (settings.gradle.kts); this script needs updating."
+  elif [[ ! -v "theirs_plugins[$id]" ]]; then
+    # (The app's own plugins aren't in the template.)
+    for own in "${OWN_PLUGINS[@]}"; do [[ "$id" != "$own" ]] || continue 2; done
     problem "$name: Flutter $flutter_version's template doesn't use it. Remove it from $SETTINGS (and android/app/build.gradle.kts), or, if the template set it up another way, do as a new project (flutter create) does."
   elif [[ -v "ours_plugins[$id]" ]]; then
     compare "$name" "${ours_plugins[$id]}" "${theirs_plugins[$id]}" "$SETTINGS"
-  elif grep -v '^[[:space:]]*//' "$SETTINGS" | grep -qF "\"$id\""; then
+  elif mentions_plugin "$SETTINGS" "$id"; then
     problem "$name: couldn't read the app's version in $SETTINGS (write it as the template does: id(\"$id\") version \"...\")."
   else
     problem "$name: Flutter $flutter_version's template uses it (version ${theirs_plugins[$id]}); add it to $SETTINGS as the template does, and see whether android/app/build.gradle.kts needs it too."
@@ -251,7 +265,7 @@ read_properties "$template/${PROPERTIES#android/}" theirs_props
 for key in "${OWN_PROPERTIES[@]}"; do
   unset "ours_props[$key]" "theirs_props[$key]"
 done
-props_ok=true
+problems_before=${#problems[@]}
 while IFS= read -r key; do
   [[ -n "$key" ]] || continue
   if [[ ! -v "theirs_props[$key]" ]]; then
@@ -260,12 +274,9 @@ while IFS= read -r key; do
     problem "$PROPERTIES: add $key=${theirs_props[$key]}, as in Flutter $flutter_version's template."
   elif [[ "${ours_props[$key]}" != "${theirs_props[$key]}" ]]; then
     problem "$PROPERTIES: $key is '${ours_props[$key]}'; Flutter $flutter_version's template has '${theirs_props[$key]}'."
-  else
-    continue
   fi
-  props_ok=false
 done < <(printf '%s\n' "${!ours_props[@]}" "${!theirs_props[@]}" | sort -u)
-if $props_ok; then
+if ((${#problems[@]} == problems_before)); then
   echo "gradle.properties: OK (as the template's, apart from ${OWN_PROPERTIES[*]})"
 fi
 
@@ -282,8 +293,10 @@ elif ! response="$(curl -sSL --retry 3 --connect-timeout 20 --max-time 60 \
   warning "couldn't reach Gradle's site for the checksum ($sum_url), so distributionSha256Sum wasn't compared with it."
 else
   # The checksum, then the HTTP status on a line of its own.
+  # (Its first word: a .sha256 file may also name the file, or end in a
+  # newline.)
   status="${response##*$'\n'}"
-  published="${response%$'\n'*}"
+  read -r published _ <<<"${response%$'\n'*}" || true
   if [[ "$status" == 404 || "$status" == 410 ]]; then
     problem "Gradle's site has no checksum for $distribution ($sum_url): is distributionUrl right?"
   elif [[ "$status" != 200 ]]; then
