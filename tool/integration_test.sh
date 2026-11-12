@@ -29,24 +29,27 @@ readonly PROVIDER_TIMEOUT_S=60
 
 # Waits until the contacts provider answers a query, and stops the script if
 # it still doesn't after PROVIDER_TIMEOUT_S seconds. (A query to a provider
-# that is stuck takes about 20 s to fail.)
+# that is stuck takes about 20 s to fail; one that takes longer than 30 s is
+# given up.)
 wait_for_contacts_provider() {
   local deadline=$((SECONDS + PROVIDER_TIMEOUT_S)) answer
   while true; do
     # `content` prints rows or "No result found." when the provider answers,
-    # and an error otherwise, with exit status 0 either way.
-    answer="$(adb_ shell content query \
+    # and an error otherwise. Its exit status can't be relied on (on API 36
+    # it is 0 after an error too), so the output is checked.
+    # (`timeout` can't run the adb_ function, hence plain adb with the serial.)
+    answer="$(timeout 30 adb -s "$serial" shell content query \
       --uri content://com.android.contacts/raw_contacts --projection _id \
       2>&1)" || true
-    answer="${answer%%$'\n'*}"
-    answer="${answer%$'\r'}"
-    case "$answer" in
-      'No result found.' | Row:*) return 0 ;;
-    esac
+    answer="${answer//$'\r'/}"
+    if grep -qE '^(No result found\.|Row: )' <<<"$answer"; then
+      return 0
+    fi
     if ((SECONDS >= deadline)); then
       echo "error: the contacts provider still doesn't answer" \
-           "$PROVIDER_TIMEOUT_S s after emptying the address book:" \
-           "$answer" >&2
+           "$PROVIDER_TIMEOUT_S s after emptying the address book." \
+           "The last query said:" >&2
+      echo "${answer:-(nothing)}" >&2
       echo "--- what Android logged about it:" >&2
       adb_ logcat -d -s ActivityManager ContentProviderHelper |
         grep -i contacts | tail -n 20 >&2 || true
