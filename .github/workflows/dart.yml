@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 env:
-  FLUTTER_VERSION: 3.47.9
+  FLUTTER_VERSION: 3.50.0
   GRADLE_CACHE_PATHS: |
     ~/.gradle/caches
     ~/.gradle/wrapper
@@ -24,14 +24,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The JDK that runs the build (the app's own Java/Kotlin level is set
-      # in android/app/build.gradle.kts). 21: on 17, the lint of release
-      # builds crashes on Javadoc comments, as in url_launcher_android's code
-      # (its parser calls a Java 21 method).
+      # The JDK that runs the build: the current LTS release. (The app's own
+      # Java/Kotlin level is set in android/app/build.gradle.kts. On the
+      # phone the app runs on Android's runtime, not on this JDK.)
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
 
       # The Gradle distribution and the Kotlin compiler are downloaded from
       # GitHub releases, which sometimes time out (HTTP 504). Restoring them
@@ -47,11 +46,8 @@ jobs:
         with:
           path: ${{ env.GRADLE_CACHE_PATHS }}
           key: gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
-          # The last line falls back to the per-job cache used before this
-          # shared one, until that has been deleted (then it matches nothing).
           restore-keys: |
             gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
-            gradle-integration-test-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
@@ -87,7 +83,7 @@ jobs:
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
-          java-version: "21"
+          java-version: "25"
 
       # Same step as in the build job (a YAML alias), so the key can't drift.
       - *restore-gradle-cache
