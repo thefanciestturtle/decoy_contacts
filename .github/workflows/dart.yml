@@ -159,18 +159,17 @@ jobs:
       - name: Build release APK (x86_64)
         run: flutter build apk --release --target-platform android-x64
 
-      # Before the emulator starts: its daemon would keep memory the emulator
-      # needs, and nothing may write to the cache while it is being saved.
-      - name: Stop Gradle
-        run: if [ -x android/gradlew ]; then (cd android && ./gradlew --stop); fi
-
       # On master only (see "Restore Gradle cache"), save the Gradle cache
-      # once this job's debug and release builds have worked, without
-      # Gradle's lock files. Both on-device jobs try: whichever comes second
-      # finds the entry taken, and only says so.
-      - name: Drop Gradle's lock files
+      # once this job's debug and release builds have worked, before the
+      # emulator starts. Both on-device jobs try: whichever comes second
+      # finds the entry taken, and only says so. Stop Gradle first, so
+      # nothing is written to the cache while it is being saved, and drop
+      # its lock files. (Not on other runs: the test script's first build
+      # would start it again, and slower.)
+      - name: Stop Gradle
         if: github.event_name == 'push' && steps.gradle-cache.outputs.cache-hit != 'true'
         run: |
+          if [ -x android/gradlew ]; then (cd android && ./gradlew --stop); fi
           find ~/.gradle/caches -name '*.lock' -delete
           rm -f ~/.gradle/caches/*/gc.properties
 
@@ -191,8 +190,10 @@ jobs:
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: ${{ matrix.api-level }}
-          # (The script's first line checks this AVD.)
+          # (The script's first line checks this AVD; this shows its target
+          # before the emulator starts, also if it then doesn't boot.)
           avd-name: test
+          pre-emulator-launch-script: grep -H '^target=' "$ANDROID_AVD_HOME/test.ini"
           target: google_apis
           arch: x86_64
           profile: pixel_7
@@ -202,6 +203,6 @@ jobs:
           # the emulator then ran it as a very old one. A failing line stops
           # the rest.
           script: |
-            grep -H '^target=' "$ANDROID_AVD_HOME/test.ini" && grep -qxF 'target=android-${{ matrix.api-level }}' "$ANDROID_AVD_HOME/test.ini" || { echo '::error::The AVD is not for API ${{ matrix.api-level }} (its target= is above): is avdmanager too old?'; exit 1; }
+            target="$(sed -n 's/^target=//p' "$ANDROID_AVD_HOME/test.ini")"; [ "$target" = 'android-${{ matrix.api-level }}' ] || { echo "::error::The AVD's target is '${target:-none}' in $ANDROID_AVD_HOME/test.ini, not android-${{ matrix.api-level }}: is avdmanager too old?"; exit 1; }
             tool/integration_test.sh --wipe-contacts
             tool/release_smoke_test.sh
