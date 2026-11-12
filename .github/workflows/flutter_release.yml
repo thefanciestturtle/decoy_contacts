@@ -4,6 +4,10 @@ name: Flutter release check
 # (FLUTTER_VERSION in dart.yml)? If so, tool/check_flutter_release.sh keeps
 # one issue open saying so; it closes the issue once FLUTTER_VERSION has
 # caught up. Can also be started by hand (Actions tab).
+#
+# GitHub turns scheduled workflows off in a fork until they are turned on,
+# and in a public repository after 60 days without activity; the Actions
+# tab then offers to turn it back on.
 on:
   schedule:
     - cron: "23 5 * * 1" # Mondays, 05:23 UTC
@@ -12,11 +16,16 @@ on:
 permissions:
   contents: read
 
+# One run at a time, so two can't both open the issue.
+concurrency:
+  group: flutter-release-check
+  cancel-in-progress: false
+
 jobs:
   check:
     runs-on: ubuntu-latest
-    # The only job here that may write: it opens, edits and closes that
-    # issue.
+    # The only job here that may write: it opens, edits, comments on and
+    # closes that issue.
     permissions:
       contents: read
       issues: write

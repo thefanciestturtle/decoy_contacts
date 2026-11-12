@@ -7,18 +7,19 @@
 # Flutter is tested with the versions of Gradle, the Android Gradle plugin
 # (AGP) and Kotlin in its project template. The app uses the same minor
 # version of each (e.g. AGP 9.3), and the newest patch release of it (e.g.
-# 9.3.3), never an older one than the template's. Its Android flags in
-# gradle.properties are the template's. This script makes a new project
-# from the template in a temporary folder, compares, and fails with what to
-# change. Run it after a Flutter upgrade; CI runs it on every build.
+# 9.3.3), never an older one than the template's, nor a pre-release. Its
+# gradle.properties sets what the template's sets, except
+# org.gradle.jvmargs (the template's larger heap didn't make this app's
+# build any faster, and CI's runner also has to fit the emulator). This
+# script makes a new project from the template in a temporary folder,
+# compares, and fails with what to change. Run it after a Flutter upgrade;
+# CI runs it on every build.
 #
 # Also checked: that the Gradle wrapper's distributionSha256Sum is Gradle's
 # published checksum of the distribution it downloads (this needs the
 # internet).
 #
-# Not compared: org.gradle.jvmargs (the template's larger heap didn't make
-# this app's build any faster, and CI's runner also has to fit the
-# emulator), the app's own Java level, and the SDK versions, which come
+# Not compared: the app's own Java level, and the SDK versions, which come
 # from Flutter itself (flutter.compileSdkVersion etc.).
 set -euo pipefail
 
@@ -27,6 +28,11 @@ cd "$(dirname "$0")/.."
 readonly WRAPPER=android/gradle/wrapper/gradle-wrapper.properties
 readonly SETTINGS=android/settings.gradle.kts
 readonly PROPERTIES=android/gradle.properties
+# Set in gradle.properties on purpose, whatever the template has.
+readonly OWN_PROPERTIES=(org.gradle.jvmargs)
+
+command -v flutter >/dev/null ||
+  { echo "error: no flutter on the PATH" >&2; exit 1; }
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -36,7 +42,7 @@ problem() { problems+=("$*"); }
 
 # The Gradle version in a wrapper properties file.
 gradle_version() {
-  sed -n 's|^distributionUrl=.*/gradle-\([0-9.]*\)-[a-z]*\.zip$|\1|p' "$1"
+  sed -n 's|^distributionUrl=.*/gradle-\([^/]*\)-[a-z]*\.zip$|\1|p' "$1"
 }
 
 # The version of the Gradle plugin with ID $2 in a settings.gradle.kts.
@@ -44,16 +50,28 @@ plugin_version() {
   sed -n "s|^ *id(\"$2\") version \"\([^\"]*\)\".*|\1|p" "$1"
 }
 
-# The android.* flags of a gradle.properties into the associative array
-# named $2 (flag -> value).
-read_android_flags() {
-  local -n flags=$2
-  local key value
-  while IFS='=' read -r key value; do
-    # shellcheck disable=SC2034 # (flags is the caller's array)
-    flags["$key"]="${value%"${value##*[![:space:]]}"}"
-  done < <(grep -E '^android\.[A-Za-z.]+=' "$1" || true)
+# Whether a settings.gradle.kts mentions the plugin with ID $2 at all.
+mentions_plugin() { grep -qF "\"$2\"" "$1"; }
+
+# The properties of a gradle.properties into the associative array named
+# $2 (key -> value), with the spaces around keys and values left out.
+read_properties() {
+  local -n props=$2
+  local line key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ "$line" =~ ^[[:space:]]*([#!]|$) ]] && continue
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' <<<"$key")"
+    value="$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' <<<"$value")"
+    # shellcheck disable=SC2034 # (props is the caller's array)
+    props["$key"]="$value"
+  done <"$1"
 }
+
+# Whether $1 is a release version: numbers only (9.5, 9.5.1), no "-rc1".
+is_release() { [[ "$1" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; }
 
 # A version with three parts (9.5 -> 9.5.0).
 three_parts() { awk -F. '{ print $1 "." ($2 == "" ? 0 : $2) "." ($3 == "" ? 0 : $3) }' <<<"$1"; }
@@ -61,7 +79,7 @@ three_parts() { awk -F. '{ print $1 "." ($2 == "" ? 0 : $2) "." ($3 == "" ? 0 : 
 # MAJOR.MINOR of a version.
 minor_line() { awk -F. '{ print $1 "." ($2 == "" ? 0 : $2) }' <<<"$1"; }
 
-# Whether version $1 is older than $2.
+# Whether release version $1 is older than $2.
 older() {
   local a b
   a="$(three_parts "$1")"
@@ -73,25 +91,44 @@ older() {
 # where to change it.
 compare() {
   local tool=$1 ours=$2 theirs=$3 where=$4
-  if [[ -z "$ours" || -z "$theirs" ]]; then
-    problem "$tool: couldn't read the version (app: '${ours}', template: '${theirs}')."
+  if ! is_release "$theirs"; then
+    problem "$tool: couldn't read the version in Flutter $flutter_version's template ('$theirs')."
     return
   fi
-  local line_ours line_theirs
-  line_ours="$(minor_line "$ours")"
-  line_theirs="$(minor_line "$theirs")"
-  if [[ "$line_ours" != "$line_theirs" ]]; then
-    problem "$tool $ours is on the $line_ours line, Flutter $flutter_version's template on $line_theirs ($theirs). In $where, use the newest $line_theirs.x release (at least $theirs)."
+  local line
+  line="$(minor_line "$theirs")"
+  local change="In $where, use the newest $line.x release (at least $theirs)."
+  if [[ -z "$ours" ]]; then
+    problem "$tool: couldn't read the app's version. $change"
+  elif ! is_release "$ours"; then
+    problem "$tool $ours isn't a release. $change"
+  elif [[ "$(minor_line "$ours")" != "$line" ]]; then
+    problem "$tool $ours is on the $(minor_line "$ours") line, Flutter $flutter_version's template on $line ($theirs). $change"
   elif older "$ours" "$theirs"; then
-    problem "$tool $ours is older than Flutter $flutter_version's template ($theirs). In $where, use the newest $line_theirs.x release (at least $theirs)."
+    problem "$tool $ours is older than Flutter $flutter_version's template ($theirs). $change"
   else
     echo "$tool $ours: OK (template: $theirs)"
   fi
 }
 
+# Compares the version of the Gradle plugin $2 (called $1) in the app's
+# settings with the template's.
+compare_plugin() {
+  local tool=$1 id=$2
+  if ! mentions_plugin "$template/settings.gradle.kts" "$id"; then
+    if mentions_plugin "$SETTINGS" "$id"; then
+      problem "$tool: Flutter $flutter_version's template no longer uses the plugin $id. See how a new project (flutter create) is set up instead, and change $SETTINGS and android/app/build.gradle.kts to match."
+    fi
+    return
+  fi
+  compare "$tool" "$(plugin_version "$SETTINGS" "$id")" \
+    "$(plugin_version "$template/settings.gradle.kts" "$id")" "$SETTINGS"
+}
+
 flutter_version="$(flutter --version --machine 2>/dev/null |
-  sed -n 's/^ *"frameworkVersion": "\([^"]*\)".*/\1/p')"
-[[ -n "$flutter_version" ]] || { echo "error: couldn't run flutter" >&2; exit 1; }
+  sed -n 's/^ *"frameworkVersion": *"\([^"]*\)".*/\1/p' || true)"
+[[ -n "$flutter_version" ]] ||
+  { echo "error: couldn't get the version of flutter" >&2; exit 1; }
 
 echo "== Making a new project from Flutter $flutter_version's template"
 if ! flutter create --platforms=android --no-pub --project-name template_check \
@@ -104,31 +141,33 @@ template="$tmp/template_check/android"
 
 echo "== Comparing"
 ours_gradle="$(gradle_version "$WRAPPER")"
-compare Gradle "$ours_gradle" "$(gradle_version "$template/gradle/wrapper/gradle-wrapper.properties")" \
+compare Gradle "$ours_gradle" \
+  "$(gradle_version "$template/gradle/wrapper/gradle-wrapper.properties")" \
   "$WRAPPER (distributionUrl, and distributionSha256Sum to match)"
-compare "Android Gradle plugin" "$(plugin_version "$SETTINGS" com.android.application)" \
-  "$(plugin_version "$template/settings.gradle.kts" com.android.application)" "$SETTINGS"
-compare Kotlin "$(plugin_version "$SETTINGS" org.jetbrains.kotlin.android)" \
-  "$(plugin_version "$template/settings.gradle.kts" org.jetbrains.kotlin.android)" "$SETTINGS"
+compare_plugin "Android Gradle plugin" com.android.application
+compare_plugin Kotlin org.jetbrains.kotlin.android
 
-declare -A ours_flags=() theirs_flags=()
-read_android_flags "$PROPERTIES" ours_flags
-read_android_flags "$template/gradle.properties" theirs_flags
-flags_ok=true
-for flag in $(printf '%s\n' "${!ours_flags[@]}" "${!theirs_flags[@]}" | sort -u); do
-  if [[ ! -v "theirs_flags[$flag]" ]]; then
-    problem "$PROPERTIES: remove $flag=${ours_flags[$flag]} (Flutter $flutter_version's template doesn't set $flag)."
-  elif [[ ! -v "ours_flags[$flag]" ]]; then
-    problem "$PROPERTIES: add $flag=${theirs_flags[$flag]}, as in Flutter $flutter_version's template."
-  elif [[ "${ours_flags[$flag]}" != "${theirs_flags[$flag]}" ]]; then
-    problem "$PROPERTIES: $flag is ${ours_flags[$flag]}; Flutter $flutter_version's template has $flag=${theirs_flags[$flag]}."
+declare -A ours_props=() theirs_props=()
+read_properties "$PROPERTIES" ours_props
+read_properties "$template/gradle.properties" theirs_props
+for key in "${OWN_PROPERTIES[@]}"; do
+  unset "ours_props[$key]" "theirs_props[$key]"
+done
+props_ok=true
+for key in $(printf '%s\n' "${!ours_props[@]}" "${!theirs_props[@]}" | sort -u); do
+  if [[ ! -v "theirs_props[$key]" ]]; then
+    problem "$PROPERTIES: remove $key=${ours_props[$key]} (Flutter $flutter_version's template doesn't set $key)."
+  elif [[ ! -v "ours_props[$key]" ]]; then
+    problem "$PROPERTIES: add $key=${theirs_props[$key]}, as in Flutter $flutter_version's template."
+  elif [[ "${ours_props[$key]}" != "${theirs_props[$key]}" ]]; then
+    problem "$PROPERTIES: $key is ${ours_props[$key]}; Flutter $flutter_version's template has $key=${theirs_props[$key]}."
   else
     continue
   fi
-  flags_ok=false
+  props_ok=false
 done
-if $flags_ok; then
-  echo "Android flags in gradle.properties: OK"
+if $props_ok; then
+  echo "gradle.properties: OK (as the template's, apart from ${OWN_PROPERTIES[*]})"
 fi
 
 if [[ -n "$ours_gradle" ]]; then
