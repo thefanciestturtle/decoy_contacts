@@ -3,7 +3,10 @@ name: Flutter release check
 # Once a week: is a newer stable Flutter out than the one CI builds with
 # (FLUTTER_VERSION in dart.yml)? If so, tool/check_flutter_release.sh keeps
 # one issue open saying so; it closes the issue once FLUTTER_VERSION has
-# caught up. Can also be started by hand (Actions tab).
+# caught up. Also runs when dart.yml changes on master (so the issue closes
+# when the upgrade is merged), and can be started by hand (Actions tab).
+# Only on the default branch: elsewhere FLUTTER_VERSION may not be
+# master's yet.
 #
 # GitHub turns scheduled workflows off in a fork until they are turned on,
 # and in a public repository after 60 days without activity; the Actions
@@ -11,6 +14,9 @@ name: Flutter release check
 on:
   schedule:
     - cron: "23 5 * * 1" # Mondays, 05:23 UTC
+  push:
+    branches: [ "master" ]
+    paths: [ ".github/workflows/dart.yml" ]
   workflow_dispatch:
 
 permissions:
@@ -23,6 +29,7 @@ concurrency:
 
 jobs:
   check:
+    if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # The only job here that may write: it opens, edits, comments on and

@@ -179,10 +179,15 @@ flutter_version="$(flutter --version --machine 2>/dev/null |
   sed -n 's/^ *"frameworkVersion": *"\([^"]*\)".*/\1/p' || true)"
 [[ -n "$flutter_version" ]] ||
   { echo "error: couldn't get the version of flutter" >&2; exit 1; }
-ci_version="$(ci_flutter_version || true)"
-if [[ -n "$ci_version" && "$ci_version" != "$flutter_version" ]]; then
+if ! ci_version="$(ci_flutter_version)"; then
+  warning "couldn't read FLUTTER_VERSION (one line, an exact version) in .github/workflows/dart.yml, so this doesn't know whether $flutter_version is the Flutter CI builds with."
+elif [[ "$ci_version" != "$flutter_version" ]]; then
   warning "this is Flutter $flutter_version, CI builds with $ci_version (FLUTTER_VERSION in .github/workflows/dart.yml): comparing with $flutter_version's template."
 fi
+
+for file in "$WRAPPER" "$SETTINGS" "$PROPERTIES"; do
+  [[ -f "$file" ]] || { echo "error: there is no $file" >&2; exit 1; }
+done
 
 echo "== Making a new project from Flutter $flutter_version's template"
 if ! flutter create --platforms=android --no-pub --project-name template_check \

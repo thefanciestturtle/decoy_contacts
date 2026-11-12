@@ -118,6 +118,9 @@ expect() {
   cp "$SCRIPT" "$LIB" "$proj/tool/"
   write_project "$proj" "${4-9.5.1}" "${5-9.3.3}" "${6-2.4.21}" \
     "${7-$GOOD_PROPERTIES}" "${8-$SUM}" "${9-1.0.0}"
+  # CI's Flutter: the stand-in's.
+  mkdir -p "$proj/.github/workflows"
+  echo "  FLUTTER_VERSION: 9.99.0" >"$proj/.github/workflows/dart.yml"
   if [[ -n "${EDIT:-}" ]]; then (cd "$proj/android" && eval "$EDIT"); fi
   local out status=0
   out="$(PATH="${PATH_TO_USE:-$tmp/bin:/usr/bin:/bin}" TEMPLATE="$tmp/template" \
@@ -240,6 +243,11 @@ CREATE_FAILS=1 expect "a failed flutter create fails" 1 "create went wrong"
 EDIT='mkdir -p ../.github/workflows && echo "  FLUTTER_VERSION: 3.50.0 # pinned" >../.github/workflows/dart.yml' \
   expect "another Flutter than CI's gets a warning" 0 \
   "warning: this is Flutter 9.99.0, CI builds with 3.50.0"
+EDIT='echo "  FLUTTER_VERSION: 3.50.x" >../.github/workflows/dart.yml' \
+  expect "a FLUTTER_VERSION that can't be read gets a warning" 0 \
+  "warning: couldn't read FLUTTER_VERSION (one line, an exact version) in .github/workflows/dart.yml"
+EDIT='rm gradle.properties' expect "a missing file of the app's fails" 1 \
+  "error: there is no android/gradle.properties"
 
 EDIT='sed -i "s|^    id(\"org.jetbrains.kotlin|    // id(\"org.jetbrains.kotlin|" settings.gradle.kts' \
   expect "a plugin that is only commented out is missing" 1 \
