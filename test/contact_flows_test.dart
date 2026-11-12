@@ -371,15 +371,18 @@ void expectRingAround(WidgetTester tester, Finder button) {
 /// The app bar's menu button (⋮).
 final Finder menu = find.byKey(const Key('Menu'));
 
-/// Whether the keyboard focus is on the menu button.
-bool menuFocused(WidgetTester tester) {
+/// Whether the keyboard focus is on what [finder] finds, or inside it.
+bool focusWithin(WidgetTester tester, Finder finder) {
   final focused = FocusManager.instance.primaryFocus?.context;
-  if (focused == null) return false;
-  final button = tester.element(menu);
+  if (focused == null || finder.evaluate().isEmpty) return false;
+  final element = tester.element(finder);
   var bFound = false;
-  focused.visitAncestorElements((e) => !(bFound = e == button));
+  focused.visitAncestorElements((e) => !(bFound = e == element));
   return bFound;
 }
+
+/// Whether the keyboard focus is on the menu button.
+bool menuFocused(WidgetTester tester) => focusWithin(tester, menu);
 
 /// Expects one focus ring on screen, just inside the edge of [item].
 void expectRingInside(WidgetTester tester, Finder item) {
@@ -3377,15 +3380,8 @@ void main() {
     /// label, or null.
     String? focused(WidgetTester tester) {
       if (menuFocused(tester)) return 'menu';
-      final context = FocusManager.instance.primaryFocus?.context;
       for (final key in fieldKeys) {
-        final field = find.byKey(Key(key));
-        if (context != null && field.evaluate().isNotEmpty) {
-          var bIn = false;
-          context.visitAncestorElements(
-              (e) => !(bIn = e == field.evaluate().single));
-          if (bIn) return key;
-        }
+        if (focusWithin(tester, find.byKey(Key(key)))) return key;
       }
       return focusedButton();
     }
@@ -3431,6 +3427,23 @@ void main() {
       expectRingAround(tester, menu);
       // Nothing was typed or changed on the way.
       expect(fields(tester), kSettings.values);
+    });
+
+    testWidgets('a field tapped after moving with the arrows: Up at its start '
+        'goes to the menu, not back to where the arrows were', (tester) async {
+      await pumpApp(tester, book);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(await pressAll(tester, LogicalKeyboardKey.arrowDown, 6),
+          [...fieldKeys, kCreateButton, kDeleteButton]);
+
+      final field = find.byKey(const Key('LastNames'));
+      await tester.tap(field);
+      await tester.pumpAndSettle();
+      tester.widget<TextField>(field).controller!.selection =
+          const TextSelection.collapsed(offset: 0);
+      await tester.pump();
+      expect(await pressAll(tester, LogicalKeyboardKey.arrowUp, 1), ['menu']);
     });
 
     testWidgets('in a name list of several lines, Up goes a line at a time to '

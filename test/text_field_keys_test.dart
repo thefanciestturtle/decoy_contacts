@@ -5,14 +5,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fake_contacts/text_field_keys.dart';
 
 /// A button, a field of three lines, a field of one line and a button,
-/// one above the other, the fields' focus nodes with
-/// [leaveTextFieldAtEdge].
+/// one above the other, in [ArrowsLeaveTextFields].
 class _Page {
   final FocusNode above = FocusNode(debugLabel: 'above');
-  final FocusNode lines =
-      FocusNode(debugLabel: 'lines', onKeyEvent: leaveTextFieldAtEdge);
-  final FocusNode line =
-      FocusNode(debugLabel: 'line', onKeyEvent: leaveTextFieldAtEdge);
+  final FocusNode lines = FocusNode(debugLabel: 'lines');
+  final FocusNode line = FocusNode(debugLabel: 'line');
   final FocusNode below = FocusNode(debugLabel: 'below');
   final TextEditingController linesText =
       TextEditingController(text: 'one\ntwo\nthree');
@@ -29,25 +26,23 @@ class _Page {
     });
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
-        body: Column(children: [
-          if (bAbove)
-            TextButton(focusNode: above, onPressed: () {}, child: const Text('Above')),
-          TextField(controller: linesText, focusNode: lines, maxLines: 4),
-          TextField(controller: lineText, focusNode: line),
-          TextButton(focusNode: below, onPressed: () {}, child: const Text('Below')),
-        ]),
+        body: ArrowsLeaveTextFields(
+          child: Column(children: [
+            if (bAbove)
+              TextButton(focusNode: above, onPressed: () {}, child: const Text('Above')),
+            TextField(controller: linesText, focusNode: lines, maxLines: 4),
+            TextField(controller: lineText, focusNode: line),
+            TextButton(focusNode: below, onPressed: () {}, child: const Text('Below')),
+          ]),
+        ),
       ),
     ));
   }
 
-  /// Gives [node]'s field the focus, with the caret at [offset], as if
-  /// arriving there afresh: Flutter's directional traversal remembers where
-  /// the focus came from, and the next move the opposite way would go back
-  /// there, even after the focus has moved some other way, as here.
+  /// Gives [node]'s field the focus, with the caret at [offset].
   Future<void> focus(WidgetTester tester, FocusNode node, int offset) async {
     node.requestFocus();
     await tester.pump();
-    FocusTraversalGroup.of(node.context!).invalidateScopeData(node.nearestScope!);
     (node == lines ? linesText : lineText).selection =
         TextSelection.collapsed(offset: offset);
     await tester.pump();
@@ -201,6 +196,32 @@ void main() {
     expect(page.where(), 'line 3');
     await press(tester, LogicalKeyboardKey.arrowLeft);
     expect(page.where(), 'line 2');
+  });
+
+  testWidgets('a field tapped after earlier arrow moves: Up goes up and Down '
+      'goes down', (tester) async {
+    final page = _Page();
+    await page.pump(tester);
+    // Flutter remembers where each move came from, and sends a move the
+    // opposite way back there; a tap doesn't clear that.
+    page.above.requestFocus();
+    await tester.pump();
+    for (final expected in ['lines 13', 'line 3', 'below']) {
+      await press(tester, LogicalKeyboardKey.arrowDown);
+      expect(page.where(), expected);
+    }
+    await tester.tap(find.byType(TextField).first);
+    await tester.pump();
+    await page.focus(tester, page.lines, 0);
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    expect(page.where(), 'above');
+
+    // And the other way: after that move up, a tap into the lower field.
+    await tester.tap(find.byType(TextField).last);
+    await tester.pump();
+    await page.focus(tester, page.line, 3);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(page.where(), 'below');
   });
 
   testWidgets('with nothing above, Up at the start does nothing',

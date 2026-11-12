@@ -406,20 +406,6 @@ void main() {
     await launchApp(tester);
     await expectStatus(tester, 'No fake contacts on this phone.');
 
-    /// The label of the button with the keyboard focus, if any.
-    String? focusedButton() {
-      final context = FocusManager.instance.primaryFocus?.context;
-      final button = context?.findAncestorWidgetOfExactType<TextButton>() ??
-          context?.findAncestorWidgetOfExactType<FilledButton>() ??
-          context?.findAncestorWidgetOfExactType<OutlinedButton>();
-      final child = button?.child;
-      return switch (child) {
-        Text(:final data) => data,
-        Semantics(child: Text(:final data)) => data,
-        _ => null,
-      };
-    }
-
     Future<void> press(LogicalKeyboardKey key) async {
       await tester.sendKeyEvent(key);
       await tester.pumpAndSettle();
@@ -455,8 +441,9 @@ void main() {
     expect(describeAll(await readAddressBook()), describeAll(real));
   });
 
-  testWidgets('U12: with only the arrow keys and the centre button, as with '
-      'a D-pad, the focus goes through the fields to the buttons and back',
+  testWidgets('U12: with only the arrow keys and the centre button (the keys '
+      'a D-pad sends), the focus goes through the fields to the buttons and '
+      'back',
       (tester) async {
     await startWithEmptyAddressBook(tester);
     final real = await seed(kRealContacts);
@@ -484,14 +471,6 @@ void main() {
       return found;
     }
 
-    /// The label of the dialog's button with the focus, if any.
-    String? dialogFocus() {
-      final child = FocusManager.instance.primaryFocus?.context
-          ?.findAncestorWidgetOfExactType<TextButton>()
-          ?.child;
-      return child is Text ? child.data : null;
-    }
-
     Future<List<String?>> pressAll(LogicalKeyboardKey key, int times) async {
       final seen = <String?>[];
       for (var i = 0; i < times; i++) {
@@ -515,11 +494,11 @@ void main() {
     await pumpUntil(tester, () => find.byType(AlertDialog).evaluate().isNotEmpty,
         'dialog of "$kCreate"');
     expectDialog(tester, 'Create 4 fake contacts?');
-    for (var i = 0; i < 4 && dialogFocus() != 'Create'; i++) {
+    for (var i = 0; i < 4 && focusedButton() != 'Create'; i++) {
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
       await tester.pumpAndSettle();
     }
-    expect(dialogFocus(), 'Create');
+    expect(focusedButton(), 'Create');
     await tester.sendKeyEvent(LogicalKeyboardKey.select);
     expect(await waitForResult(tester, kCreate), 'Created 4 fake contacts.');
     await pumpUntil(tester, () => focused() == kCreate, 'focus back on Create');
@@ -530,11 +509,10 @@ void main() {
       'menu',
     ]);
     // Nothing was typed on the way.
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.reload();
-    for (final MapEntry(:key, :value) in kSettings.entries) {
-      expect(prefs.getString(key), value, reason: key);
-    }
+    expect([
+      for (final key in fieldKeys)
+        tester.widget<TextField>(find.byKey(Key(key))).controller!.text,
+    ], kSettings.values);
     final book = await readAddressBook();
     expect(
         book.values.where((c) => !real.containsKey(c.id)).map((c) => c.displayName),
@@ -795,6 +773,20 @@ bool createButtonEnabled(WidgetTester tester) {
   final button = find.byKey(const Key('Create'));
   return button.evaluate().isNotEmpty &&
       tester.widget<FilledButton>(button).enabled;
+}
+
+/// The label of the button with the keyboard focus, if any.
+String? focusedButton() {
+  final context = FocusManager.instance.primaryFocus?.context;
+  final button = context?.findAncestorWidgetOfExactType<TextButton>() ??
+      context?.findAncestorWidgetOfExactType<FilledButton>() ??
+      context?.findAncestorWidgetOfExactType<OutlinedButton>();
+  final child = button?.child;
+  return switch (child) {
+    Text(:final data) => data,
+    Semantics(child: Text(:final data)) => data,
+    _ => null,
+  };
 }
 
 /// The result under the buttons, if any.
