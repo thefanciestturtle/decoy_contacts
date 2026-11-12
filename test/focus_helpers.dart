@@ -20,6 +20,7 @@ bool focusWithin(WidgetTester tester, Finder finder) {
   final focused = FocusManager.instance.primaryFocus?.context;
   if (focused == null || finder.evaluate().isEmpty) return false;
   final element = tester.element(finder);
+  if (focused == element) return true;
   var bFound = false;
   focused.visitAncestorElements((e) => !(bFound = e == element));
   return bFound;
@@ -37,10 +38,11 @@ String? focusedButton() {
       : focus?.context?.findAncestorWidgetOfExactType<TextButton>() ??
           focus?.context?.findAncestorWidgetOfExactType<FilledButton>() ??
           focus?.context?.findAncestorWidgetOfExactType<OutlinedButton>();
-  final child = button?.child;
-  return child is Text ? child.data : (child is Semantics
-      ? (child.child as Text?)?.data
-      : null);
+  return switch (button?.child) {
+    Text(:final data) => data,
+    Semantics(child: Text(:final data)) => data,
+    _ => null,
+  };
 }
 
 /// Where the keyboard focus is on the home page: 'menu', a field's key

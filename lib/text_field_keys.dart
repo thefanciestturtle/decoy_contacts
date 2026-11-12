@@ -26,7 +26,9 @@ const SingleActivator _down = SingleActivator(LogicalKeyboardKey.arrowDown);
 /// - Only while keys are being used to move around (the mode in which
 ///   focus rings show), not for the arrow keys of an on-screen keyboard:
 ///   Flutter leaves the mode as it was for those, so after a tap into the
-///   field they only move the caret, and the keyboard stays open.
+///   field they only move the caret, and the keyboard stays open. (Flutter
+///   tells them by Android's soft keyboard flag or virtual device, a check
+///   it means to replace, flutter/flutter#136419; checked on API 36.)
 /// - A key held down to get to the start or the end of the field it was
 ///   pressed in stops there (as on the About screen); one held down since
 ///   before the focus came into the field goes on through it, as on
@@ -49,8 +51,8 @@ class ArrowsLeaveTextFields extends StatefulWidget {
 }
 
 class _ArrowsLeaveTextFieldsState extends State<ArrowsLeaveTextFields> {
-  /// What had the focus when Up or Down last went down: a repeat of it
-  /// stops at the edge of that field only.
+  /// What had the focus when Up or Down went down, until it comes up: a
+  /// repeat of it stops at the edge of that field only.
   FocusNode? _pressedIn;
 
   @override
@@ -67,10 +69,11 @@ class _ArrowsLeaveTextFieldsState extends State<ArrowsLeaveTextFields> {
   }
 
   bool _noteWhereKeyWentDown(KeyEvent event) {
-    if (event is KeyDownEvent &&
-        (event.logicalKey == LogicalKeyboardKey.arrowUp ||
-            event.logicalKey == LogicalKeyboardKey.arrowDown)) {
-      _pressedIn = FocusManager.instance.primaryFocus;
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp ||
+        event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      if (event is KeyDownEvent) _pressedIn = FocusManager.instance.primaryFocus;
+      // (Not kept: the screen it was on may have gone.)
+      if (event is KeyUpEvent) _pressedIn = null;
     }
     return false;
   }

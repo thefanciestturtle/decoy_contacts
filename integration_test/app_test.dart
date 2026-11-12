@@ -466,8 +466,7 @@ void main() {
         'dialog of "$kCreate"');
     expectDialog(tester, 'Create 4 fake contacts?');
     for (var i = 0; i < 4 && focusedButton() != 'Create'; i++) {
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
-      await tester.pumpAndSettle();
+      await pressAll(tester, LogicalKeyboardKey.arrowRight, 1);
     }
     expect(focusedButton(), 'Create');
     await tester.sendKeyEvent(LogicalKeyboardKey.select);
