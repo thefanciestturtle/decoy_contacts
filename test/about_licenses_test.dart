@@ -1,4 +1,4 @@
-// Flutter's licence page from About (U9), in a file of its own: the
+// Material's licence page from About (U9), in a file of its own: the
 // licences are registered once per run, and another test registering the
 // app's own first would hide a failure to register it here.
 
@@ -8,7 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
-  testWidgets("Licenses shows Flutter's licence page, with the app's name, "
+  testWidgets("Licenses shows Material's licence page, with the app's name, "
       'version and own licence', (tester) async {
     await tester.pumpWidget(MaterialApp(
         theme: appTheme(Brightness.light), home: const AboutPage()));

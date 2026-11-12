@@ -29,7 +29,7 @@ const String kPrivacyPolicy =
     "trackers. It has no internet access.";
 
 /// The app's own licence, as in LICENSE.md (a test checks they match),
-/// for Flutter's licence page.
+/// for Material's licence page.
 const String kAppLicense = 'The MIT License (MIT)\n'
     '\n'
     'Copyright (c) 2021 Bill Dietrich\n'
@@ -58,7 +58,7 @@ const String kLicensePackage = 'fake_contacts';
 
 bool _bLicenseRegistered = false;
 
-/// Adds the app's own licence ([kAppLicense]) to the ones Flutter's
+/// Adds the app's own licence ([kAppLicense]) to the ones Material's
 /// licence page lists (the packages the app uses); once.
 void registerAppLicense() {
   if (_bLicenseRegistered) return;
