@@ -138,6 +138,47 @@ void main() {
     expect(page.where(), 'lines 0');
   });
 
+  testWidgets('a key held down since before the focus came into the fields '
+      'goes on through them, as on Android', (tester) async {
+    final page = _Page();
+    await page.pump(tester);
+    page.above.requestFocus();
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(page.where(), 'lines 13');
+    for (var i = 0; i < 4; i++) {
+      await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+    }
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(page.where(), 'below');
+  });
+
+  testWidgets("the arrow keys of an on-screen keyboard only move the caret: "
+      "Flutter doesn't switch to moving around by keys for them",
+      (tester) async {
+    final page = _Page();
+    await page.pump(tester);
+    // As after a tap into the field, with only the on-screen keyboard's
+    // keys pressed since.
+    FocusManager.instance.highlightStrategy = FocusHighlightStrategy.alwaysTouch;
+    addTearDown(() => FocusManager.instance.highlightStrategy =
+        FocusHighlightStrategy.automatic);
+    await page.focus(tester, page.lines, 0);
+    await press(tester, LogicalKeyboardKey.arrowUp);
+    expect(page.where(), 'lines 0');
+    await page.focus(tester, page.line, 3);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(page.where(), 'line 3');
+
+    // Once keys are used to move around, the same press leaves.
+    FocusManager.instance.highlightStrategy = FocusHighlightStrategy.automatic;
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(page.where(), 'below');
+  });
+
   testWidgets('with Shift or Control, at the edge, the focus stays',
       (tester) async {
     final page = _Page();

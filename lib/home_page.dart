@@ -954,69 +954,66 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                     // Also out of reach of the focus while disabled: with a D-pad
                     // (directional navigation) a disabled TextField can still
                     // take the focus, and its keyboard would open by itself when
-                    // the action ends. The arrow keys can leave a field at its
-                    // start or end (a D-pad has no Tab).
+                    // the action ends.
                     ExcludeFocus(
                       excluding: !bCanAct,
-                      child: ArrowsLeaveTextFields(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: <Widget>[
-                            TextField(
-                              key: keyLastNames,
-                              controller: lastNamesController,
-                              onChanged: _settingsChanged,
-                              enabled: bCanAct,
-                              minLines: 1,
-                              maxLines: 4,
-                              decoration: _fieldDecoration('Last names'),
-                            ),
-                            const SizedBox(height: 20),
-                            TextField(
-                              key: keyFirstNames,
-                              controller: firstNamesController,
-                              onChanged: _settingsChanged,
-                              enabled: bCanAct,
-                              minLines: 1,
-                              maxLines: 4,
-                              decoration: _fieldDecoration('First names'),
-                            ),
-                            const SizedBox(height: 30),
-                            TextField(
-                              key: keyPhoneNumberTemplate,
-                              controller: phoneNumberTemplateController,
-                              focusNode: _phoneFocus,
-                              onChanged: _settingsChanged,
-                              enabled: bCanAct,
-                              // Not TextInputType.phone: a dial pad has no n.
-                              keyboardType: TextInputType.text,
-                              autocorrect: false,
-                              enableSuggestions: false,
-                              // Always read out as it changes: only typing in
-                              // this field changes it.
-                              decoration: _fieldDecoration('Phone number template',
-                                  warning: _checks.phoneWarning,
-                                  enabled: bCanAct,
-                                  bLive: true),
-                            ),
-                            const SizedBox(height: 20),
-                            TextField(
-                              key: keyEmailAddressTemplate,
-                              controller: emailAddressTemplateController,
-                              focusNode: _emailFocus,
-                              onChanged: _settingsChanged,
-                              enabled: bCanAct,
-                              keyboardType: TextInputType.emailAddress,
-                              autocorrect: false,
-                              // Suggestions stay on: without them Android gets a
-                              // keyboard with no @ key.
-                              decoration: _fieldDecoration('Email address template',
-                                  warning: _checks.emailWarning,
-                                  enabled: bCanAct,
-                                  bLive: _emailFocus.hasFocus),
-                            ),
-                          ],
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          TextField(
+                            key: keyLastNames,
+                            controller: lastNamesController,
+                            onChanged: _settingsChanged,
+                            enabled: bCanAct,
+                            minLines: 1,
+                            maxLines: 4,
+                            decoration: _fieldDecoration('Last names'),
+                          ),
+                          const SizedBox(height: 20),
+                          TextField(
+                            key: keyFirstNames,
+                            controller: firstNamesController,
+                            onChanged: _settingsChanged,
+                            enabled: bCanAct,
+                            minLines: 1,
+                            maxLines: 4,
+                            decoration: _fieldDecoration('First names'),
+                          ),
+                          const SizedBox(height: 30),
+                          TextField(
+                            key: keyPhoneNumberTemplate,
+                            controller: phoneNumberTemplateController,
+                            focusNode: _phoneFocus,
+                            onChanged: _settingsChanged,
+                            enabled: bCanAct,
+                            // Not TextInputType.phone: a dial pad has no n.
+                            keyboardType: TextInputType.text,
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            // Always read out as it changes: only typing in
+                            // this field changes it.
+                            decoration: _fieldDecoration('Phone number template',
+                                warning: _checks.phoneWarning,
+                                enabled: bCanAct,
+                                bLive: true),
+                          ),
+                          const SizedBox(height: 20),
+                          TextField(
+                            key: keyEmailAddressTemplate,
+                            controller: emailAddressTemplateController,
+                            focusNode: _emailFocus,
+                            onChanged: _settingsChanged,
+                            enabled: bCanAct,
+                            keyboardType: TextInputType.emailAddress,
+                            autocorrect: false,
+                            // Suggestions stay on: without them Android gets a
+                            // keyboard with no @ key.
+                            decoration: _fieldDecoration('Email address template',
+                                warning: _checks.emailWarning,
+                                enabled: bCanAct,
+                                bLive: _emailFocus.hasFocus),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 12),

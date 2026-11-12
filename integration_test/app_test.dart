@@ -25,6 +25,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../test/focus_helpers.dart';
 import '../test/talkback_announcements.dart';
 
 /// 2 last names x 2 first names, so Create makes the four fakes in [kFakes].
@@ -449,45 +450,15 @@ void main() {
     final real = await seed(kRealContacts);
     await launchApp(tester);
     await expectStatus(tester, 'No fake contacts on this phone.');
-    const fieldKeys = ['LastNames', 'FirstNames', 'PhoneNumberTemplate',
-        'EmailAddressTemplate'];
-
-    /// Where the keyboard focus is: 'menu', a field's key, a button's
-    /// label, or null.
-    String? focused() {
-      final context = FocusManager.instance.primaryFocus?.context;
-      if (context == null) return null;
-      String? found;
-      context.visitAncestorElements((e) {
-        final key = e.widget.key;
-        if (key == const Key('Menu')) found = 'menu';
-        if (key is ValueKey<String> && fieldKeys.contains(key.value)) {
-          found = key.value;
-        }
-        if (key == const Key('Create')) found = kCreate;
-        if (key == const Key('Delete')) found = kDelete;
-        return found == null;
-      });
-      return found;
+    // Into the app (a D-pad's first press focuses something), then up to
+    // the menu, which is at the top.
+    await pressAll(tester, LogicalKeyboardKey.arrowDown, 1);
+    for (var i = 0; i < 8 && focusedPlace(tester) != 'menu'; i++) {
+      await pressAll(tester, LogicalKeyboardKey.arrowUp, 1);
     }
-
-    Future<List<String?>> pressAll(LogicalKeyboardKey key, int times) async {
-      final seen = <String?>[];
-      for (var i = 0; i < times; i++) {
-        await tester.sendKeyEvent(key);
-        await tester.pumpAndSettle();
-        seen.add(focused());
-      }
-      return seen;
-    }
-
-    // Into the app (a D-pad's first press focuses something), to the menu.
-    for (var i = 0; i < 3 && focused() != 'menu'; i++) {
-      await pressAll(LogicalKeyboardKey.arrowDown, 1);
-    }
-    expect(focused(), 'menu');
-    expect(await pressAll(LogicalKeyboardKey.arrowDown, 5),
-        [...fieldKeys, kCreate]);
+    expect(focusedPlace(tester), 'menu');
+    expect(await pressAll(tester, LogicalKeyboardKey.arrowDown, 5),
+        [...kFieldKeys, kCreate]);
     // The centre button presses Create; in the dialog, Right to its Create
     // button (after Cancel) and the centre button confirm.
     await tester.sendKeyEvent(LogicalKeyboardKey.select);
@@ -501,16 +472,17 @@ void main() {
     expect(focusedButton(), 'Create');
     await tester.sendKeyEvent(LogicalKeyboardKey.select);
     expect(await waitForResult(tester, kCreate), 'Created 4 fake contacts.');
-    await pumpUntil(tester, () => focused() == kCreate, 'focus back on Create');
+    await pumpUntil(
+        tester, () => focusedPlace(tester) == kCreate, 'focus back on Create');
 
     // Back up: each field's caret to the start of its line first.
-    expect(await pressAll(LogicalKeyboardKey.arrowUp, 9), [
-      for (final key in fieldKeys.reversed) ...[key, key],
+    expect(await pressAll(tester, LogicalKeyboardKey.arrowUp, 9), [
+      for (final key in kFieldKeys.reversed) ...[key, key],
       'menu',
     ]);
     // Nothing was typed on the way.
     expect([
-      for (final key in fieldKeys)
+      for (final key in kFieldKeys)
         tester.widget<TextField>(find.byKey(Key(key))).controller!.text,
     ], kSettings.values);
     final book = await readAddressBook();
@@ -773,20 +745,6 @@ bool createButtonEnabled(WidgetTester tester) {
   final button = find.byKey(const Key('Create'));
   return button.evaluate().isNotEmpty &&
       tester.widget<FilledButton>(button).enabled;
-}
-
-/// The label of the button with the keyboard focus, if any.
-String? focusedButton() {
-  final context = FocusManager.instance.primaryFocus?.context;
-  final button = context?.findAncestorWidgetOfExactType<TextButton>() ??
-      context?.findAncestorWidgetOfExactType<FilledButton>() ??
-      context?.findAncestorWidgetOfExactType<OutlinedButton>();
-  final child = button?.child;
-  return switch (child) {
-    Text(:final data) => data,
-    Semantics(child: Text(:final data)) => data,
-    _ => null,
-  };
 }
 
 /// The result under the buttons, if any.

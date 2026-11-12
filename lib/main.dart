@@ -6,6 +6,7 @@ import 'contacts_gateway.dart';
 import 'flutter_contacts_gateway.dart';
 import 'home_page.dart';
 import 'settings_store.dart';
+import 'text_field_keys.dart';
 
 void main() {
   runApp(const MyApp());
@@ -40,6 +41,9 @@ class MyApp extends StatelessWidget {
       // Light or dark, as the system is set.
       theme: appTheme(Brightness.light),
       darkTheme: appTheme(Brightness.dark),
+      // On every screen, the arrow keys can leave a text field at its start
+      // or end (a D-pad has no Tab).
+      builder: (context, child) => ArrowsLeaveTextFields(child: child!),
       home: MyHomePage(
           title: 'Fake Contacts',
           contacts: contacts,
