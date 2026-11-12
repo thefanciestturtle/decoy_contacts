@@ -23,19 +23,15 @@
 # there (this needs the internet; if the site can't be reached, it only
 # warns).
 #
-# Needs bash 4.4 or newer.
+# Needs bash 4.4 or newer, flutter, python3 and curl.
 #
 # Not compared: the app's own Java level, and the SDK versions, which come
 # from Flutter itself (flutter.compileSdkVersion etc.).
 set -euo pipefail
 
-if ((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 404)); then
-  echo "error: this needs bash 4.4 or newer (this is $BASH_VERSION)" >&2
-  exit 1
-fi
-
 cd "$(dirname "$0")/.."
-source tool/flutter_version_lib.sh
+source tool/check_lib.sh
+need flutter python3 curl
 
 readonly WRAPPER=android/gradle/wrapper/gradle-wrapper.properties
 readonly SETTINGS=android/settings.gradle.kts
@@ -48,9 +44,6 @@ readonly OWN_PROPERTIES=(org.gradle.jvmargs)
 readonly OWN_PLUGINS=()
 # Separates a key from its value in what properties() prints.
 readonly SEP=$'\x1f'
-
-command -v flutter >/dev/null ||
-  { echo "error: no flutter on the PATH" >&2; exit 1; }
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -136,19 +129,8 @@ plugin_name() {
 # Whether $1 is a release version: numbers only (9.5, 9.5.1), no "-rc1".
 is_release() { [[ "$1" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; }
 
-# A version with three parts (9.5 -> 9.5.0).
-three_parts() { awk -F. '{ print $1 "." ($2 == "" ? 0 : $2) "." ($3 == "" ? 0 : $3) }' <<<"$1"; }
-
 # MAJOR.MINOR of a version.
 minor_line() { awk -F. '{ print $1 "." ($2 == "" ? 0 : $2) }' <<<"$1"; }
-
-# Whether release version $1 is older than $2.
-older() {
-  local a b
-  a="$(three_parts "$1")"
-  b="$(three_parts "$2")"
-  [[ "$a" != "$b" && "$(printf '%s\n%s\n' "$a" "$b" | sort -V | head -n 1)" == "$a" ]]
-}
 
 # Compares the app's version $2 of tool $1 with the template's, $3; $4 says
 # where to change it.
@@ -167,7 +149,7 @@ compare() {
     problem "$tool $ours isn't a release. $change"
   elif [[ "$(minor_line "$ours")" != "$line" ]]; then
     problem "$tool $ours is on the $(minor_line "$ours") line, Flutter $flutter_version's template on $line ($theirs). $change"
-  elif older "$ours" "$theirs"; then
+  elif version_older "$ours" "$theirs"; then
     problem "$tool $ours is older than Flutter $flutter_version's template ($theirs). $change"
   else
     echo "$tool $ours: OK (template: $theirs)"
@@ -179,11 +161,18 @@ read_properties() {
   local -n into=$2
   local text key value
   text="$(properties "$1")"
+  [[ -n "$text" ]] || return 0
   while IFS="$SEP" read -r key value; do
-    [[ -n "$key$value" ]] || continue
     # shellcheck disable=SC2034 # (into is the caller's array)
     into["${key:-(an empty key)}"]=$value
   done <<<"$text"
+}
+
+# Whether the associative array named $1 has the key $2. (Not [[ -v ]],
+# which would expand a $(...) in the key once more on older bash.)
+has() {
+  local -n has_array=$1
+  [[ -n "${has_array[$2]+set}" ]]
 }
 
 flutter_version="$(flutter --version --machine 2>/dev/null |
@@ -235,21 +224,21 @@ while read -r id version; do
 done <<<"$theirs_list"
 # (The loop below doesn't see AGP if neither file gives it a version it
 # can read.)
-if [[ ! -v "theirs_plugins[com.android.application]" &&
-      ! -v "ours_plugins[com.android.application]" ]]; then
+if ! has theirs_plugins com.android.application &&
+   ! has ours_plugins com.android.application; then
   problem "couldn't read the Android Gradle plugin's (com.android.application) version in Flutter $flutter_version's template (settings.gradle.kts); this script needs updating."
 fi
 while IFS= read -r id; do
   [[ -n "$id" ]] || continue
   name="$(plugin_name "$id")"
-  if [[ ! -v "theirs_plugins[$id]" ]] &&
+  if ! has theirs_plugins "$id" &&
      mentions_plugin "$template/${SETTINGS#android/}" "$id"; then
     problem "$name: couldn't read its version in Flutter $flutter_version's template (settings.gradle.kts); this script needs updating."
-  elif [[ ! -v "theirs_plugins[$id]" ]]; then
+  elif ! has theirs_plugins "$id"; then
     # (The app's own plugins aren't in the template.)
     for own in "${OWN_PLUGINS[@]}"; do [[ "$id" != "$own" ]] || continue 2; done
     problem "$name: Flutter $flutter_version's template doesn't use it. Remove it from $SETTINGS (and android/app/build.gradle.kts), or, if the template set it up another way, do as a new project (flutter create) does."
-  elif [[ -v "ours_plugins[$id]" ]]; then
+  elif has ours_plugins "$id"; then
     compare "$name" "${ours_plugins[$id]}" "${theirs_plugins[$id]}" "$SETTINGS"
   elif mentions_plugin "$SETTINGS" "$id"; then
     problem "$name: couldn't read the app's version in $SETTINGS (write it as the template does: id(\"$id\") version \"...\")."
@@ -263,14 +252,14 @@ declare -A ours_props=() theirs_props=()
 read_properties "$PROPERTIES" ours_props
 read_properties "$template/${PROPERTIES#android/}" theirs_props
 for key in "${OWN_PROPERTIES[@]}"; do
-  unset "ours_props[$key]" "theirs_props[$key]"
+  unset 'ours_props[$key]' 'theirs_props[$key]'
 done
 problems_before=${#problems[@]}
 while IFS= read -r key; do
   [[ -n "$key" ]] || continue
-  if [[ ! -v "theirs_props[$key]" ]]; then
+  if ! has theirs_props "$key"; then
     problem "$PROPERTIES: remove $key=${ours_props[$key]} (Flutter $flutter_version's template doesn't set $key)."
-  elif [[ ! -v "ours_props[$key]" ]]; then
+  elif ! has ours_props "$key"; then
     problem "$PROPERTIES: add $key=${theirs_props[$key]}, as in Flutter $flutter_version's template."
   elif [[ "${ours_props[$key]}" != "${theirs_props[$key]}" ]]; then
     problem "$PROPERTIES: $key is '${ours_props[$key]}'; Flutter $flutter_version's template has '${theirs_props[$key]}'."
@@ -288,19 +277,20 @@ if [[ "$ours_url" != "$GRADLE_DISTRIBUTIONS"gradle-*.zip ]]; then
   problem "$WRAPPER: distributionUrl is '$ours_url', not a Gradle distribution on Gradle's own site ($GRADLE_DISTRIBUTIONS)."
 elif [[ -z "$ours_sum" ]]; then
   problem "$WRAPPER has no distributionSha256Sum: add Gradle's checksum of the distribution ($sum_url)."
-elif ! response="$(curl -sSL --retry 3 --connect-timeout 20 --max-time 60 \
-                     -w '\n%{http_code}' "$sum_url")"; then
+elif ! status="$(curl -sSL --retry 3 --connect-timeout 20 --max-time 60 \
+                   -o "$tmp/sha256" -w '%{http_code}' "$sum_url")"; then
   warning "couldn't reach Gradle's site for the checksum ($sum_url), so distributionSha256Sum wasn't compared with it."
 else
-  # The checksum, then the HTTP status on a line of its own.
   # (Its first word: a .sha256 file may also name the file, or end in a
-  # newline.)
-  status="${response##*$'\n'}"
-  read -r published _ <<<"${response%$'\n'*}" || true
+  # newline. curl empties the file before each retry.)
+  published=""
+  read -r published _ <"$tmp/sha256" || true
   if [[ "$status" == 404 || "$status" == 410 ]]; then
     problem "Gradle's site has no checksum for $distribution ($sum_url): is distributionUrl right?"
   elif [[ "$status" != 200 ]]; then
     warning "Gradle's site answered HTTP $status for the checksum ($sum_url), so distributionSha256Sum wasn't compared with it."
+  elif [[ ! "$published" =~ ^[0-9a-f]{64}$ ]]; then
+    warning "what Gradle's site sent for the checksum ($sum_url) isn't one, so distributionSha256Sum wasn't compared with it."
   elif [[ "$ours_sum" != "$published" ]]; then
     problem "$WRAPPER: distributionSha256Sum is $ours_sum, but Gradle publishes $published for $distribution."
   else

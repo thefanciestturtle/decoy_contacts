@@ -8,7 +8,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 readonly SCRIPT="$PWD/tool/check_flutter_release.sh"
-readonly LIB="$PWD/tool/flutter_version_lib.sh"
+readonly LIB="$PWD/tool/check_lib.sh"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -141,7 +141,7 @@ expect "newer than the stable release: nothing to do" 3.51.0 3.50.0 0 \
 expect "the current stable release is found by its hash" 3.50.0 3.51.0 0 \
   "the current stable release is 3.51.0." "create"
 body="$(cat "$tmp/case$case_number/gh.log.body" 2>/dev/null || true)"
-[[ "$body" == "Flutter 3.51.0 is out; CI builds with Flutter 3.50.0 (\`FLUTTER_VERSION\` in \`.github/workflows/dart.yml\`)."*"close it as not planned." ]] ||
+[[ "$body" == "Flutter 3.51.0 is out; CI builds with Flutter 3.50.0 (\`FLUTTER_VERSION\` in \`.github/workflows/dart.yml\`)."*"finds it by its title"*"close it as not planned." ]] ||
   { echo "FAIL: the issue's text: $body"; failures=$((failures + 1)); }
 expect "Flutter's list can't be downloaded: an error" 3.50.0 "" 22 "" ""
 BAD_LIST=1 expect "Flutter's list without the current release: an error" \
@@ -167,6 +167,10 @@ ISSUES="$(issues "$(issue 7 OPEN 3.51.0)")" expect \
 ISSUES="$(issues "$(issue 7 OPEN 3.50.1)" "$(issue 9 OPEN 3.51.0)")" expect \
   "caught up with two open: both are closed" 3.51.0 3.51.0 0 \
   "Closing issue #7" "close9:completed close7:completed"
+ISSUES="$(issues "$(issue 9 OPEN 3.52.0)")" expect \
+  "an issue naming a newer release than the current (withdrawn) one is left" \
+  3.51.0 3.51.1 0 \
+  "Issue #9 names Flutter 3.52.0, newer than the current stable release; leaving it." ""
 ISSUES="$(issues "$(issue 7 OPEN 3.51.0)" "$(issue 9 OPEN 3.51.0)")" expect \
   "two open: the newer one is kept, the other closed as a duplicate" \
   3.50.0 3.51.0 0 "Closing issue #7 as a duplicate of #9." "close7:duplicate-of-9"
@@ -181,13 +185,16 @@ ISSUES="$(issues "$(issue 7 OPEN 3.51.0 github-actions)")" expect \
   "Closing issue #7" "close7:completed"
 
 ISSUES="$(issues "$(issue 7 CLOSED 3.51.0 app/github-actions NOT_PLANNED)")" expect \
-  "closed as not planned since the release came out: stays closed" 3.50.0 3.51.0 0 \
-  "Nothing to do: the issue was closed as not planned after Flutter 3.51.0 came out." ""
+  "closed as not planned while it named this release: stays closed" 3.50.0 3.51.0 0 \
+  "Nothing to do: the issue about Flutter 3.51.0 was closed as not planned." ""
+ISSUES="$(issues "$(issue 7 CLOSED 3.50.1 app/github-actions NOT_PLANNED)")" expect \
+  "closed as not planned while it named an older one: a new issue (even after)" \
+  3.50.0 3.51.0 0 "Opening an issue: Flutter 3.51.0 is out." "create"
 ISSUES="$(issues "$(issue 7 CLOSED - app/github-actions NOT_PLANNED)")" expect \
-  "also with its text changed by hand" 3.50.0 3.51.0 0 \
-  "Nothing to do: the issue was closed as not planned after" ""
-ISSUES="$(issues "$(issue 7 CLOSED 3.50.1 app/github-actions NOT_PLANNED 2026-11-01T08:00:00Z)")" expect \
-  "put off before this release came out: a new issue" 3.50.0 3.51.0 0 \
+  "with its text changed by hand, closed after the release came out: put off" \
+  3.50.0 3.51.0 0 "Nothing to do: the issue about Flutter 3.51.0 was closed as not planned." ""
+ISSUES="$(issues "$(issue 7 CLOSED - app/github-actions NOT_PLANNED 2026-11-01T08:00:00Z)")" expect \
+  "with its text changed by hand, closed before: a new issue" 3.50.0 3.51.0 0 \
   "Opening an issue: Flutter 3.51.0 is out." "create"
 ISSUES="$(issues "$(issue 7 CLOSED 3.51.0 app/github-actions COMPLETED)")" expect \
   "closed as done, then FLUTTER_VERSION went back: a new issue" 3.50.0 3.51.0 0 \

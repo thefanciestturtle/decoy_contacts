@@ -10,23 +10,20 @@
 # open, it updates the issue and comments on it (one issue, however many
 # runs); notes go in comments (a text changed by hand is left alone). Once
 # FLUTTER_VERSION has caught up, it closes it. To put the upgrade off until
-# a newer release comes out, close it as "not planned".
+# a newer release comes out, close it as "not planned". It finds the issue
+# by its title, so keep that.
 #
 # It only touches issues opened by GitHub Actions: it runs in the weekly
 # workflow (.github/workflows/flutter_release.yml), with that workflow's
 # token (`issues: write`). Elsewhere, only with --dry-run, which only says
 # what it would do (and needs `gh` with read access to the issues).
 #
-# Needs bash 4.4 or newer.
+# Needs bash 4.4 or newer, curl, python3 and gh.
 set -euo pipefail
 
-if ((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 404)); then
-  echo "error: this needs bash 4.4 or newer (this is $BASH_VERSION)" >&2
-  exit 1
-fi
-
 cd "$(dirname "$0")/.."
-source tool/flutter_version_lib.sh
+source tool/check_lib.sh
+need curl python3 gh
 
 readonly RELEASES=https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json
 readonly TITLE='A newer stable Flutter is out'
@@ -74,11 +71,12 @@ read -r latest latest_date <<<"$latest_and_date"
 echo "CI builds with Flutter $ours; the current stable release is $latest."
 
 # The issues this script opened (by GitHub Actions, with its title), as
-# lines "STATE NUMBER VERSION", newest first. STATE is open, closed, or
-# put-off: closed as not planned since the current release came out.
-# VERSION is the release the issue names ("Flutter VERSION is out"), or
-# "-" if its text no longer says. (Not found through GitHub's search, which
-# can lag behind by a minute.)
+# lines "STATE NUMBER VERSION", newest first. VERSION is the release the
+# issue names ("Flutter VERSION is out"), or "-" if its text no longer
+# says. STATE is open, closed, or put-off: closed as not planned while it
+# named the current release (or, with its text changed, after that came
+# out). (Not found through GitHub's search, which can lag behind by a
+# minute.)
 issues="$(gh issue list --state all --limit 1000 \
             --json number,title,author,state,stateReason,closedAt,body)"
 ours_issues="$(python3 -c '
@@ -88,18 +86,20 @@ from datetime import datetime
 def when(text):
     return datetime.fromisoformat(text.replace("Z", "+00:00"))
 
-title, released = sys.argv[1], when(sys.argv[2])
+title, latest, released = sys.argv[1], sys.argv[2], when(sys.argv[3])
 for i in sorted(json.load(sys.stdin), key=lambda i: -i["number"]):
     if i["title"] != title or \
             i["author"]["login"] not in ("app/github-actions", "github-actions"):
         continue
     named = re.match(r"Flutter (\S+) is out", i["body"] or "")
+    named = named.group(1) if named else "-"
     state = i["state"].lower()
-    if state == "closed" and i.get("stateReason") == "NOT_PLANNED" and \
-            i.get("closedAt") and when(i["closedAt"]) >= released:
+    if state == "closed" and i.get("stateReason") == "NOT_PLANNED" and (
+            named == latest or named == "-" and i.get("closedAt")
+            and when(i["closedAt"]) >= released):
         state = "put-off"
-    print(state, i["number"], named.group(1) if named else "-")
-' "$TITLE" "$latest_date" <<<"$issues")"
+    print(state, i["number"], named)
+' "$TITLE" "$latest" "$latest_date" <<<"$issues")"
 open_issues=() open_named=()
 while read -r state number named; do
   if [[ "$state" == open ]]; then
@@ -108,7 +108,7 @@ while read -r state number named; do
   fi
 done <<<"$ours_issues"
 
-if [[ "$(printf '%s\n%s\n' "$ours" "$latest" | sort -V | tail -n 1)" == "$ours" ]]; then
+if ! version_older "$ours" "$latest"; then
   if ((${#open_issues[@]} == 0)); then
     echo "Nothing to do."
   fi
@@ -124,11 +124,11 @@ body="Flutter $latest is out; CI builds with Flutter $ours (\`FLUTTER_VERSION\` 
 
 To move to it: change \`FLUTTER_VERSION\` and the minimums in \`pubspec.yaml\`, and line the build tools up with it (\`tool/check_build_tools.sh\` says what to change). What's new: https://docs.flutter.dev/release/release-notes
 
-This issue is kept by \`tool/check_flutter_release.sh\`, which runs weekly: it rewrites this text when a newer release comes out (notes go in comments), and closes the issue once \`FLUTTER_VERSION\` has caught up. To put the upgrade off until a newer release comes out, close it as not planned."
+This issue is kept by \`tool/check_flutter_release.sh\`, which runs weekly and finds it by its title: it rewrites this text when a newer release comes out (notes go in comments), and closes the issue once \`FLUTTER_VERSION\` has caught up. To put the upgrade off until a newer release comes out, close it as not planned."
 
 if ((${#open_issues[@]} == 0)); then
   if grep -q '^put-off ' <<<"$ours_issues"; then
-    echo "Nothing to do: the issue was closed as not planned after Flutter $latest came out."
+    echo "Nothing to do: the issue about Flutter $latest was closed as not planned."
   else
     echo "Opening an issue: Flutter $latest is out."
     act gh issue create --title "$TITLE" --body "$body"
@@ -149,6 +149,9 @@ if [[ "${open_named[0]}" == "$latest" ]]; then
   echo "Issue #$issue already says so."
 elif [[ "${open_named[0]}" == - ]]; then
   echo "Issue #$issue's text was changed by hand; leaving it as it is."
+elif ! version_older "${open_named[0]}" "$latest"; then
+  # (Flutter can withdraw a release.)
+  echo "Issue #$issue names Flutter ${open_named[0]}, newer than the current stable release; leaving it."
 else
   # (Editing the text notifies nobody; a comment does.)
   echo "Updating issue #$issue: Flutter $latest is out."

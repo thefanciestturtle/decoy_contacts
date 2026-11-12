@@ -8,15 +8,15 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 readonly SCRIPT="$PWD/tool/check_build_tools.sh"
-readonly LIB="$PWD/tool/flutter_version_lib.sh"
+readonly LIB="$PWD/tool/check_lib.sh"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 # Stand-ins. `flutter create` writes its arguments to $FLUTTER_LOG and
 # copies $TEMPLATE (fails with CREATE_FAILS=1). `curl` writes the URL it
-# was given to $CURL_LOG and prints $PUBLISHED_SUM, then the HTTP status
-# $HTTP_STATUS (200 by default) as its -w asks; or it exits with
+# was given to $CURL_LOG, $PUBLISHED_SUM to the file after -o, and the HTTP
+# status $HTTP_STATUS (200 by default) as -w asks; or it exits with
 # $CURL_EXIT (couldn't connect) if set.
 mkdir "$tmp/bin" "$tmp/bin_no_flutter"
 cat >"$tmp/bin/flutter" <<'EOF'
@@ -34,10 +34,23 @@ cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 echo "${*: -1}" >>"$CURL_LOG"
 if [[ -n "${CURL_EXIT:-}" ]]; then exit "$CURL_EXIT"; fi
-printf '%s\n%s' "$PUBLISHED_SUM" "${HTTP_STATUS:-200}"
+out=""
+while (($#)); do [[ "$1" != -o ]] || out=$2; shift; done
+[[ -n "$out" ]] || { echo "curl stand-in: no -o" >&2; exit 2; }
+printf '%s' "$PUBLISHED_SUM" >"$out"
+printf '%s' "${HTTP_STATUS:-200}"
 EOF
 cp "$tmp/bin/curl" "$tmp/bin_no_flutter/curl"
 chmod +x "$tmp/bin/"* "$tmp/bin_no_flutter/"*
+# Only what the script needs before it checks for its commands, and the
+# stand-ins: no python3.
+mkdir "$tmp/bin_no_python"
+ln -s "$(command -v bash)" "$(command -v dirname)" "$tmp/bin/flutter" \
+  "$tmp/bin/curl" "$tmp/bin_no_python/"
+
+# Two checksums (Gradle's are SHA-256, 64 hex digits).
+readonly SUM=c72fb9991f6025cbe337d52ba77e531b3faf62bdd3e348fe1ccee9f51c71adb0
+readonly OTHER_SUM=61ba77b3ff7167e60962763eb4bae79db7120c189b9544358d0ade3c1e712a83
 
 readonly GOOD_PROPERTIES='org.gradle.jvmargs=-Xmx1536M
 android.useAndroidX=true
@@ -104,11 +117,11 @@ expect() {
   mkdir -p "$proj/tool"
   cp "$SCRIPT" "$LIB" "$proj/tool/"
   write_project "$proj" "${4-9.5.1}" "${5-9.3.3}" "${6-2.4.21}" \
-    "${7-$GOOD_PROPERTIES}" "${8-abc123}" "${9-1.0.0}"
+    "${7-$GOOD_PROPERTIES}" "${8-$SUM}" "${9-1.0.0}"
   if [[ -n "${EDIT:-}" ]]; then (cd "$proj/android" && eval "$EDIT"); fi
   local out status=0
   out="$(PATH="${PATH_TO_USE:-$tmp/bin:/usr/bin:/bin}" TEMPLATE="$tmp/template" \
-    PUBLISHED_SUM="${PUBLISHED_SUM-abc123}" CURL_EXIT="${CURL_EXIT:-}" \
+    PUBLISHED_SUM="${PUBLISHED_SUM-$SUM}" CURL_EXIT="${CURL_EXIT:-}" \
     HTTP_STATUS="${HTTP_STATUS:-}" \
     CREATE_FAILS="${CREATE_FAILS:-}" GITHUB_ACTIONS="${IN_ACTIONS:-}" \
     CURL_LOG="$proj/curl.log" FLUTTER_LOG="$proj/flutter.log" \
@@ -184,6 +197,8 @@ expect "trailing spaces in a value count, as in Java" 1 \
   9.5.1 9.3.3 2.4.21 "${GOOD_PROPERTIES/newDsl=false/newDsl=false  }"
 expect "an empty key is read as Java does" 1 "remove (an empty key)=foo" \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\n=foo'
+expect "and so is a line that is only =" 1 "remove (an empty key)= (Flutter" \
+  9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\n='
 expect "an escaped newline stays in its value" 1 'remove foo=a\nb (Flutter' \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\nfoo=a\\nb'
 expect "a broken \\u escape fails, as in Java" 1 \
@@ -192,11 +207,13 @@ expect "a broken \\u escape fails, as in Java" 1 \
 expect "escapes are read as Java does" 1 'remove a:b=\u0041 and B' \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\na\\:b=\\\\u0041 and \\u0042'
 
-PUBLISHED_SUM=$'abc123  gradle-9.5.1-all.zip\n' expect \
+PUBLISHED_SUM="$SUM  gradle-9.5.1-all.zip"$'\n' expect \
   "a checksum file that also names the file, with a newline, is fine" 0 \
   "Gradle distribution checksum: OK"
-PUBLISHED_SUM=def456 expect "a wrong checksum fails" 1 \
-  "distributionSha256Sum is abc123, but Gradle publishes def456 for gradle-9.5.1-all.zip"
+PUBLISHED_SUM="$OTHER_SUM" expect "a wrong checksum fails" 1 \
+  "distributionSha256Sum is $SUM, but Gradle publishes $OTHER_SUM for gradle-9.5.1-all.zip"
+PUBLISHED_SUM='<html>Busy</html>' expect "something else than a checksum only warns" 0 \
+  "warning: what Gradle's site sent for the checksum (https://services.gradle.org/distributions/gradle-9.5.1-all.zip.sha256) isn't one"
 expect "no checksum fails" 1 "has no distributionSha256Sum" \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES" ""
 CURL_EXIT=6 expect "Gradle's site out of reach: only a warning" 0 \
@@ -215,8 +232,10 @@ if [[ -e /usr/bin/flutter || -e /bin/flutter ]]; then
   echo "skipped: no flutter on the PATH (this machine has one in /usr/bin or /bin)"
 else
   PATH_TO_USE="$tmp/bin_no_flutter:/usr/bin:/bin" \
-    expect "no flutter on the PATH fails" 1 "error: no flutter on the PATH"
+    expect "no flutter on the PATH fails" 1 "error: this needs flutter on the PATH"
 fi
+PATH_TO_USE="$tmp/bin_no_python" \
+  expect "no python3 on the PATH fails" 1 "error: this needs python3 on the PATH"
 CREATE_FAILS=1 expect "a failed flutter create fails" 1 "create went wrong"
 EDIT='mkdir -p ../.github/workflows && echo "  FLUTTER_VERSION: 3.50.0 # pinned" >../.github/workflows/dart.yml' \
   expect "another Flutter than CI's gets a warning" 0 \
