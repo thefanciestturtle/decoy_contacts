@@ -110,7 +110,7 @@ jobs:
   # emulator: API 36, the app's target SDK; and Android 17 (API 37.0), which
   # phones already run, whatever the app targets. (Android 17 also limits
   # each app's memory, but not on the emulator, which has no limits set.
-  # Measured by hand on a 4 GB one: at most about 270 MB with 20,000 fake
+  # Measured by hand on a 4 GB one: at most 266 MiB with 20,000 fake
   # contacts, against at least 1024 MiB allowed on a 4 GB phone.)
   integration-test:
     name: On-device tests (Android emulator, API ${{ matrix.api-level }})
@@ -159,16 +159,18 @@ jobs:
       - name: Build release APK (x86_64)
         run: flutter build apk --release --target-platform android-x64
 
-      # On master only (see "Restore Gradle cache"), save the Gradle cache
-      # once this job's debug and release builds have worked, before the
-      # emulator starts. Both on-device jobs try: whichever comes second
-      # finds the entry taken, and only says so. Stop Gradle first, so nothing
-      # is written to the cache while it is being saved, and drop its lock
-      # files.
+      # Before the emulator starts: its daemon would keep memory the emulator
+      # needs, and nothing may write to the cache while it is being saved.
       - name: Stop Gradle
+        run: if [ -x android/gradlew ]; then (cd android && ./gradlew --stop); fi
+
+      # On master only (see "Restore Gradle cache"), save the Gradle cache
+      # once this job's debug and release builds have worked, without
+      # Gradle's lock files. Both on-device jobs try: whichever comes second
+      # finds the entry taken, and only says so.
+      - name: Drop Gradle's lock files
         if: github.event_name == 'push' && steps.gradle-cache.outputs.cache-hit != 'true'
         run: |
-          if [ -x android/gradlew ]; then (cd android && ./gradlew --stop); fi
           find ~/.gradle/caches -name '*.lock' -delete
           rm -f ~/.gradle/caches/*/gc.properties
 
@@ -189,15 +191,17 @@ jobs:
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: ${{ matrix.api-level }}
-          # The AVD must be for that API level: older avdmanagers wrote
-          # "android-0" for one like 37.0, and the emulator then ran it as a
-          # very old one.
-          pre-emulator-launch-script: |
-            grep '^target=' "$ANDROID_AVD_HOME/test.avd/config.ini" && grep -qx 'target=android-${{ matrix.api-level }}' "$ANDROID_AVD_HOME/test.avd/config.ini"
+          # (The script's first line checks this AVD.)
+          avd-name: test
           target: google_apis
           arch: x86_64
           profile: pixel_7
           disable-animations: true
+          # First, the AVD must be for that API level: older avdmanagers
+          # (command-line tools 12) wrote "android-0" for one like 37.0, and
+          # the emulator then ran it as a very old one. A failing line stops
+          # the rest.
           script: |
+            grep -H '^target=' "$ANDROID_AVD_HOME/test.ini" && grep -qxF 'target=android-${{ matrix.api-level }}' "$ANDROID_AVD_HOME/test.ini" || { echo '::error::The AVD is not for API ${{ matrix.api-level }} (its target= is above): is avdmanager too old?'; exit 1; }
             tool/integration_test.sh --wipe-contacts
             tool/release_smoke_test.sh
