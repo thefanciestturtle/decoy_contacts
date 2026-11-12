@@ -42,8 +42,6 @@ readonly OWN_PROPERTIES=(org.gradle.jvmargs)
 # Plugins in settings.gradle.kts that the app uses and the template doesn't
 # (none yet).
 readonly OWN_PLUGINS=()
-# Separates a key from its value in what properties() prints.
-readonly SEP=$'\x1f'
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -62,51 +60,81 @@ mentions_plugin() {
   grep -v '^[[:space:]]*//' "$1" | grep -cF "\"$2\"" >/dev/null
 }
 
-# The properties of a .properties file, one "key<SEP>value" line each, read
-# as java.util.Properties (and so Gradle) reads them: # and ! comments, "=",
-# ":" or spaces between key and value, lines continued with \, escapes, any
-# line ends. Values keep their trailing spaces, as in Java. (A newline or
-# carriage return in a key or value is printed as \n or \r.)
-properties() {
-  python3 - "$1" <<'EOF'
+# Reads .properties files as java.util.Properties (and so Gradle) reads
+# them: # and ! comments, "=", ":" or spaces between key and value, lines
+# continued with \, escapes, any line ends; values keep their trailing
+# spaces. Run as:
+#   props get FILE KEY: the value of KEY (nothing if none);
+#   props compare OURS THEIRS FLUTTER_VERSION [IGNORED_KEY...]: one line
+#     per difference between the two files, saying what to change in OURS.
+props() { python3 "$tmp/props.py" "$@"; }
+write_props_py() {
+  cat >"$tmp/props.py" <<'EOF'
 import re, sys
 
-def unescape(s):
+sys.stdout.reconfigure(errors="backslashreplace")
+
+def unescape(s, path):
     def one(m):
         c = m.group(1)
         if c[0] == "u":
             if not re.fullmatch(r"u[0-9a-fA-F]{4}", c):
                 # (Java can't read the file then either.)
-                sys.exit(f"error: {sys.argv[1]}: a \\u escape without four hex digits")
+                sys.exit(f"error: {path}: a \\u escape without four hex digits")
             return chr(int(c[1:], 16))
         return {"t": "\t", "n": "\n", "r": "\r", "f": "\f"}.get(c, c)
     return re.sub(r"\\(u.{0,4}|.)", one, s)
 
-text = open(sys.argv[1], encoding="latin-1").read()
-lines, pending = [], None
-for raw in re.split(r"\r\n|\r|\n", text):
-    line = raw.lstrip(" \t\f")
-    if pending is None and (not line or line[0] in "#!"):
-        continue
-    line = (pending or "") + line
-    # An odd number of backslashes at the end continues the line.
-    if (len(line) - len(line.rstrip("\\"))) % 2 == 1:
-        pending = line[:-1]
-        continue
-    pending = None
-    lines.append(line)
-if pending is not None:
-    lines.append(pending)
-for line in lines:
-    i = 0
-    while i < len(line) and line[i] not in "=: \t\f":
-        i += 2 if line[i] == "\\" else 1
-    key, rest = line[:i], line[i:].lstrip(" \t\f")
-    if rest[:1] in ("=", ":"):
-        rest = rest[1:].lstrip(" \t\f")
-    def one_line(s):
-        return s.replace("\n", "\\n").replace("\r", "\\r")
-    print(f"{one_line(unescape(key))}\x1f{one_line(unescape(rest))}")
+def load(path):
+    text = open(path, encoding="latin-1").read()
+    lines, pending = [], None
+    for raw in re.split(r"\r\n|\r|\n", text):
+        line = raw.lstrip(" \t\f")
+        if pending is None and (not line or line[0] in "#!"):
+            continue
+        line = (pending or "") + line
+        # An odd number of backslashes at the end continues the line.
+        if (len(line) - len(line.rstrip("\\"))) % 2 == 1:
+            pending = line[:-1]
+            continue
+        pending = None
+        lines.append(line)
+    if pending is not None:
+        lines.append(pending)
+    props = {}
+    for line in lines:
+        i = 0
+        while i < len(line) and line[i] not in "=: \t\f":
+            i += 2 if line[i] == "\\" else 1
+        key, rest = line[:i], line[i:].lstrip(" \t\f")
+        if rest[:1] in ("=", ":"):
+            rest = rest[1:].lstrip(" \t\f")
+        props[unescape(key, path)] = unescape(rest, path)
+    return props
+
+def shown(s):
+    """A key or value on one line of a message."""
+    return s.replace("\n", "\\n").replace("\r", "\\r")
+
+def key_shown(key):
+    return shown(key) if key else "(an empty key)"
+
+if sys.argv[1] == "get":
+    value = load(sys.argv[2]).get(sys.argv[3])
+    if value is not None:
+        print(shown(value))
+elif sys.argv[1] == "compare":
+    ours_path, theirs_path, version, ignored = sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
+    ours, theirs = load(ours_path), load(theirs_path)
+    template = f"Flutter {version}'s template"
+    for key in sorted((ours.keys() | theirs.keys()) - set(ignored)):
+        k = key_shown(key)
+        if key not in theirs:
+            print(f"{ours_path}: remove {k}={shown(ours[key])} ({template} doesn't set {k}).")
+        elif key not in ours:
+            print(f"{ours_path}: add {k}={shown(theirs[key])}, as in {template}.")
+        elif ours[key] != theirs[key]:
+            print(f"{ours_path}: {k} is '{shown(ours[key])}'; {template} has '{shown(theirs[key])}'.")
 EOF
 }
 
@@ -129,8 +157,12 @@ plugin_name() {
 # Whether $1 is a release version: numbers only (9.5, 9.5.1), no "-rc1".
 is_release() { [[ "$1" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; }
 
-# MAJOR.MINOR of a version.
-minor_line() { awk -F. '{ print $1 "." ($2 == "" ? 0 : $2) }' <<<"$1"; }
+# MAJOR.MINOR of a release version.
+minor_line() {
+  local version
+  version="$(three_part_version "$1")"
+  echo "${version%.*}"
+}
 
 # Compares the app's version $2 of tool $1 with the template's, $3; $4 says
 # where to change it.
@@ -154,18 +186,6 @@ compare() {
   else
     echo "$tool $ours: OK (template: $theirs)"
   fi
-}
-
-# Reads the properties of file $1 into the associative array named $2.
-read_properties() {
-  local -n into=$2
-  local text key value
-  text="$(properties "$1")"
-  [[ -n "$text" ]] || return 0
-  while IFS="$SEP" read -r key value; do
-    # shellcheck disable=SC2034 # (into is the caller's array)
-    into["${key:-(an empty key)}"]=$value
-  done <<<"$text"
 }
 
 # Whether the associative array named $1 has the key $2. (Not [[ -v ]],
@@ -205,19 +225,18 @@ for file in "${WRAPPER#android/}" "${SETTINGS#android/}" "${PROPERTIES#android/}
 done
 
 echo "== Comparing"
+write_props_py
 
 # Gradle (the wrapper's distribution, gradle-VERSION-TYPE.zip).
-declare -A ours_wrapper=() theirs_wrapper=()
-read_properties "$WRAPPER" ours_wrapper
-read_properties "$template/${WRAPPER#android/}" theirs_wrapper
-ours_url="${ours_wrapper[distributionUrl]:-}"
+ours_url="$(props get "$WRAPPER" distributionUrl)"
+theirs_url="$(props get "$template/${WRAPPER#android/}" distributionUrl)"
 gradle_of() { sed -n 's|.*/gradle-\(.*\)-[a-z]*\.zip$|\1|p' <<<"$1"; }
-compare Gradle "$(gradle_of "$ours_url")" \
-  "$(gradle_of "${theirs_wrapper[distributionUrl]:-}")" \
+compare Gradle "$(gradle_of "$ours_url")" "$(gradle_of "$theirs_url")" \
   "$WRAPPER (distributionUrl, and distributionSha256Sum to match)"
 
-# The plugins with versions in settings.gradle.kts. AGP must be among
-# them, or nothing would be compared.
+# The plugins with versions in settings.gradle.kts. The template's must
+# include AGP: if not, it is written in some other way, which this script
+# can't compare (and advice about the other plugins would be wrong).
 declare -A ours_plugins=() theirs_plugins=()
 ours_list="$(plugins "$SETTINGS")"
 theirs_list="$(plugins "$template/${SETTINGS#android/}")"
@@ -227,11 +246,9 @@ done <<<"$ours_list"
 while read -r id version; do
   if [[ -n "$id" ]]; then theirs_plugins["$id"]=$version; fi
 done <<<"$theirs_list"
-# (The loop below doesn't see AGP if neither file gives it a version it
-# can read.)
-if ! has theirs_plugins com.android.application &&
-   ! has ours_plugins com.android.application; then
-  problem "couldn't read the Android Gradle plugin's (com.android.application) version in Flutter $flutter_version's template (settings.gradle.kts); this script needs updating."
+if ! has theirs_plugins com.android.application; then
+  problem "couldn't read the Android Gradle plugin's (com.android.application) version in Flutter $flutter_version's template (settings.gradle.kts), so the plugins weren't compared; this script needs updating."
+  theirs_plugins=() ours_plugins=()
 fi
 while IFS= read -r id; do
   [[ -n "$id" ]] || continue
@@ -253,31 +270,18 @@ while IFS= read -r id; do
 done < <(printf '%s\n' "${!ours_plugins[@]}" "${!theirs_plugins[@]}" | sort -u)
 
 # gradle.properties.
-declare -A ours_props=() theirs_props=()
-read_properties "$PROPERTIES" ours_props
-read_properties "$template/${PROPERTIES#android/}" theirs_props
-for key in "${OWN_PROPERTIES[@]}"; do
-  unset 'ours_props[$key]' 'theirs_props[$key]'
-done
-problems_before=${#problems[@]}
-while IFS= read -r key; do
-  [[ -n "$key" ]] || continue
-  if ! has theirs_props "$key"; then
-    problem "$PROPERTIES: remove $key=${ours_props[$key]} (Flutter $flutter_version's template doesn't set $key)."
-  elif ! has ours_props "$key"; then
-    problem "$PROPERTIES: add $key=${theirs_props[$key]}, as in Flutter $flutter_version's template."
-  elif [[ "${ours_props[$key]}" != "${theirs_props[$key]}" ]]; then
-    problem "$PROPERTIES: $key is '${ours_props[$key]}'; Flutter $flutter_version's template has '${theirs_props[$key]}'."
-  fi
-done < <(printf '%s\n' "${!ours_props[@]}" "${!theirs_props[@]}" | sort -u)
-if ((${#problems[@]} == problems_before)); then
+props_problems="$(props compare "$PROPERTIES" "$template/${PROPERTIES#android/}" \
+                    "$flutter_version" "${OWN_PROPERTIES[@]}")"
+if [[ -z "$props_problems" ]]; then
   echo "gradle.properties: OK (as the template's, apart from ${OWN_PROPERTIES[*]})"
+else
+  while IFS= read -r line; do problem "$line"; done <<<"$props_problems"
 fi
 
 # The Gradle distribution: from Gradle's site, with its published checksum.
 distribution="${ours_url##*/}"
 sum_url="$GRADLE_DISTRIBUTIONS$distribution.sha256"
-ours_sum="${ours_wrapper[distributionSha256Sum]:-}"
+ours_sum="$(props get "$WRAPPER" distributionSha256Sum)"
 if [[ "$ours_url" != "$GRADLE_DISTRIBUTIONS"gradle-*.zip ]]; then
   problem "$WRAPPER: distributionUrl is '$ours_url', not a Gradle distribution on Gradle's own site ($GRADLE_DISTRIBUTIONS)."
 elif [[ -z "$ours_sum" ]]; then

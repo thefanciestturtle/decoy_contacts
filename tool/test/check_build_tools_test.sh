@@ -109,8 +109,9 @@ case_number=0
 # the check on an app made with those (by default the good ones) and the
 # template in $tmp/template, and wants exit STATUS and TEXT in the output.
 # The environment can set PATH_TO_USE, PUBLISHED_SUM, HTTP_STATUS,
-# CURL_EXIT, CREATE_FAILS, IN_ACTIONS (to run as in GitHub Actions), and
-# EDIT, a command run in the app's android folder before the check.
+# CURL_EXIT, CREATE_FAILS, IN_ACTIONS (to run as in GitHub Actions),
+# EDIT, a command run in the app's android folder before the check, and
+# NOT_WANTED, a text the output must not have.
 expect() {
   local name=$1 want_status=$2 want_text=$3
   local proj="$tmp/case$((++case_number))"
@@ -129,10 +130,13 @@ expect() {
     CREATE_FAILS="${CREATE_FAILS:-}" GITHUB_ACTIONS="${IN_ACTIONS:-}" \
     CURL_LOG="$proj/curl.log" FLUTTER_LOG="$proj/flutter.log" \
     "$proj/tool/check_build_tools.sh" 2>&1)" || status=$?
-  if [[ "$status" == "$want_status" && "$out" == *"$want_text"* ]]; then
+  if [[ "$status" == "$want_status" && "$out" == *"$want_text"* &&
+        ( -z "${NOT_WANTED:-}" || "$out" != *"$NOT_WANTED"* ) ]]; then
     echo "ok: $name"
   else
-    echo "FAIL: $name: exit $status (want $want_status), output (want '$want_text'):"
+    local unwanted=""
+    if [[ -n "${NOT_WANTED:-}" ]]; then unwanted=", not '$NOT_WANTED'"; fi
+    echo "FAIL: $name: exit $status (want $want_status), output (want '$want_text'$unwanted):"
     while IFS= read -r line; do echo "    $line"; done <<<"$out"
     failures=$((failures + 1))
   fi
@@ -283,9 +287,12 @@ expect "AGP that neither file gives in a form the check reads fails" 1 \
   "couldn't read the Android Gradle plugin's (com.android.application) version in Flutter 9.99.0's template" \
   9.5.1 'id("com.android.application").version("7.0.0")'
 expect "and so does the template's alone" 1 \
-  "Android Gradle plugin (com.android.application): couldn't read its version in Flutter 9.99.0's template (settings.gradle.kts); this script needs updating."
+  "couldn't read the Android Gradle plugin's (com.android.application) version in Flutter 9.99.0's template (settings.gradle.kts), so the plugins weren't compared; this script needs updating."
+write_template 9.5.0 'alias(libs.plugins.android.application) apply false'
+NOT_WANTED="Remove it" expect "a template that names AGP another way isn't taken as dropping it" 1 \
+  "so the plugins weren't compared; this script needs updating."
 write_template 9.5.0 9.3.1 'id("org.jetbrains.kotlin.android").version("2.4.20")'
-expect "a template plugin the check can't read isn't to be removed" 1 \
+NOT_WANTED="Remove it" expect "a template plugin the check can't read isn't to be removed" 1 \
   "Kotlin (org.jetbrains.kotlin.android): couldn't read its version in Flutter 9.99.0's template"
 write_template
 printf '%s\n' 'plugins {' '    id("org.example.own") version "2.0"' '}' \

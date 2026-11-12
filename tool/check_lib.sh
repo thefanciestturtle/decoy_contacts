@@ -33,11 +33,15 @@ ci_flutter_version() {
   echo "$found"
 }
 
-# Whether release version $1 is older than $2 (numbers only; 9.5 counts as
-# 9.5.0).
+# A release version with three parts: 9.5 -> 9.5.0.
+three_part_version() {
+  awk -F. '{ print $1 "." ($2 == "" ? 0 : $2) "." ($3 == "" ? 0 : $3) }' <<<"$1"
+}
+
+# Whether release version $1 is older than $2.
 version_older() {
   local a b
-  a="$(awk -F. '{ print $1 "." ($2 == "" ? 0 : $2) "." ($3 == "" ? 0 : $3) }' <<<"$1")"
-  b="$(awk -F. '{ print $1 "." ($2 == "" ? 0 : $2) "." ($3 == "" ? 0 : $3) }' <<<"$2")"
+  a="$(three_part_version "$1")"
+  b="$(three_part_version "$2")"
   [[ "$a" != "$b" && "$(printf '%s\n%s\n' "$a" "$b" | sort -V | head -n 1)" == "$a" ]]
 }

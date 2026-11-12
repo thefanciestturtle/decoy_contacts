@@ -8,7 +8,8 @@
 # current stable release, from Flutter's list of releases. If that is newer,
 # it opens an issue saying so. If a still newer one comes out while it is
 # open, it updates the issue and comments on it (one issue, however many
-# runs); notes go in comments (a text changed by hand is left alone). Once
+# runs); notes go in comments (a text changed by hand is left alone, and
+# only gets a comment for a newer release). Once
 # FLUTTER_VERSION has caught up, it closes it. To put the upgrade off until
 # a newer release comes out, close it as "not planned". It finds the issue
 # by its title, so keep that.
@@ -24,6 +25,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source tool/check_lib.sh
 need curl python3 gh
+
+# This repository's issues: in GitHub Actions, GH_REPO says which; else the
+# one origin points to (gh would pick among the remotes, upstream too).
+if [[ -z "${GH_REPO:-}" ]]; then
+  origin="$(git remote get-url origin 2>/dev/null || true)"
+  if [[ "$origin" =~ github\.com[:/]([^/]+/[^/]+)$ ]]; then
+    export GH_REPO="${BASH_REMATCH[1]%.git}"
+  fi
+fi
 
 readonly RELEASES=https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json
 readonly TITLE='A newer stable Flutter is out'
@@ -148,13 +158,27 @@ done
 if [[ "${open_named[0]}" == "$latest" ]]; then
   echo "Issue #$issue already says so."
 elif [[ "${open_named[0]}" == - ]]; then
-  echo "Issue #$issue's text was changed by hand; leaving it as it is."
+  # Someone changed its text: that stays, but it is told of a newer
+  # release (once: whether it was is in its comments).
+  comments="$(gh issue view "$issue" --json comments)"
+  if python3 -c '
+import json, sys
+sys.exit(0 if any(c["body"].strip() == sys.argv[1]
+                  for c in json.load(sys.stdin)["comments"]) else 1)
+' "Flutter $latest is out now." <<<"$comments"; then
+    echo "Issue #$issue's text was changed by hand; it was told of Flutter $latest already."
+  else
+    echo "Issue #$issue's text was changed by hand; leaving it, but commenting: Flutter $latest is out."
+    act gh issue comment "$issue" --body "Flutter $latest is out now."
+  fi
 elif ! version_older "${open_named[0]}" "$latest"; then
   # (Flutter can withdraw a release.)
   echo "Issue #$issue names Flutter ${open_named[0]}, newer than the current stable release; leaving it."
 else
-  # (Editing the text notifies nobody; a comment does.)
+  # (Editing the text notifies nobody; a comment does. The comment first:
+  # if editing then fails, the next run tries again, and only comments
+  # twice.)
   echo "Updating issue #$issue: Flutter $latest is out."
-  act gh issue edit "$issue" --body "$body"
   act gh issue comment "$issue" --body "Flutter $latest is out now."
+  act gh issue edit "$issue" --body "$body"
 fi

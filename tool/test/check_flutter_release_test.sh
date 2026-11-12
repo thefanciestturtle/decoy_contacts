@@ -20,7 +20,9 @@ trap 'rm -rf "$tmp"' EXIT
 # with BAD_LIST=1. `gh` writes each call to $GH_LOG on one line (the
 # --body of a new issue also to $GH_LOG.body), and lists $ISSUES (JSON) as
 # the issues, as asked: only the open ones without --state all, only the
-# fields named after --json. It fails at that with LIST_FAILS=1.
+# fields named after --json. It fails at that with LIST_FAILS=1. An
+# issue's comments are $ISSUE_COMMENTS (a JSON list of their texts). It
+# also writes the repository it was given in GH_REPO to $GH_LOG.
 mkdir "$tmp/bin"
 cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -45,6 +47,7 @@ cat >"$tmp/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 all="$*"
 echo "gh ${all//$'\n'/ }" >>"$GH_LOG"
+echo "repo ${GH_REPO:-}" >>"$GH_LOG"
 case "$1 $2" in
   "issue list")
     [[ "${LIST_FAILS:-}" != 1 ]] || { echo "HTTP 502" >&2; exit 1; }
@@ -57,6 +60,11 @@ print(json.dumps([{k: v for k, v in i.items() if k in fields}
                   for i in json.loads(os.environ.get("ISSUES") or "[]")
                   if everything or i["state"] == "OPEN"]))
 ' "$@" ;;
+  "issue view")
+    python3 -c '
+import json, os
+print(json.dumps({"comments": [{"body": b} for b in
+                  json.loads(os.environ.get("ISSUE_COMMENTS") or "[]")]}))' ;;
   "issue create")
     while (($#)); do
       if [[ "$1" == --body ]]; then printf '%s' "$2" >"$GH_LOG.body"; fi
@@ -98,7 +106,8 @@ case_number=0
 # "editN", "commentN", "closeN:REASON", "closeN:duplicate-of-M" ("" for
 # none). It runs as in GitHub
 # Actions unless IN_ACTIONS is empty. The environment can also set ISSUES,
-# LIST_FAILS and BAD_LIST.
+# ISSUE_COMMENTS, LIST_FAILS, BAD_LIST, and ORIGIN, the URL of the project's
+# git remote "origin" (none by default).
 expect() {
   local name=$1 ours=$2 latest=$3 want_status=$4 want_text=$5 want_calls=$6
   shift 6
@@ -112,8 +121,12 @@ expect() {
   } >"$proj/.github/workflows/dart.yml"
   local out status=0 calls
   : >"$proj/gh.log"
+  if [[ -n "${ORIGIN:-}" ]]; then
+    git -C "$proj" init -q && git -C "$proj" remote add origin "$ORIGIN"
+  fi
   out="$(PATH="$tmp/bin:/usr/bin:/bin" LATEST="$latest" GH_LOG="$proj/gh.log" \
     CURL_LOG="$proj/curl.log" ISSUES="${ISSUES:-[]}" \
+    ISSUE_COMMENTS="${ISSUE_COMMENTS:-[]}" GH_REPO="" \
     LIST_FAILS="${LIST_FAILS:-}" BAD_LIST="${BAD_LIST:-}" \
     GITHUB_ACTIONS="${IN_ACTIONS-true}" \
     "$proj/tool/check_flutter_release.sh" "$@" 2>&1)" || status=$?
@@ -134,6 +147,12 @@ expect() {
 }
 
 expect "up to date: nothing to do" 3.50.0 3.50.0 0 "Nothing to do." ""
+grep -qx "repo " "$tmp/case$case_number/gh.log" ||
+  { echo "FAIL: GH_REPO without a remote: $(grep ^repo "$tmp/case$case_number/gh.log")"; failures=$((failures + 1)); }
+ORIGIN=https://github.com/someone/fake_contacts.git expect \
+  "the repository is origin's" 3.50.0 3.50.0 0 "Nothing to do." ""
+grep -qx "repo someone/fake_contacts" "$tmp/case$case_number/gh.log" ||
+  { echo "FAIL: GH_REPO from origin: $(grep ^repo "$tmp/case$case_number/gh.log")"; failures=$((failures + 1)); }
 [[ "$(cat "$tmp/case$case_number/curl.log")" == "$RELEASES" ]] ||
   { echo "FAIL: the list's URL: $(cat "$tmp/case$case_number/curl.log")"; failures=$((failures + 1)); }
 expect "newer than the stable release: nothing to do" 3.51.0 3.50.0 0 \
@@ -157,10 +176,15 @@ ISSUES="$(issues "$(issue 7 OPEN 3.51.0)")" expect \
   3.50.1 3.51.0 0 "Issue #7 already says so." ""
 ISSUES="$(issues "$(issue 7 OPEN 3.50.1)")" expect \
   "a still newer release: the text is updated, with a comment" 3.50.0 3.51.0 0 \
-  "Updating issue #7: Flutter 3.51.0 is out." "edit7 comment7"
+  "Updating issue #7: Flutter 3.51.0 is out." "comment7 edit7"
 ISSUES="$(issues "$(issue 7 OPEN -)")" expect \
-  "text changed by hand is left alone" 3.50.0 3.51.0 0 \
-  "Issue #7's text was changed by hand; leaving it as it is." ""
+  "text changed by hand is left, but told of the release" 3.50.0 3.51.0 0 \
+  "Issue #7's text was changed by hand; leaving it, but commenting: Flutter 3.51.0 is out." \
+  "comment7"
+ISSUES="$(issues "$(issue 7 OPEN -)")" \
+  ISSUE_COMMENTS='["A note", "Flutter 3.51.0 is out now.\n"]' expect \
+  "only once" 3.50.0 3.51.0 0 \
+  "Issue #7's text was changed by hand; it was told of Flutter 3.51.0 already." ""
 ISSUES="$(issues "$(issue 7 OPEN 3.51.0)")" expect \
   "caught up: the issue is closed as completed" 3.51.0 3.51.0 0 \
   "Closing issue #7: CI now builds with Flutter 3.51.0." "close7:completed"
