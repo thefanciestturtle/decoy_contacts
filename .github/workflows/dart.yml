@@ -109,8 +109,9 @@ jobs:
   # Create and Delete against the real Android contacts provider, on an
   # emulator: API 36, the app's target SDK; and Android 17 (API 37.0), which
   # phones already run, whatever the app targets. (Android 17 also limits
-  # each app's memory, but not on the emulator, which has no limits set; how
-  # far below them the app stays was measured by hand, in C10d's PR.)
+  # each app's memory, but not on the emulator, which has no limits set.
+  # Measured by hand on a 4 GB one: at most about 270 MB with 20,000 fake
+  # contacts, against at least 1024 MiB allowed on a 4 GB phone.)
   integration-test:
     name: On-device tests (Android emulator, API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
@@ -188,6 +189,11 @@ jobs:
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: ${{ matrix.api-level }}
+          # The AVD must be for that API level: older avdmanagers wrote
+          # "android-0" for one like 37.0, and the emulator then ran it as a
+          # very old one.
+          pre-emulator-launch-script: |
+            grep '^target=' "$ANDROID_AVD_HOME/test.avd/config.ini" && grep -qx 'target=android-${{ matrix.api-level }}' "$ANDROID_AVD_HOME/test.avd/config.ini"
           target: google_apis
           arch: x86_64
           profile: pixel_7
