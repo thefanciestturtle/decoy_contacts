@@ -8,7 +8,7 @@
 # current stable release, from Flutter's list of releases. If that is newer,
 # it opens an issue saying so. If a still newer one comes out while it is
 # open, it updates the issue and comments on it (one issue, however many
-# runs); the issue's text is the script's, notes go in comments. Once
+# runs); notes go in comments (a text changed by hand is left alone). Once
 # FLUTTER_VERSION has caught up, it closes it. To put the upgrade off until
 # a newer release than the one the issue names, close it as "not planned".
 #
@@ -16,9 +16,17 @@
 # workflow (.github/workflows/flutter_release.yml), with that workflow's
 # token (`issues: write`). Elsewhere, only with --dry-run, which only says
 # what it would do (and needs `gh` with read access to the issues).
+#
+# Needs bash 4.4 or newer.
 set -euo pipefail
 
+if ((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 404)); then
+  echo "error: this needs bash 4.4 or newer (this is $BASH_VERSION)" >&2
+  exit 1
+fi
+
 cd "$(dirname "$0")/.."
+source tool/flutter_version_lib.sh
 
 readonly RELEASES=https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json
 readonly TITLE='A newer stable Flutter is out'
@@ -44,11 +52,8 @@ act() {
   fi
 }
 
-# (Quoted or not, with or without a comment after it.)
-ours="$(sed -n 's/^[[:space:]]*FLUTTER_VERSION:[[:space:]]*["'\'']\{0,1\}\([0-9][0-9.]*\)["'\'']\{0,1\}[[:space:]]*\(#.*\)\{0,1\}$/\1/p' \
-  .github/workflows/dart.yml)"
-[[ -n "$ours" ]] || {
-  echo "error: no FLUTTER_VERSION with an exact version (e.g. 3.50.0) in .github/workflows/dart.yml" >&2
+ours="$(ci_flutter_version)" || {
+  echo "error: no FLUTTER_VERSION with an exact version (e.g. 3.50.0) in .github/workflows/dart.yml, or more than one" >&2
   exit 1
 }
 
@@ -125,13 +130,16 @@ fi
 # The newest open one is kept; any other is closed (opened twice somehow).
 issue="${open_issues[0]}"
 for number in "${open_issues[@]:1}"; do
-  echo "Closing issue #$number: #$issue says the same."
-  act gh issue close "$number" --reason duplicate --comment "Closed: #$issue says the same."
+  echo "Closing issue #$number as a duplicate of #$issue."
+  act gh issue close "$number" --duplicate-of "$issue"
 done
-# Its text is only rewritten for a newer release, so notes added to it
-# meanwhile are kept until then.
+# Its text is only rewritten for a newer release (so notes added to it
+# meanwhile are kept until then), and not at all if it no longer names one:
+# someone changed it.
 if [[ "${open_named[0]}" == "$latest" ]]; then
   echo "Issue #$issue already says so."
+elif [[ "${open_named[0]}" == - ]]; then
+  echo "Issue #$issue's text was changed by hand; leaving it as it is."
 else
   # (Editing the text notifies nobody; a comment does.)
   echo "Updating issue #$issue: Flutter $latest is out."

@@ -8,6 +8,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 readonly SCRIPT="$PWD/tool/check_flutter_release.sh"
+readonly LIB="$PWD/tool/flutter_version_lib.sh"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -81,7 +82,8 @@ case_number=0
 # FLUTTER_VERSION OURS (written as given; none if empty) and Flutter's
 # stable release LATEST, and wants exit STATUS, TEXT in its output, and
 # exactly the gh calls that change something in CALLS, in order: "create",
-# "editN", "commentN", "closeN:REASON" ("" for none). It runs as in GitHub
+# "editN", "commentN", "closeN:REASON", "closeN:duplicate-of-M" ("" for
+# none). It runs as in GitHub
 # Actions unless IN_ACTIONS is empty. The environment can also set ISSUES,
 # LIST_FAILS and BAD_LIST.
 expect() {
@@ -89,7 +91,7 @@ expect() {
   shift 6
   local proj="$tmp/case$((++case_number))"
   mkdir -p "$proj/tool" "$proj/.github/workflows"
-  cp "$SCRIPT" "$proj/tool/"
+  cp "$SCRIPT" "$LIB" "$proj/tool/"
   {
     echo 'env:'
     if [[ -n "$ours" ]]; then echo "  FLUTTER_VERSION: $ours"; fi
@@ -106,6 +108,7 @@ expect() {
     -e 's/^gh issue create .*/create/p' \
     -e 's/^gh issue \(edit\|comment\) \([0-9]*\) .*/\1\2/p' \
     -e 's/^gh issue close \([0-9]*\) --reason \([a-z]*\) .*/close\1:\2/p' \
+    -e 's/^gh issue close \([0-9]*\) --duplicate-of \([0-9]*\).*/close\1:duplicate-of-\2/p' \
     "$proj/gh.log" | tr '\n' ' ' | sed 's/ $//')"
   if [[ "$status" == "$want_status" && "$out" == *"$want_text"* &&
         "$calls" == "$want_calls" ]]; then
@@ -143,8 +146,8 @@ ISSUES="$(issues "$(issue 7 OPEN 3.50.1)")" expect \
   "a still newer release: the text is updated, with a comment" 3.50.0 3.51.0 0 \
   "Updating issue #7: Flutter 3.51.0 is out." "edit7 comment7"
 ISSUES="$(issues "$(issue 7 OPEN -)")" expect \
-  "text that names no release is put right, with a comment" 3.50.0 3.51.0 0 \
-  "Updating issue #7: Flutter 3.51.0 is out." "edit7 comment7"
+  "text changed by hand is left alone" 3.50.0 3.51.0 0 \
+  "Issue #7's text was changed by hand; leaving it as it is." ""
 ISSUES="$(issues "$(issue 7 OPEN 3.51.0)")" expect \
   "caught up: the issue is closed as completed" 3.51.0 3.51.0 0 \
   "Closing issue #7: CI now builds with Flutter 3.51.0." "close7:completed"
@@ -153,7 +156,7 @@ ISSUES="$(issues "$(issue 7 OPEN 3.50.1)" "$(issue 9 OPEN 3.51.0)")" expect \
   "Closing issue #7" "close9:completed close7:completed"
 ISSUES="$(issues "$(issue 7 OPEN 3.51.0)" "$(issue 9 OPEN 3.51.0)")" expect \
   "two open: the newer one is kept, the other closed as a duplicate" \
-  3.50.0 3.51.0 0 "Closing issue #7: #9 says the same." "close7:duplicate"
+  3.50.0 3.51.0 0 "Closing issue #7 as a duplicate of #9." "close7:duplicate-of-9"
 
 ISSUES="$(issues "$(issue 5 OPEN 3.51.0 someone)")" expect \
   "someone else's issue with the same title is left alone" 3.50.0 3.51.0 0 \
@@ -188,8 +191,12 @@ expect "FLUTTER_VERSION in quotes, with a comment" "'3.50.0' # pinned" 3.51.0 0 
   "CI builds with Flutter 3.50.0;" "create"
 expect "FLUTTER_VERSION that isn't exact is an error" "3.50.x" 3.51.0 1 \
   "error: no FLUTTER_VERSION with an exact version" ""
+expect "nor is one without its patch" "3.50" 3.51.0 1 \
+  "error: no FLUTTER_VERSION with an exact version" ""
+expect "two FLUTTER_VERSION lines are an error" $'3.50.0\n  FLUTTER_VERSION: 3.47.9' 3.51.0 1 \
+  "error: no FLUTTER_VERSION with an exact version (e.g. 3.50.0) in .github/workflows/dart.yml, or more than one" ""
 expect "no FLUTTER_VERSION is an error" "" 3.51.0 1 \
-  "error: no FLUTTER_VERSION with an exact version (e.g. 3.50.0) in .github/workflows/dart.yml" ""
+  "error: no FLUTTER_VERSION with an exact version (e.g. 3.50.0) in .github/workflows/dart.yml, or more than one" ""
 
 if ((failures)); then
   echo "$failures of $case_number cases failed" >&2

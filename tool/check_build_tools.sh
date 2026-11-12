@@ -7,8 +7,10 @@
 # Flutter is tested with the versions of Gradle, the Android Gradle plugin
 # (AGP), Kotlin and its own plugin loader in its project template. The app
 # uses the same minor version of each (e.g. AGP 9.3), and the newest patch
-# release of it (e.g. 9.3.3), never an older one than the template's, nor a
-# pre-release; and the same plugins. Its gradle.properties sets what the
+# release of it (e.g. 9.3.3) when it moves to a new Flutter. This script
+# checks the minor version, and that the patch release is a release and
+# not older than the template's; whether a newer one is out is left to the
+# upgrade. The app also uses the same plugins. Its gradle.properties sets what the
 # template's sets, except org.gradle.jvmargs (the template's larger heap
 # didn't make this app's build any faster, and CI's runner also has to fit
 # the emulator). This script makes a new project from the template in a
@@ -21,18 +23,19 @@
 # there (this needs the internet; if the site can't be reached, it only
 # warns).
 #
-# Needs bash 4.3 or newer.
+# Needs bash 4.4 or newer.
 #
 # Not compared: the app's own Java level, and the SDK versions, which come
 # from Flutter itself (flutter.compileSdkVersion etc.).
 set -euo pipefail
 
-if ((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 403)); then
-  echo "error: this needs bash 4.3 or newer (this is $BASH_VERSION)" >&2
+if ((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 404)); then
+  echo "error: this needs bash 4.4 or newer (this is $BASH_VERSION)" >&2
   exit 1
 fi
 
 cd "$(dirname "$0")/.."
+source tool/flutter_version_lib.sh
 
 readonly WRAPPER=android/gradle/wrapper/gradle-wrapper.properties
 readonly SETTINGS=android/settings.gradle.kts
@@ -40,6 +43,9 @@ readonly PROPERTIES=android/gradle.properties
 readonly GRADLE_DISTRIBUTIONS=https://services.gradle.org/distributions/
 # Set in gradle.properties on purpose, whatever the template has.
 readonly OWN_PROPERTIES=(org.gradle.jvmargs)
+# Plugins in settings.gradle.kts that the app uses and the template doesn't
+# (none yet).
+readonly OWN_PLUGINS=()
 # Separates a key from its value in what properties() prints.
 readonly SEP=$'\x1f'
 
@@ -68,10 +74,13 @@ import re, sys
 def unescape(s):
     def one(m):
         c = m.group(1)
-        if c[0] == "u" and len(c) == 5:
+        if c[0] == "u":
+            if not re.fullmatch(r"u[0-9a-fA-F]{4}", c):
+                # (Java can't read the file then either.)
+                sys.exit(f"error: {sys.argv[1]}: a \\u escape without four hex digits")
             return chr(int(c[1:], 16))
         return {"t": "\t", "n": "\n", "r": "\r", "f": "\f"}.get(c, c)
-    return re.sub(r"\\(u[0-9a-fA-F]{4}|.)", one, s)
+    return re.sub(r"\\(u.{0,4}|.)", one, s)
 
 text = open(sys.argv[1], encoding="latin-1").read()
 lines, pending = [], None
@@ -174,9 +183,7 @@ flutter_version="$(flutter --version --machine 2>/dev/null |
   sed -n 's/^ *"frameworkVersion": *"\([^"]*\)".*/\1/p' || true)"
 [[ -n "$flutter_version" ]] ||
   { echo "error: couldn't get the version of flutter" >&2; exit 1; }
-# (As tool/check_flutter_release.sh reads it.)
-ci_version="$(sed -n 's/^[[:space:]]*FLUTTER_VERSION:[[:space:]]*["'\'']\{0,1\}\([0-9][0-9.]*\)["'\'']\{0,1\}[[:space:]]*\(#.*\)\{0,1\}$/\1/p' \
-  .github/workflows/dart.yml 2>/dev/null || true)"
+ci_version="$(ci_flutter_version || true)"
 if [[ -n "$ci_version" && "$ci_version" != "$flutter_version" ]]; then
   warning "this is Flutter $flutter_version, CI builds with $ci_version (FLUTTER_VERSION in .github/workflows/dart.yml): comparing with $flutter_version's template."
 fi
@@ -224,12 +231,13 @@ if [[ ! -v "theirs_plugins[com.android.application]" ]]; then
 fi
 while IFS= read -r id; do
   [[ -n "$id" ]] || continue
+  for own in "${OWN_PLUGINS[@]}"; do [[ "$id" != "$own" ]] || continue 2; done
   name="$(plugin_name "$id")"
   if [[ ! -v "theirs_plugins[$id]" ]]; then
     problem "$name: Flutter $flutter_version's template doesn't use it. Remove it from $SETTINGS (and android/app/build.gradle.kts), or, if the template set it up another way, do as a new project (flutter create) does."
   elif [[ -v "ours_plugins[$id]" ]]; then
     compare "$name" "${ours_plugins[$id]}" "${theirs_plugins[$id]}" "$SETTINGS"
-  elif grep -qF "\"$id\"" "$SETTINGS"; then
+  elif grep -v '^[[:space:]]*//' "$SETTINGS" | grep -qF "\"$id\""; then
     problem "$name: couldn't read the app's version in $SETTINGS (write it as the template does: id(\"$id\") version \"...\")."
   else
     problem "$name: Flutter $flutter_version's template uses it (version ${theirs_plugins[$id]}); add it to $SETTINGS as the template does, and see whether android/app/build.gradle.kts needs it too."
@@ -265,24 +273,26 @@ fi
 distribution="${ours_url##*/}"
 sum_url="$GRADLE_DISTRIBUTIONS$distribution.sha256"
 ours_sum="${ours_wrapper[distributionSha256Sum]:-}"
-published="" curl_status=0
-if [[ "$ours_url" == "$GRADLE_DISTRIBUTIONS"gradle-*.zip && -n "$ours_sum" ]]; then
-  published="$(curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 "$sum_url")" ||
-    curl_status=$?
-fi
 if [[ "$ours_url" != "$GRADLE_DISTRIBUTIONS"gradle-*.zip ]]; then
   problem "$WRAPPER: distributionUrl is '$ours_url', not a Gradle distribution on Gradle's own site ($GRADLE_DISTRIBUTIONS)."
 elif [[ -z "$ours_sum" ]]; then
   problem "$WRAPPER has no distributionSha256Sum: add Gradle's checksum of the distribution ($sum_url)."
-elif ((curl_status == 22)); then
-  # The site answered with an error, e.g. 404: there is no such checksum.
-  problem "Gradle's site has no checksum for $distribution ($sum_url): is distributionUrl right?"
-elif ((curl_status != 0)); then
-  warning "couldn't reach Gradle's site for the checksum ($sum_url; curl exit $curl_status), so distributionSha256Sum wasn't compared with it."
-elif [[ "$ours_sum" != "$published" ]]; then
-  problem "$WRAPPER: distributionSha256Sum is $ours_sum, but Gradle publishes $published for $distribution."
+elif ! response="$(curl -sSL --retry 3 --connect-timeout 20 --max-time 60 \
+                     -w '\n%{http_code}' "$sum_url")"; then
+  warning "couldn't reach Gradle's site for the checksum ($sum_url), so distributionSha256Sum wasn't compared with it."
 else
-  echo "Gradle distribution checksum: OK"
+  # The checksum, then the HTTP status on a line of its own.
+  status="${response##*$'\n'}"
+  published="${response%$'\n'*}"
+  if [[ "$status" == 404 || "$status" == 410 ]]; then
+    problem "Gradle's site has no checksum for $distribution ($sum_url): is distributionUrl right?"
+  elif [[ "$status" != 200 ]]; then
+    warning "Gradle's site answered HTTP $status for the checksum ($sum_url), so distributionSha256Sum wasn't compared with it."
+  elif [[ "$ours_sum" != "$published" ]]; then
+    problem "$WRAPPER: distributionSha256Sum is $ours_sum, but Gradle publishes $published for $distribution."
+  else
+    echo "Gradle distribution checksum: OK"
+  fi
 fi
 
 if ((${#problems[@]})); then

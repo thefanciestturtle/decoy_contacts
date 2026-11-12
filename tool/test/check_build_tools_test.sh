@@ -8,14 +8,16 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 readonly SCRIPT="$PWD/tool/check_build_tools.sh"
+readonly LIB="$PWD/tool/flutter_version_lib.sh"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 # Stand-ins. `flutter create` writes its arguments to $FLUTTER_LOG and
 # copies $TEMPLATE (fails with CREATE_FAILS=1). `curl` writes the URL it
-# was given to $CURL_LOG and prints $PUBLISHED_SUM, or exits with
-# $CURL_EXIT if set.
+# was given to $CURL_LOG and prints $PUBLISHED_SUM, then the HTTP status
+# $HTTP_STATUS (200 by default) as its -w asks; or it exits with
+# $CURL_EXIT (couldn't connect) if set.
 mkdir "$tmp/bin" "$tmp/bin_no_flutter"
 cat >"$tmp/bin/flutter" <<'EOF'
 #!/usr/bin/env bash
@@ -32,7 +34,7 @@ cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 echo "${*: -1}" >>"$CURL_LOG"
 if [[ -n "${CURL_EXIT:-}" ]]; then exit "$CURL_EXIT"; fi
-echo "$PUBLISHED_SUM"
+printf '%s\n%s' "$PUBLISHED_SUM" "${HTTP_STATUS:-200}"
 EOF
 cp "$tmp/bin/curl" "$tmp/bin_no_flutter/curl"
 chmod +x "$tmp/bin/"* "$tmp/bin_no_flutter/"*
@@ -92,20 +94,21 @@ case_number=0
 # expect NAME STATUS TEXT [GRADLE AGP KOTLIN PROPERTIES SUM LOADER] : runs
 # the check on an app made with those (by default the good ones) and the
 # template in $tmp/template, and wants exit STATUS and TEXT in the output.
-# The environment can set PATH_TO_USE, PUBLISHED_SUM, CURL_EXIT,
-# CREATE_FAILS, IN_ACTIONS (to run as in GitHub Actions), and EDIT, a
-# command run in the app's android folder before the check.
+# The environment can set PATH_TO_USE, PUBLISHED_SUM, HTTP_STATUS,
+# CURL_EXIT, CREATE_FAILS, IN_ACTIONS (to run as in GitHub Actions), and
+# EDIT, a command run in the app's android folder before the check.
 expect() {
   local name=$1 want_status=$2 want_text=$3
   local proj="$tmp/case$((++case_number))"
   mkdir -p "$proj/tool"
-  cp "$SCRIPT" "$proj/tool/"
+  cp "$SCRIPT" "$LIB" "$proj/tool/"
   write_project "$proj" "${4-9.5.1}" "${5-9.3.3}" "${6-2.4.21}" \
     "${7-$GOOD_PROPERTIES}" "${8-abc123}" "${9-1.0.0}"
   if [[ -n "${EDIT:-}" ]]; then (cd "$proj/android" && eval "$EDIT"); fi
   local out status=0
   out="$(PATH="${PATH_TO_USE:-$tmp/bin:/usr/bin:/bin}" TEMPLATE="$tmp/template" \
     PUBLISHED_SUM="${PUBLISHED_SUM-abc123}" CURL_EXIT="${CURL_EXIT:-}" \
+    HTTP_STATUS="${HTTP_STATUS:-}" \
     CREATE_FAILS="${CREATE_FAILS:-}" GITHUB_ACTIONS="${IN_ACTIONS:-}" \
     CURL_LOG="$proj/curl.log" FLUTTER_LOG="$proj/flutter.log" \
     "$proj/tool/check_build_tools.sh" 2>&1)" || status=$?
@@ -182,6 +185,9 @@ expect "an empty key is read as Java does" 1 "remove (an empty key)=foo" \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\n=foo'
 expect "an escaped newline stays in its value" 1 'remove foo=a\nb (Flutter' \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\nfoo=a\\nb'
+expect "a broken \\u escape fails, as in Java" 1 \
+  'error: android/gradle.properties: a \u escape without four hex digits' \
+  9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\nfoo=\\u12'
 expect "escapes are read as Java does" 1 'remove a:b=\u0041 and B' \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\na\\:b=\\\\u0041 and \\u0042'
 
@@ -190,21 +196,37 @@ PUBLISHED_SUM=def456 expect "a wrong checksum fails" 1 \
 expect "no checksum fails" 1 "has no distributionSha256Sum" \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES" ""
 CURL_EXIT=6 expect "Gradle's site out of reach: only a warning" 0 \
-  "warning: couldn't reach Gradle's site for the checksum (https://services.gradle.org/distributions/gradle-9.5.1-all.zip.sha256; curl exit 6), so distributionSha256Sum wasn't compared with it."
+  "warning: couldn't reach Gradle's site for the checksum (https://services.gradle.org/distributions/gradle-9.5.1-all.zip.sha256), so distributionSha256Sum wasn't compared with it."
 CURL_EXIT=28 IN_ACTIONS=true expect "(in GitHub Actions, as an annotation)" 0 \
   "::warning::couldn't reach Gradle's site for the checksum"
-CURL_EXIT=22 expect "no checksum on Gradle's site fails" 1 \
+HTTP_STATUS=503 expect "Gradle's site failing: only a warning" 0 \
+  "warning: Gradle's site answered HTTP 503 for the checksum"
+HTTP_STATUS=404 expect "no checksum on Gradle's site fails" 1 \
   "Gradle's site has no checksum for gradle-9.5.1-all.zip (https://services.gradle.org/distributions/gradle-9.5.1-all.zip.sha256): is distributionUrl right?"
 EDIT='sed -i "s|services.gradle.org|mirror.example|" gradle/wrapper/gradle-wrapper.properties' \
   expect "Gradle from another site fails" 1 \
   "distributionUrl is 'https://mirror.example/distributions/gradle-9.5.1-all.zip', not a Gradle distribution on Gradle's own site"
 
-PATH_TO_USE="$tmp/bin_no_flutter:/usr/bin:/bin" \
-  expect "no flutter on the PATH fails" 1 "error: no flutter on the PATH"
+if [[ -e /usr/bin/flutter || -e /bin/flutter ]]; then
+  echo "skipped: no flutter on the PATH (this machine has one in /usr/bin or /bin)"
+else
+  PATH_TO_USE="$tmp/bin_no_flutter:/usr/bin:/bin" \
+    expect "no flutter on the PATH fails" 1 "error: no flutter on the PATH"
+fi
 CREATE_FAILS=1 expect "a failed flutter create fails" 1 "create went wrong"
 EDIT='mkdir -p ../.github/workflows && echo "  FLUTTER_VERSION: 3.50.0 # pinned" >../.github/workflows/dart.yml' \
   expect "another Flutter than CI's gets a warning" 0 \
   "warning: this is Flutter 9.99.0, CI builds with 3.50.0"
+
+EDIT='sed -i "s|^    id(\"org.jetbrains.kotlin|    // id(\"org.jetbrains.kotlin|" settings.gradle.kts' \
+  expect "a plugin that is only commented out is missing" 1 \
+  "Kotlin (org.jetbrains.kotlin.android): Flutter 9.99.0's template uses it (version 2.4.20); add it"
+EDIT='printf "%s\n" "plugins {" "    id(\"org.example.own\") version \"1.0\"" "}" >>settings.gradle.kts' \
+  expect "a plugin the template doesn't use fails" 1 \
+  "org.example.own: Flutter 9.99.0's template doesn't use it. Remove it"
+EDIT='printf "%s\n" "plugins {" "    id(\"org.example.own\") version \"1.0\"" "}" >>settings.gradle.kts &&
+      sed -i "s/^readonly OWN_PLUGINS=()/readonly OWN_PLUGINS=(org.example.own)/" ../tool/check_build_tools.sh' \
+  expect "unless the app lists it as its own" 0 "The build tools match"
 
 # Templates that change.
 write_template 9.5.0 9.3.1 2.4.20 "$TEMPLATE_PROPERTIES" 1.0.1
