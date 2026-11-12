@@ -4,8 +4,8 @@
 
 import 'package:fake_contacts/about_page.dart';
 import 'package:fake_contacts/app_theme.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 void main() {
   testWidgets("Licenses shows Flutter's licence page, with the app's name, "

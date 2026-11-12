@@ -1,6 +1,6 @@
 import 'package:fake_contacts/app_theme.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// The contrast ratio of two colours, as WCAG defines it (1 to 21).
 double contrast(Color a, Color b) {

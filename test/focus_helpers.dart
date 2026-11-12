@@ -1,8 +1,8 @@
 // Where the keyboard focus is, for the widget tests and the on-device tests.
 
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// The app bar's menu button (⋮).
 final Finder menu = find.byKey(const Key('Menu'));

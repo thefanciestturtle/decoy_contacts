@@ -8,9 +8,9 @@ import 'package:fake_contacts/about_page.dart';
 import 'package:fake_contacts/app_log.dart';
 import 'package:fake_contacts/app_theme.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// [text] with each run of white space as one space.
 String oneLine(String text) => text.trim().split(RegExp(r'\s+')).join(' ');
