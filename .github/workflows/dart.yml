@@ -36,11 +36,12 @@ jobs:
 
       # The Gradle distribution and the Kotlin compiler are downloaded from
       # GitHub releases, which sometimes time out (HTTP 504). Restoring them
-      # from the cache avoids that, and speeds up the build. Both jobs share
-      # one cache, which only the on-device job saves, and only on master:
-      # it is about 2 GB, the repo gets 10 GB, and a cache saved by a PR can
-      # only be used by that PR. A change to the Gradle files, the Flutter or
-      # JDK version or pubspec.lock makes a new entry.
+      # from the cache avoids that, and speeds up the build. The build job and
+      # the on-device jobs share one cache, which only the on-device jobs
+      # save, and only on master: it is about 2 GB, the repo gets 10 GB, and
+      # a cache saved by a PR can only be used by that PR. A change to the
+      # Gradle files, the Flutter or JDK version or pubspec.lock makes a new
+      # entry.
       - &restore-gradle-cache
         name: Restore Gradle cache
         id: gradle-cache
@@ -106,11 +107,22 @@ jobs:
         run: tool/test/check_flutter_release_test.sh
 
   # Create and Delete against the real Android contacts provider, on an
-  # emulator. API 36 matches the app's target SDK and the local test AVD.
+  # emulator: API 36, the app's target SDK; and Android 17 (API 37.0), which
+  # phones already run, whatever the app targets. (Android 17 also limits
+  # each app's memory, but not on the emulator, which has no limits set.
+  # Measured by hand on a 4 GB one: at most 266 MiB with 20,000 fake
+  # contacts, against at least 1024 MiB allowed on a 4 GB phone.)
   integration-test:
-    name: On-device tests (Android emulator, API 36)
+    name: On-device tests (Android emulator, API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      # (A failure on one doesn't stop the other.)
+      fail-fast: false
+      matrix:
+        # (Strings: "37.0" is part of the names of the platform and the
+        # system image.)
+        api-level: [ "36", "37.0" ]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -148,9 +160,12 @@ jobs:
         run: flutter build apk --release --target-platform android-x64
 
       # On master only (see "Restore Gradle cache"), save the Gradle cache
-      # once both builds have worked, before the emulator starts. Stop Gradle
-      # first, so nothing is written to the cache while it is being saved,
-      # and drop its lock files.
+      # once this job's debug and release builds have worked, before the
+      # emulator starts. Both on-device jobs try: whichever comes second
+      # finds the entry taken, and only says so. Stop Gradle first, so
+      # nothing is written to the cache while it is being saved, and drop
+      # its lock files. (Not on other runs: the test script's first build
+      # would start it again, and slower.)
       - name: Stop Gradle
         if: github.event_name == 'push' && steps.gradle-cache.outputs.cache-hit != 'true'
         run: |
@@ -174,11 +189,20 @@ jobs:
       - name: Run on-device tests and release smoke test
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
-          api-level: 36
+          api-level: ${{ matrix.api-level }}
+          # (The script's first line checks this AVD; this shows its target
+          # before the emulator starts, also if it then doesn't boot.)
+          avd-name: test
+          pre-emulator-launch-script: grep -H '^target=' "$ANDROID_AVD_HOME/test.ini"
           target: google_apis
           arch: x86_64
           profile: pixel_7
           disable-animations: true
+          # First, the AVD must be for that API level: older avdmanagers
+          # (command-line tools 12) wrote "android-0" for one like 37.0, and
+          # the emulator then ran it as a very old one. A failing line stops
+          # the rest.
           script: |
+            target="$(sed -n 's/^target=//p' "$ANDROID_AVD_HOME/test.ini")"; [ "$target" = 'android-${{ matrix.api-level }}' ] || { echo "::error::The AVD's target is '${target:-none}' in $ANDROID_AVD_HOME/test.ini, not android-${{ matrix.api-level }}: is avdmanager too old?"; exit 1; }
             tool/integration_test.sh --wipe-contacts
             tool/release_smoke_test.sh
