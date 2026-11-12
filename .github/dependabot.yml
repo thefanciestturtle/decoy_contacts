@@ -6,6 +6,9 @@
 # - Flutter itself (the version set in .github/workflows/dart.yml).
 # - Gradle, the Android Gradle plugin and Kotlin. Their versions have to match
 #   what the Flutter version supports, so update them together with Flutter.
+#   A new Gradle version also needs its checksum (distributionSha256Sum in
+#   android/gradle/wrapper/gradle-wrapper.properties).
+# - The JDK that runs the build (also set in .github/workflows/dart.yml).
 # - Transitive pub packages (`flutter pub upgrade`).
 version: 2
 updates:

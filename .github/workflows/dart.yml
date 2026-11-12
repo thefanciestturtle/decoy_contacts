@@ -13,6 +13,10 @@ permissions:
 
 env:
   FLUTTER_VERSION: 3.50.0
+  # The JDK that runs the build, an LTS release. (The app's own Java/Kotlin
+  # level is set in android/app/build.gradle.kts. On the phone the app runs
+  # on Android's runtime, not on this JDK.)
+  JAVA_VERSION: "25"
   GRADLE_CACHE_PATHS: |
     ~/.gradle/caches
     ~/.gradle/wrapper
@@ -24,30 +28,27 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The JDK that runs the build: the current LTS release. (The app's own
-      # Java/Kotlin level is set in android/app/build.gradle.kts. On the
-      # phone the app runs on Android's runtime, not on this JDK.)
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
-          java-version: "25"
+          java-version: ${{ env.JAVA_VERSION }}
 
       # The Gradle distribution and the Kotlin compiler are downloaded from
       # GitHub releases, which sometimes time out (HTTP 504). Restoring them
       # from the cache avoids that, and speeds up the build. Both jobs share
       # one cache, which only the on-device job saves, and only on master:
       # it is about 2 GB, the repo gets 10 GB, and a cache saved by a PR can
-      # only be used by that PR. A change to the Gradle files, the Flutter
-      # version or pubspec.lock makes a new entry.
+      # only be used by that PR. A change to the Gradle files, the Flutter or
+      # JDK version or pubspec.lock makes a new entry.
       - &restore-gradle-cache
         name: Restore Gradle cache
         id: gradle-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.GRADLE_CACHE_PATHS }}
-          key: gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
+          key: gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-jdk-${{ env.JAVA_VERSION }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle.properties', 'android/gradle/wrapper/gradle-wrapper.properties', 'pubspec.lock') }}
           restore-keys: |
-            gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-
+            gradle-${{ runner.os }}-flutter-${{ env.FLUTTER_VERSION }}-jdk-${{ env.JAVA_VERSION }}-
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
@@ -83,7 +84,7 @@ jobs:
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
-          java-version: "25"
+          java-version: ${{ env.JAVA_VERSION }}
 
       # Same step as in the build job (a YAML alias), so the key can't drift.
       - *restore-gradle-cache
