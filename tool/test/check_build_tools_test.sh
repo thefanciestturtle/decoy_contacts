@@ -13,7 +13,8 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 # Stand-ins. `flutter create` copies $TEMPLATE (fails with
-# CREATE_FAILS=1); `curl` prints $PUBLISHED_SUM (fails if it is empty).
+# CREATE_FAILS=1); `curl` prints $PUBLISHED_SUM (fails if it is empty)
+# and writes the URL it was given to $CURL_LOG.
 mkdir "$tmp/bin" "$tmp/bin_no_flutter"
 cat >"$tmp/bin/flutter" <<'EOF'
 #!/usr/bin/env bash
@@ -27,6 +28,7 @@ esac
 EOF
 cat >"$tmp/bin/curl" <<'EOF'
 #!/usr/bin/env bash
+echo "${*: -1}" >>"$CURL_LOG"
 [[ -n "${PUBLISHED_SUM:-}" ]] || exit 22
 echo "$PUBLISHED_SUM"
 EOF
@@ -45,9 +47,10 @@ android.newDsl=false
 android.builtInKotlin=false'
 
 # Writes an Android project's build files under $1/android: Gradle $2, the
-# Android Gradle plugin $3, Kotlin $4 (none if empty), gradle.properties $5,
-# the wrapper's checksum $6 (none if empty). A version may also be a whole
-# plugin line, to test lines the check can't read.
+# Android Gradle plugin $3, Kotlin $4 (no Kotlin plugin if empty),
+# gradle.properties $5, the wrapper's checksum $6 (none if empty), and
+# Flutter's plugin loader $7. A version may instead be a whole plugin line,
+# for lines the check can't read.
 write_project() {
   local dir=$1/android
   mkdir -p "$dir/gradle/wrapper"
@@ -57,8 +60,12 @@ write_project() {
     if [[ -n "$6" ]]; then echo "distributionSha256Sum=$6"; fi
   } >"$dir/gradle/wrapper/gradle-wrapper.properties"
   {
+    echo 'pluginManagement {'
+    echo '    includeBuild("../flutter/packages/flutter_tools/gradle")'
+    echo '}'
+    echo
     echo 'plugins {'
-    echo '    id("dev.flutter.flutter-plugin-loader") version "1.0.0"'
+    echo "    id(\"dev.flutter.flutter-plugin-loader\") version \"$7\""
     if [[ "$3" == *'('* ]]; then echo "    $3"
     else echo "    id(\"com.android.application\") version \"$3\" apply false"; fi
     if [[ -n "$4" ]]; then
@@ -69,24 +76,34 @@ write_project() {
   printf '%s\n' "$5" >"$dir/gradle.properties"
 }
 
+# The template for the cases below: write_template [GRADLE AGP KOTLIN
+# PROPERTIES LOADER].
+write_template() {
+  rm -rf "$tmp/template"
+  write_project "$tmp/template" "${1-9.5.0}" "${2-9.3.1}" "${3-2.4.20}" \
+    "${4-$TEMPLATE_PROPERTIES}" "" "${5-1.0.0}"
+}
+
 failures=0
 case_number=0
 
-# expect NAME STATUS TEXT [GRADLE AGP KOTLIN PROPERTIES SUM] : runs the
-# check on an app made with those (by default the good ones) and the
+# expect NAME STATUS TEXT [GRADLE AGP KOTLIN PROPERTIES SUM LOADER] : runs
+# the check on an app made with those (by default the good ones) and the
 # template in $tmp/template, and wants exit STATUS and TEXT in the output.
-# The environment can set PATH_TO_USE, PUBLISHED_SUM and CREATE_FAILS.
+# The environment can set PATH_TO_USE, PUBLISHED_SUM, CREATE_FAILS, and
+# EDIT, a command run in the app's android folder before the check.
 expect() {
   local name=$1 want_status=$2 want_text=$3
   local proj="$tmp/case$((++case_number))"
   mkdir -p "$proj/tool"
   cp "$SCRIPT" "$proj/tool/"
   write_project "$proj" "${4-9.5.1}" "${5-9.3.3}" "${6-2.4.21}" \
-    "${7-$GOOD_PROPERTIES}" "${8-abc123}"
+    "${7-$GOOD_PROPERTIES}" "${8-abc123}" "${9-1.0.0}"
+  if [[ -n "${EDIT:-}" ]]; then (cd "$proj/android" && eval "$EDIT"); fi
   local out status=0
   out="$(PATH="${PATH_TO_USE:-$tmp/bin:/usr/bin:/bin}" TEMPLATE="$tmp/template" \
     PUBLISHED_SUM="${PUBLISHED_SUM-abc123}" CREATE_FAILS="${CREATE_FAILS:-}" \
-    "$proj/tool/check_build_tools.sh" 2>&1)" || status=$?
+    CURL_LOG="$proj/curl.log" "$proj/tool/check_build_tools.sh" 2>&1)" || status=$?
   if [[ "$status" == "$want_status" && "$out" == *"$want_text"* ]]; then
     echo "ok: $name"
   else
@@ -96,9 +113,12 @@ expect() {
   fi
 }
 
-write_project "$tmp/template" 9.5.0 9.3.1 2.4.20 "$TEMPLATE_PROPERTIES" ""
+write_template
 
 expect "matching tools pass" 0 "The build tools match Flutter 9.99.0"
+[[ "$(cat "$tmp/case$case_number/curl.log")" == \
+   https://services.gradle.org/distributions/gradle-9.5.1-all.zip.sha256 ]] ||
+  { echo "FAIL: the checksum's URL: $(cat "$tmp/case$case_number/curl.log")"; failures=$((failures + 1)); }
 expect "the same versions as the template pass" 0 "Kotlin 2.4.20: OK" \
   9.5.0 9.3.1 2.4.20
 expect "a newer patch release passes" 0 "Kotlin 2.4.99: OK" 9.5.1 9.3.3 2.4.99
@@ -119,8 +139,12 @@ expect "a pre-release fails" 1 "Kotlin 2.4.20-RC isn't a release" \
 expect "a Gradle pre-release fails" 1 "Gradle 9.5.1-rc-1 isn't a release" \
   9.5.1-rc-1
 expect "a plugin line the check can't read fails" 1 \
-  "Android Gradle plugin: couldn't read the app's version" \
+  "Android Gradle plugin: couldn't read the app's version of com.android.application in android/settings.gradle.kts" \
   9.5.1 'id("com.android.application").version("9.3.3")'
+EDIT='sed -i "s/\$/\r/" gradle/wrapper/gradle-wrapper.properties settings.gradle.kts gradle.properties' \
+  expect "Windows line ends are fine" 0 "The build tools match"
+EDIT='sed -i "s/^    id/\tid/" settings.gradle.kts' \
+  expect "tabs before the plugins are fine" 0 "Android Gradle plugin 9.3.3: OK"
 
 expect "a missing property fails" 1 \
   "android/gradle.properties: add android.builtInKotlin=false, as in Flutter 9.99.0's template." \
@@ -134,26 +158,46 @@ expect "an extra property with digits fails" 1 \
 expect "an extra property outside android.* fails" 1 \
   "remove org.gradle.caching=true" \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\norg.gradle.caching=true'
-expect "spaces around = and comments are fine" 0 "gradle.properties: OK" \
-  9.5.1 9.3.3 2.4.21 $'# a comment\norg.gradle.jvmargs = -Xmx2G\nandroid.useAndroidX = true\nandroid.newDsl=  false\n\n! another comment\nandroid.builtInKotlin=false  '
+expect "an extra property written with a colon fails" 1 \
+  "remove android.foo=true" \
+  9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\nandroid.foo: true'
+expect "a key with a space in it is read as Java does" 1 \
+  "remove foo=bar=baz" \
+  9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES"$'\nfoo bar=baz'
+expect "spaces, colons, comments and continued lines are fine" 0 \
+  "gradle.properties: OK" \
+  9.5.1 9.3.3 2.4.21 $'# a comment\norg.gradle.jvmargs = -Xmx2G \\\n    -XX:MaxMetaspaceSize=1G\nandroid.useAndroidX : true\nandroid.newDsl=  false\n\n! another comment\nandroid.builtInKotlin=fal\\\n    se  '
 
 PUBLISHED_SUM=def456 expect "a wrong checksum fails" 1 \
-  "distributionSha256Sum is abc123, but Gradle publishes def456 for https://services.gradle.org/distributions/gradle-9.5.1-all.zip"
+  "distributionSha256Sum is abc123, but Gradle publishes def456 for gradle-9.5.1-all.zip"
 expect "no checksum fails" 1 "has no distributionSha256Sum" \
   9.5.1 9.3.3 2.4.21 "$GOOD_PROPERTIES" ""
 PUBLISHED_SUM="" expect "a checksum that can't be downloaded fails" 1 \
   "couldn't download Gradle's checksum (https://services.gradle.org/distributions/gradle-9.5.1-all.zip.sha256)"
+EDIT='sed -i "s|services.gradle.org|mirror.example|" gradle/wrapper/gradle-wrapper.properties' \
+  expect "Gradle from another site fails" 1 \
+  "distributionUrl is 'https://mirror.example/distributions/gradle-9.5.1-all.zip', not a Gradle distribution on Gradle's own site"
 
 PATH_TO_USE="$tmp/bin_no_flutter:/usr/bin:/bin" \
   expect "no flutter on the PATH fails" 1 "error: no flutter on the PATH"
 CREATE_FAILS=1 expect "a failed flutter create fails" 1 "create went wrong"
 
-# A template that no longer applies the Kotlin plugin (built-in Kotlin).
-rm -rf "$tmp/template"
-write_project "$tmp/template" 9.5.0 9.3.1 "" \
-  "${TEMPLATE_PROPERTIES/builtInKotlin=false/builtInKotlin=true}" ""
+# Templates that change.
+write_template 9.5.0 9.3.1 2.4.20 "$TEMPLATE_PROPERTIES" 1.0.1
+expect "an older plugin loader than the template's fails" 1 \
+  "Flutter's plugin loader 1.0.0 is older than Flutter 9.99.0's template (1.0.1)"
+write_template 9.5.0 9.4.0-rc01
+expect "a pre-release in the template fails" 1 \
+  "Flutter 9.99.0's template has Android Gradle plugin 9.4.0-rc01, which isn't a release version this script can compare."
+write_template
+printf '%s\n' 'plugins {' '    id("org.example.new") version "1.2.3"' '}' \
+  >>"$tmp/template/android/settings.gradle.kts"
+expect "a plugin the template adds fails" 1 \
+  "The plugin org.example.new: Flutter 9.99.0's template uses org.example.new (version 1.2.3); add it"
+write_template 9.5.0 9.3.1 "" \
+  "${TEMPLATE_PROPERTIES/builtInKotlin=false/builtInKotlin=true}"
 expect "a plugin the template no longer uses fails" 1 \
-  "Kotlin: Flutter 9.99.0's template no longer uses the plugin org.jetbrains.kotlin.android" \
+  "Kotlin (org.jetbrains.kotlin.android): Flutter 9.99.0's template no longer uses it." \
   9.5.1 9.3.3 2.4.21 "${GOOD_PROPERTIES/builtInKotlin=false/builtInKotlin=true}"
 expect "without it in the app too, it passes" 0 "The build tools match" \
   9.5.1 9.3.3 "" "${GOOD_PROPERTIES/builtInKotlin=false/builtInKotlin=true}"

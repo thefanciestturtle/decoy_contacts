@@ -24,6 +24,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # The only job here that may write: it opens, edits, comments on and
     # closes that issue.
     permissions:
@@ -31,7 +32,10 @@ jobs:
       issues: write
 
     steps:
+      # (No token left in the checkout: only gh needs it, from GH_TOKEN.)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Compare with Flutter's current stable release
         env:

@@ -6,14 +6,16 @@
 #
 # Compares FLUTTER_VERSION in .github/workflows/dart.yml with Flutter's
 # current stable release, from Flutter's list of releases. If that is newer,
-# it opens an issue saying so, or, if a still newer one has come out since,
-# updates the one it opened before and comments on it (one issue, however
-# many runs). Once FLUTTER_VERSION has caught up, it closes it. It only
-# touches issues opened by GitHub Actions, as the weekly workflow
-# (.github/workflows/flutter_release.yml) opens them.
+# it opens an issue saying so. If a still newer one comes out while it is
+# open, it updates the issue and comments on it (one issue, however many
+# runs). Once FLUTTER_VERSION has caught up, it closes it. An issue that
+# someone closed while it named the current release stays closed until a
+# newer one is out.
 #
-# Needs `gh` with access to the repository's issues (in that workflow, its
-# token with `issues: write`). With --dry-run it only says what it would do.
+# It only touches issues opened by GitHub Actions, as the weekly workflow
+# (.github/workflows/flutter_release.yml) opens them. It needs `gh` with
+# access to the repository's issues (in that workflow, its token with
+# `issues: write`). With --dry-run it only says what it would do.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -42,36 +44,45 @@ ours="$(sed -n 's/^ *FLUTTER_VERSION: *"\{0,1\}\([0-9.]*\)"\{0,1\} *$/\1/p' \
 [[ -n "$ours" ]] ||
   { echo "error: no FLUTTER_VERSION in .github/workflows/dart.yml" >&2; exit 1; }
 
-latest="$(curl -fsSL --retry 3 "$RELEASES" | python3 -c '
+releases="$(curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 "$RELEASES")"
+latest="$(python3 -c '
 import json, sys
 releases = json.load(sys.stdin)
 current = releases["current_release"]["stable"]
 print(next(r["version"] for r in releases["releases"]
            if r["hash"] == current and r["channel"] == "stable"))
-')"
+' <<<"$releases")"
 echo "CI builds with Flutter $ours; the current stable release is $latest."
 
-# The open issue this script keeps, if any: its number. Only one opened by
-# GitHub Actions counts, so an issue someone else opened with the same title
-# is left alone. (Not found through GitHub's search, which can lag behind by
-# a minute.)
-issue="$(gh issue list --state open --limit 1000 --json number,title,author |
-  python3 -c '
-import json, sys
+# The issues this script opened (by GitHub Actions, with its title), as
+# lines "STATE NUMBER VERSION", newest first: VERSION is the release the
+# issue names ("Flutter VERSION is out"). (Not found through GitHub's
+# search, which can lag behind by a minute.)
+issues="$(gh issue list --state all --limit 1000 \
+            --json number,title,author,state,body)"
+ours_issues="$(python3 -c '
+import json, re, sys
 title = sys.argv[1]
-for i in json.load(sys.stdin):
-    if i["title"] == title and i["author"]["login"] in ("app/github-actions", "github-actions"):
-        print(i["number"])
-        break
-' "$TITLE")"
+for i in sorted(json.load(sys.stdin), key=lambda i: -i["number"]):
+    if i["title"] != title or \
+            i["author"]["login"] not in ("app/github-actions", "github-actions"):
+        continue
+    named = re.match(r"Flutter (\S+) is out", i["body"] or "")
+    print(i["state"].lower(), i["number"], named.group(1) if named else "-")
+' "$TITLE" <<<"$issues")"
+open_issues=()
+while read -r state number _; do
+  [[ "$state" == open ]] && open_issues+=("$number")
+done <<<"$ours_issues"
 
 if [[ "$(printf '%s\n%s\n' "$ours" "$latest" | sort -V | tail -n 1)" == "$ours" ]]; then
-  if [[ -n "$issue" ]]; then
-    echo "Closing issue #$issue: CI now builds with Flutter $ours."
-    act gh issue close "$issue" --comment "CI now builds with Flutter $ours."
-  else
+  if ((${#open_issues[@]} == 0)); then
     echo "Nothing to do."
   fi
+  for number in "${open_issues[@]}"; do
+    echo "Closing issue #$number: CI now builds with Flutter $ours."
+    act gh issue close "$number" --comment "CI now builds with Flutter $ours."
+  done
   exit 0
 fi
 
@@ -81,17 +92,37 @@ To move to it: change \`FLUTTER_VERSION\` and the minimums in \`pubspec.yaml\`, 
 
 This issue is kept by \`tool/check_flutter_release.sh\`, which runs weekly, and is closed once \`FLUTTER_VERSION\` has caught up."
 
-if [[ -z "$issue" ]]; then
-  echo "Opening an issue: Flutter $latest is out."
-  act gh issue create --title "$TITLE" --body "$body"
-elif [[ "$(gh issue view "$issue" --json body | python3 -c '
+if ((${#open_issues[@]} == 0)); then
+  if awk -v v="$latest" '$1 == "closed" && $3 == v { found = 1 } END { exit !found }' \
+       <<<"$ours_issues"; then
+    echo "Nothing to do: the issue about Flutter $latest was closed."
+  else
+    echo "Opening an issue: Flutter $latest is out."
+    act gh issue create --title "$TITLE" --body "$body"
+  fi
+  exit 0
+fi
+
+# The newest open one is kept; any other is closed (opened twice somehow).
+issue="${open_issues[0]}"
+for number in "${open_issues[@]:1}"; do
+  echo "Closing issue #$number: #$issue says the same."
+  act gh issue close "$number" --comment "Closed: #$issue says the same."
+done
+current_body="$(gh issue view "$issue" --json body)"
+current_body="$(python3 -c '
 import json, sys
 print(json.load(sys.stdin)["body"].replace("\r\n", "\n").strip())
-')" != "$body" ]]; then
+' <<<"$current_body")"
+named="$(sed -n '1s/^Flutter \([^ ]*\) is out.*/\1/p' <<<"$current_body")"
+if [[ "$current_body" == "$body" ]]; then
+  echo "Issue #$issue already says so."
+elif [[ "$named" != "$latest" ]]; then
   # (Editing the text notifies nobody; a comment does.)
   echo "Updating issue #$issue: Flutter $latest is out."
   act gh issue edit "$issue" --body "$body"
   act gh issue comment "$issue" --body "Flutter $latest is out now."
 else
-  echo "Issue #$issue already says so."
+  echo "Updating the text of issue #$issue (still about Flutter $latest)."
+  act gh issue edit "$issue" --body "$body"
 fi

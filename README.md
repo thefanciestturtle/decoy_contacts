@@ -86,7 +86,8 @@ Added Spanish description to Fastlane per https://github.com/BillDietrich/fake_c
 * `flutter test` runs the unit and widget tests.
 * `tool/integration_test.sh --wipe-contacts` runs the on-device tests in `integration_test/`, which create and delete contacts through the app. The script only runs on an Android emulator, and `--wipe-contacts` empties the emulator's address book first.
 * `tool/release_smoke_test.sh` builds a release APK, installs it on an emulator, starts it, and checks it doesn't crash and can read and write its settings. Release builds go through R8, which the other tests don't, and which can break plugins. It doesn't exercise contacts (the app only touches them when a button is tapped). It needs an emulator image without Play Store (for `adb root`).
-* CI runs all three.
+* `tool/check_build_tools.sh` checks that Gradle, the Android Gradle plugin, Kotlin and `gradle.properties` match the project template of the Flutter in use, and that the Gradle download's checksum is Gradle's. Run it after a Flutter upgrade: it says what to change. `tool/test/` has tests for it and for `tool/check_flutter_release.sh`.
+* CI runs all of these. A weekly workflow also opens an issue when a newer stable Flutter is out (`tool/check_flutter_release.sh`), and closes it once the app has moved to it.
 
 ### Development Environment
 I'm no expert on this stuff, this is my first phone app, maybe I'm doing some things stupidly.

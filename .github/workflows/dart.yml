@@ -24,6 +24,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -79,11 +80,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: tool/check_build_tools.sh
 
-      - name: Test the scripts in tool/
+      - name: Test tool/check_build_tools.sh
         if: ${{ !cancelled() }}
-        run: |
-          tool/test/check_build_tools_test.sh
-          tool/test/check_flutter_release_test.sh
+        run: tool/test/check_build_tools_test.sh
+
+      - name: Test tool/check_flutter_release.sh
+        if: ${{ !cancelled() }}
+        run: tool/test/check_flutter_release_test.sh
 
   # Create and Delete against the real Android contacts provider, on an
   # emulator. API 36 matches the app's target SDK and the local test AVD.
