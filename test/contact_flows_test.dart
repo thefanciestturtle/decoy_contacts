@@ -23,6 +23,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'failing_ledger_store.dart';
+import 'focus_helpers.dart';
 import 'in_memory_contacts_gateway.dart';
 import 'talkback_announcements.dart';
 
@@ -368,19 +369,6 @@ void expectRingAround(WidgetTester tester, Finder button) {
       Theme.of(tester.element(button)).colorScheme.secondary);
 }
 
-/// The app bar's menu button (⋮).
-final Finder menu = find.byKey(const Key('Menu'));
-
-/// Whether the keyboard focus is on the menu button.
-bool menuFocused(WidgetTester tester) {
-  final focused = FocusManager.instance.primaryFocus?.context;
-  if (focused == null) return false;
-  final button = tester.element(menu);
-  var bFound = false;
-  focused.visitAncestorElements((e) => !(bFound = e == button));
-  return bFound;
-}
-
 /// Expects one focus ring on screen, just inside the edge of [item].
 void expectRingInside(WidgetTester tester, Finder item) {
   final shown = rings(tester);
@@ -396,21 +384,6 @@ void expectRingInside(WidgetTester tester, Finder item) {
 FocusNode focusOf(WidgetTester tester, String key) =>
     Focus.of(tester.element(find.descendant(
         of: find.byKey(Key(key)), matching: find.byType(Text))));
-
-/// The label of the button with the keyboard focus, or null if none
-/// has it.
-String? focusedButton() {
-  final focus = FocusManager.instance.primaryFocus;
-  final button = focus is FocusScopeNode
-      ? null
-      : focus?.context?.findAncestorWidgetOfExactType<TextButton>() ??
-          focus?.context?.findAncestorWidgetOfExactType<FilledButton>() ??
-          focus?.context?.findAncestorWidgetOfExactType<OutlinedButton>();
-  final child = button?.child;
-  return child is Text ? child.data : (child is Semantics
-      ? (child.child as Text?)?.data
-      : null);
-}
 
 void main() {
   late InMemoryContactsGateway book;
@@ -3366,6 +3339,115 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       handle.dispose();
+    });
+  });
+
+  group('arrow keys in and out of the text fields (U12)', () {
+    /// The four fields' text, in order.
+    List<String> fields(WidgetTester tester) => [
+          for (final key in kFieldKeys)
+            tester.widget<TextField>(find.byKey(Key(key))).controller!.text,
+        ];
+
+    testWidgets('with only the arrow keys, as with a D-pad: Down from the '
+        'menu through each field to Create and Delete; Up all the way back, '
+        'each field left at its start', (tester) async {
+      await pumpApp(tester, book);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(focusedPlace(tester), 'menu');
+
+      // Each field gets the caret at its end, so Down leaves it at once.
+      expect(await pressAll(tester, LogicalKeyboardKey.arrowDown, 7), [
+        ...kFieldKeys, kCreateButton, kDeleteButton, kDeleteButton]);
+      // Out of the fields, the on-screen keyboard is closed.
+      expect(tester.testTextInput.isVisible, isFalse);
+      expectRingAround(tester, find.byKey(const Key('Delete')));
+
+      // Up takes a field's caret to the start of its (only) line first.
+      expect(await pressAll(tester, LogicalKeyboardKey.arrowUp, 11), [
+        kCreateButton,
+        for (final key in kFieldKeys.reversed) ...[key, key],
+        'menu', 'menu',
+      ]);
+      expectRingAround(tester, menu);
+      // Nothing was typed or changed on the way.
+      expect(fields(tester), kSettings.values);
+    });
+
+    testWidgets('Down held from the menu goes on through the fields to the '
+        'buttons', (tester) async {
+      await pumpApp(tester, book);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(focusedPlace(tester), 'menu');
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+      final seen = [focusedPlace(tester)];
+      for (var i = 0; i < 5; i++) {
+        await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowDown);
+        await tester.pumpAndSettle();
+        seen.add(focusedPlace(tester));
+      }
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowDown);
+      expect(seen, [...kFieldKeys, kCreateButton, kDeleteButton]);
+    });
+
+    testWidgets('a field tapped after moving with the arrows: Up at its start '
+        'goes to the menu, not back to where the arrows were', (tester) async {
+      await pumpApp(tester, book);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(await pressAll(tester, LogicalKeyboardKey.arrowDown, 6),
+          [...kFieldKeys, kCreateButton, kDeleteButton]);
+
+      final field = find.byKey(const Key('LastNames'));
+      await tester.tap(field);
+      await tester.pumpAndSettle();
+      tester.widget<TextField>(field).controller!.selection =
+          const TextSelection.collapsed(offset: 0);
+      await tester.pump();
+      expect(await pressAll(tester, LogicalKeyboardKey.arrowUp, 1), ['menu']);
+    });
+
+    testWidgets('in a name list of several lines, Up goes a line at a time to '
+        'the start, then out; a key held down stops at the start',
+        (tester) async {
+      await pumpApp(tester, book);
+      final names = List.filled(30, 'Zen').join(', ');
+      await tester.enterText(find.byKey(const Key('FirstNames')), names);
+      await tester.pumpAndSettle();
+      final field = find.byKey(const Key('FirstNames'));
+      expect(tester.getSize(field).height, greaterThan(100),
+          reason: 'several lines');
+
+      // Held down from the end, it stops at the start.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowUp);
+      for (var i = 0; i < 10; i++) {
+        await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowUp);
+      }
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pumpAndSettle();
+      expect(focusedPlace(tester), 'FirstNames');
+      expect(
+          tester.widget<TextField>(field).controller!.selection,
+          const TextSelection.collapsed(offset: 0));
+      // A fresh press goes on up.
+      expect(await pressAll(tester, LogicalKeyboardKey.arrowUp, 1),
+          ['LastNames']);
+
+      // Fresh presses from the end: a line at a time, then out.
+      await tester.tap(field);
+      await tester.pumpAndSettle();
+      tester.widget<TextField>(field).controller!.selection =
+          TextSelection.collapsed(offset: names.length);
+      await tester.pump();
+      final seen = await pressAll(tester, LogicalKeyboardKey.arrowUp, 8);
+      final int inField = seen.takeWhile((f) => f == 'FirstNames').length;
+      // (Some 4 lines, so at least 3 moves up and 1 to the start.)
+      expect(inField, greaterThanOrEqualTo(4), reason: '$seen');
+      expect(seen[inField], 'LastNames');
+      expect(fields(tester)[1], names);
     });
   });
 }

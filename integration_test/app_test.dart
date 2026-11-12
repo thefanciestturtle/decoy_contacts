@@ -25,6 +25,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../test/focus_helpers.dart';
 import '../test/talkback_announcements.dart';
 
 /// 2 last names x 2 first names, so Create makes the four fakes in [kFakes].
@@ -406,20 +407,6 @@ void main() {
     await launchApp(tester);
     await expectStatus(tester, 'No fake contacts on this phone.');
 
-    /// The label of the button with the keyboard focus, if any.
-    String? focusedButton() {
-      final context = FocusManager.instance.primaryFocus?.context;
-      final button = context?.findAncestorWidgetOfExactType<TextButton>() ??
-          context?.findAncestorWidgetOfExactType<FilledButton>() ??
-          context?.findAncestorWidgetOfExactType<OutlinedButton>();
-      final child = button?.child;
-      return switch (child) {
-        Text(:final data) => data,
-        Semantics(child: Text(:final data)) => data,
-        _ => null,
-      };
-    }
-
     Future<void> press(LogicalKeyboardKey key) async {
       await tester.sendKeyEvent(key);
       await tester.pumpAndSettle();
@@ -452,6 +439,59 @@ void main() {
     // The last result stays (a snack bar used to go after 4 s, or 10 s).
     await tester.pump(const Duration(seconds: 11));
     expect(tester.widget<Text>(resultFinder).data, 'Deleted 4 fake contacts.');
+    expect(describeAll(await readAddressBook()), describeAll(real));
+  });
+
+  testWidgets('U12: with only the arrow keys and the centre button (the keys '
+      'a D-pad sends), the focus goes through the fields to the buttons and '
+      'back',
+      (tester) async {
+    await startWithEmptyAddressBook(tester);
+    final real = await seed(kRealContacts);
+    await launchApp(tester);
+    await expectStatus(tester, 'No fake contacts on this phone.');
+    // Into the app (a D-pad's first press focuses something), then up to
+    // the menu, which is at the top.
+    await pressAll(tester, LogicalKeyboardKey.arrowDown, 1);
+    for (var i = 0; i < 8 && focusedPlace(tester) != 'menu'; i++) {
+      await pressAll(tester, LogicalKeyboardKey.arrowUp, 1);
+    }
+    expect(focusedPlace(tester), 'menu');
+    expect(await pressAll(tester, LogicalKeyboardKey.arrowDown, 5),
+        [...kFieldKeys, kCreate]);
+    // The centre button presses Create; in the dialog, Right to its Create
+    // button (after Cancel) and the centre button confirm.
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await pumpUntil(tester, () => find.byType(AlertDialog).evaluate().isNotEmpty,
+        'dialog of "$kCreate"');
+    expectDialog(tester, 'Create 4 fake contacts?');
+    for (var i = 0; i < 4 && focusedButton() != 'Create'; i++) {
+      await pressAll(tester, LogicalKeyboardKey.arrowRight, 1);
+    }
+    expect(focusedButton(), 'Create');
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    expect(await waitForResult(tester, kCreate), 'Created 4 fake contacts.');
+    await pumpUntil(
+        tester, () => focusedPlace(tester) == kCreate, 'focus back on Create');
+
+    // Back up: each field's caret to the start of its line first.
+    expect(await pressAll(tester, LogicalKeyboardKey.arrowUp, 9), [
+      for (final key in kFieldKeys.reversed) ...[key, key],
+      'menu',
+    ]);
+    // Nothing was typed on the way.
+    expect([
+      for (final key in kFieldKeys)
+        tester.widget<TextField>(find.byKey(Key(key))).controller!.text,
+    ], kSettings.values);
+    final book = await readAddressBook();
+    expect(
+        book.values.where((c) => !real.containsKey(c.id)).map((c) => c.displayName),
+        unorderedEquals(kFakes.keys));
+    expectUnchanged(book, real);
+
+    await tapAndWaitForResult(tester, kDelete,
+        confirm: 'Delete 4 fake contacts?');
     expect(describeAll(await readAddressBook()), describeAll(real));
   });
 

@@ -14,6 +14,7 @@ import 'contacts_gateway.dart';
 import 'input_checks.dart';
 import 'result_messages.dart';
 import 'settings_store.dart';
+import 'text_field_keys.dart';
 
 /// How long to wait after the last keystroke before saving the settings.
 const Duration kSaveDelay = Duration(milliseconds: 500);
@@ -786,17 +787,13 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
   final GlobalKey _previewBox = GlobalKey();
   bool _revealScheduled = false;
 
-  /// The text field that [focus] belongs to, if any.
-  static EditableTextState? _editableOf(FocusNode? focus) =>
-      focus?.context?.findAncestorStateOfType<EditableTextState>();
-
   /// If a text field has the focus, takes it away, which closes the
   /// keyboard, and returns its focus node; else null. Otherwise the field
   /// gets the focus back after a dialog or menu, the keyboard opens again
   /// and the page scrolls back up to it.
   FocusNode? _leaveTextField() {
     final focus = FocusManager.instance.primaryFocus;
-    if (focus == null || _editableOf(focus) == null) return null;
+    if (focus == null || editableTextOf(focus) == null) return null;
     focus.unfocus();
     return focus;
   }
@@ -826,7 +823,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     final focus = _phoneFocus.hasFocus
         ? _phoneFocus
         : (_emailFocus.hasFocus ? _emailFocus : null);
-    final editable = _editableOf(focus);
+    final editable = editableTextOf(focus);
     final previewContext = _previewBox.currentContext;
     final preview = previewContext?.findRenderObject();
     if (editable == null || previewContext == null || preview is! RenderBox) {
