@@ -3,9 +3,11 @@
 # direct pub dependencies. CI then builds and tests each update.
 #
 # Not covered, so update these by hand now and then:
-# - Flutter itself (the version set in .github/workflows/dart.yml).
+# - Flutter itself (the version set in .github/workflows/dart.yml). A weekly
+#   workflow (flutter_release.yml) opens an issue when a newer one is out.
 # - Gradle, the Android Gradle plugin and Kotlin. Their versions have to match
-#   what the Flutter version supports, so update them together with Flutter.
+#   what the Flutter version supports, so update them together with Flutter;
+#   tool/check_build_tools.sh, which CI runs, says what to change.
 #   A new Gradle version also needs its checksum (distributionSha256Sum in
 #   android/gradle/wrapper/gradle-wrapper.properties).
 # - The JDK that runs the build (also set in .github/workflows/dart.yml).

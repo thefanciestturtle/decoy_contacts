@@ -59,6 +59,11 @@ jobs:
       - name: Disable analytics
         run: flutter config --no-analytics
 
+      # Gradle, the Android Gradle plugin and Kotlin on the versions of this
+      # Flutter's project template, and the same Android flags.
+      - name: Check the build tools against Flutter's template
+        run: tool/check_build_tools.sh
+
       - name: Install dependencies
         run: flutter pub get
 
