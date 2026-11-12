@@ -50,16 +50,18 @@ chmod +x "$tmp/bin/"*
 
 readonly TITLE='A newer stable Flutter is out'
 
-# One issue as gh lists it: issue NUMBER STATE VERSION [AUTHOR], where
-# VERSION is the release its text names.
+# One issue as gh lists it: issue NUMBER STATE VERSION [AUTHOR [REASON]],
+# where VERSION is the release its text names and REASON why it was closed
+# (COMPLETED, NOT_PLANNED or DUPLICATE).
 issue() {
   python3 -c '
 import json, sys
-number, state, version, author, title = sys.argv[1:]
+number, state, version, author, reason, title = sys.argv[1:]
 print(json.dumps({"number": int(number), "title": title, "state": state,
+                  "stateReason": reason or None,
                   "body": f"Flutter {version} is out; ...",
                   "author": {"login": author, "is_bot": author != "someone"}}))
-' "$1" "$2" "$3" "${4:-app/github-actions}" "$TITLE"
+' "$1" "$2" "$3" "${4:-app/github-actions}" "${5:-}" "$TITLE"
 }
 # A list of issues: issues "$(issue ...)" ...
 issues() { local IFS=,; echo "[$*]"; }
@@ -71,8 +73,10 @@ case_number=0
 # FLUTTER_VERSION OURS (none if empty) and Flutter's stable release LATEST,
 # and wants exit STATUS, TEXT in its output, and exactly the gh calls that
 # change something in CALLS, in order, each with its issue number (e.g.
-# "create", "edit7 comment7", "" for none). The environment can set
-# ISSUES, ISSUE_BODY and VIEW_FAILS.
+# "create", "edit7 comment7", "" for none). OURS is written as given
+# after "FLUTTER_VERSION: ". It runs as in GitHub Actions unless
+# IN_ACTIONS is empty. The environment can set ISSUES, ISSUE_BODY and
+# VIEW_FAILS.
 expect() {
   local name=$1 ours=$2 latest=$3 want_status=$4 want_text=$5 want_calls=$6
   shift 6
@@ -88,6 +92,7 @@ expect() {
   : >"$proj/gh.log"
   out="$(PATH="$tmp/bin:/usr/bin:/bin" LATEST="$latest" GH_LOG="$proj/gh.log" \
     ISSUES="${ISSUES:-[]}" ISSUE_BODY="${ISSUE_BODY:-}" VIEW_FAILS="${VIEW_FAILS:-}" \
+    GITHUB_ACTIONS="${IN_ACTIONS-true}" \
     "$proj/tool/check_flutter_release.sh" "$@" 2>&1)" || status=$?
   calls="$(sed -n 's/^gh issue \(edit\|comment\|close\) \([0-9]*\).*/\1\2/p; s/^gh issue create .*/create/p' \
     "$proj/gh.log" | tr '\n' ' ' | sed 's/ $//')"
@@ -106,7 +111,7 @@ expect "newer than the stable release: nothing to do" 3.51.0 3.50.0 0 \
   "Nothing to do." ""
 expect "the current stable release is found by its hash" 3.50.0 3.51.0 0 \
   "the current stable release is 3.51.0." "create"
-body="$(cat "$tmp/case$case_number/gh.log.body")"
+body="$(cat "$tmp/case$case_number/gh.log.body" 2>/dev/null || true)"
 [[ "$body" == "Flutter 3.51.0 is out; CI builds with Flutter 3.50.0 (\`FLUTTER_VERSION\` in \`.github/workflows/dart.yml\`)."* ]] ||
   { echo "FAIL: the issue's text: $body"; failures=$((failures + 1)); }
 expect "Flutter's list can't be read: an error" 3.50.0 "" 22 "" ""
@@ -145,11 +150,14 @@ ISSUES="$(issues "$(issue 7 OPEN 3.51.0 github-actions)")" expect \
   "GitHub Actions also counts without 'app/'" 3.51.0 3.51.0 0 \
   "Closing issue #7" "close7"
 
-ISSUES="$(issues "$(issue 7 CLOSED 3.51.0)")" expect \
-  "closed while it named this release: stays closed" 3.50.0 3.51.0 0 \
-  "Nothing to do: the issue about Flutter 3.51.0 was closed." ""
-ISSUES="$(issues "$(issue 7 CLOSED 3.50.1)")" expect \
-  "closed for an older release: a newer one opens an issue" 3.50.0 3.51.0 0 \
+ISSUES="$(issues "$(issue 7 CLOSED 3.51.0 app/github-actions NOT_PLANNED)")" expect \
+  "closed as not planned while it named this release: stays closed" 3.50.0 3.51.0 0 \
+  "Nothing to do: the issue about Flutter 3.51.0 was closed as not planned." ""
+ISSUES="$(issues "$(issue 7 CLOSED 3.50.1 app/github-actions NOT_PLANNED)")" expect \
+  "put off for an older release: a newer one opens an issue" 3.50.0 3.51.0 0 \
+  "Opening an issue: Flutter 3.51.0 is out." "create"
+ISSUES="$(issues "$(issue 7 CLOSED 3.51.0 app/github-actions COMPLETED)")" expect \
+  "closed as done, then FLUTTER_VERSION went back: a new issue" 3.50.0 3.51.0 0 \
   "Opening an issue: Flutter 3.51.0 is out." "create"
 
 expect "--dry-run changes nothing" 3.50.0 3.51.0 0 \
@@ -158,8 +166,16 @@ ISSUES="$(issues "$(issue 7 OPEN 3.51.0)")" expect \
   "--dry-run doesn't close either" 3.51.0 3.51.0 0 \
   "(dry run) would run: gh issue close 7" "" --dry-run
 expect "an unknown argument is refused" 3.50.0 3.51.0 2 "usage:" "" --dryrun
+IN_ACTIONS="" expect "outside GitHub Actions, only --dry-run" 3.50.0 3.51.0 2 \
+  "error: outside GitHub Actions, run this with --dry-run" ""
+IN_ACTIONS="" expect "(where --dry-run works)" 3.50.0 3.51.0 0 \
+  "(dry run) would run: gh issue create" "" --dry-run
+expect "FLUTTER_VERSION in quotes, with a comment" "'3.50.0' # pinned" 3.51.0 0 \
+  "CI builds with Flutter 3.50.0;" "create"
+expect "FLUTTER_VERSION that isn't exact is an error" "3.50.x" 3.51.0 1 \
+  "error: no FLUTTER_VERSION with an exact version" ""
 expect "no FLUTTER_VERSION is an error" "" 3.51.0 1 \
-  "error: no FLUTTER_VERSION in .github/workflows/dart.yml" ""
+  "error: no FLUTTER_VERSION with an exact version (e.g. 3.50.0) in .github/workflows/dart.yml" ""
 
 if ((failures)); then
   echo "$failures of $case_number cases failed" >&2

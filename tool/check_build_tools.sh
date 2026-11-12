@@ -13,11 +13,13 @@
 # didn't make this app's build any faster, and CI's runner also has to fit
 # the emulator). This script makes a new project from the template in a
 # temporary folder, compares, and fails with what to change. Run it after
-# a Flutter upgrade; CI runs it on every build.
+# a Flutter upgrade; CI runs it on every build, before building (a build
+# can add missing flags to gradle.properties by itself).
 #
 # Also checked: that the Gradle wrapper downloads Gradle from Gradle's own
 # site, and that its distributionSha256Sum is the checksum Gradle publishes
-# there (this needs the internet).
+# there (this needs the internet; if the site can't be reached, it only
+# warns).
 #
 # Not compared: the app's own Java level, and the SDK versions, which come
 # from Flutter itself (flutter.compileSdkVersion etc.).
@@ -31,6 +33,8 @@ readonly PROPERTIES=android/gradle.properties
 readonly GRADLE_DISTRIBUTIONS=https://services.gradle.org/distributions/
 # Set in gradle.properties on purpose, whatever the template has.
 readonly OWN_PROPERTIES=(org.gradle.jvmargs)
+# Separates a key from its value in what properties() prints.
+readonly SEP=$'\x1f'
 
 command -v flutter >/dev/null ||
   { echo "error: no flutter on the PATH" >&2; exit 1; }
@@ -41,18 +45,25 @@ trap 'rm -rf "$tmp"' EXIT
 problems=()
 problem() { problems+=("$*"); }
 
-# The properties of a .properties file, one "key<TAB>value" line each, read
-# as Java (and so Gradle) reads them: # and ! comments, "=", ":" or spaces
-# between key and value, lines continued with \, any line ends. Values
-# lose their trailing spaces.
+warning() {
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then echo "::warning::$*"; else echo "warning: $*"; fi
+}
+
+# The properties of a .properties file, one "key<SEP>value" line each, read
+# as java.util.Properties (and so Gradle) reads them: # and ! comments, "=",
+# ":" or spaces between key and value, lines continued with \, escapes, any
+# line ends. Values keep their trailing spaces, as in Java.
 properties() {
   python3 - "$1" <<'EOF'
 import re, sys
 
 def unescape(s):
-    s = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), s)
-    return re.sub(r"\\(.)", lambda m: {"t": "\t", "n": "\n", "r": "\r", "f": "\f"}
-                  .get(m.group(1), m.group(1)), s)
+    def one(m):
+        c = m.group(1)
+        if c[0] == "u" and len(c) == 5:
+            return chr(int(c[1:], 16))
+        return {"t": "\t", "n": "\n", "r": "\r", "f": "\f"}.get(c, c)
+    return re.sub(r"\\(u[0-9a-fA-F]{4}|.)", one, s)
 
 text = open(sys.argv[1], encoding="latin-1").read()
 lines, pending = [], None
@@ -76,12 +87,9 @@ for line in lines:
     key, rest = line[:i], line[i:].lstrip(" \t\f")
     if rest[:1] in ("=", ":"):
         rest = rest[1:].lstrip(" \t\f")
-    print(f"{unescape(key)}\t{unescape(rest).rstrip()}")
+    print(f"{unescape(key)}\x1f{unescape(rest)}")
 EOF
 }
-
-# The value of property $2 in the .properties file $1 (empty if none).
-property() { properties "$1" | awk -F '\t' -v k="$2" '$1 == k { print substr($0, length(k) + 2) }'; }
 
 # The plugins a settings.gradle.kts gives a version, one "id version" line
 # each, e.g. "com.android.application 9.3.3".
@@ -92,10 +100,10 @@ plugins() {
 # What a plugin is called in messages.
 plugin_name() {
   case "$1" in
-    com.android.application) echo "Android Gradle plugin" ;;
-    org.jetbrains.kotlin.android) echo Kotlin ;;
-    dev.flutter.flutter-plugin-loader) echo "Flutter's plugin loader" ;;
-    *) echo "The plugin $1" ;;
+    com.android.application) echo "Android Gradle plugin ($1)" ;;
+    org.jetbrains.kotlin.android) echo "Kotlin ($1)" ;;
+    dev.flutter.flutter-plugin-loader) echo "Flutter's plugin loader ($1)" ;;
+    *) echo "$1" ;;
   esac
 }
 
@@ -121,7 +129,7 @@ older() {
 compare() {
   local tool=$1 ours=$2 theirs=$3 where=$4
   if ! is_release "$theirs"; then
-    problem "Flutter $flutter_version's template has $tool $theirs, which isn't a release version this script can compare. Line it up by hand, and update this script."
+    problem "Flutter $flutter_version's template has $tool '$theirs', which isn't a release version this script can compare. Line it up by hand, and update this script."
     return
   fi
   local line
@@ -140,10 +148,27 @@ compare() {
   fi
 }
 
+# Reads the properties of file $1 into the associative array named $2.
+read_properties() {
+  local -n into=$2
+  local text key value
+  text="$(properties "$1")"
+  while IFS="$SEP" read -r key value; do
+    [[ -n "$key$value" ]] || continue
+    # shellcheck disable=SC2034 # (into is the caller's array)
+    into["${key:-(an empty key)}"]=$value
+  done <<<"$text"
+}
+
 flutter_version="$(flutter --version --machine 2>/dev/null |
   sed -n 's/^ *"frameworkVersion": *"\([^"]*\)".*/\1/p' || true)"
 [[ -n "$flutter_version" ]] ||
   { echo "error: couldn't get the version of flutter" >&2; exit 1; }
+ci_version="$(sed -n 's/^[[:space:]]*FLUTTER_VERSION:[[:space:]]*["'\'']\{0,1\}\([0-9.]*\).*/\1/p' \
+  .github/workflows/dart.yml 2>/dev/null || true)"
+if [[ -n "$ci_version" && "$ci_version" != "$flutter_version" ]]; then
+  warning "this is Flutter $flutter_version, CI builds with $ci_version (FLUTTER_VERSION in .github/workflows/dart.yml): comparing with $flutter_version's template."
+fi
 
 echo "== Making a new project from Flutter $flutter_version's template"
 if ! flutter create --platforms=android --no-pub --project-name template_check \
@@ -153,38 +178,57 @@ if ! flutter create --platforms=android --no-pub --project-name template_check \
   exit 1
 fi
 template="$tmp/template_check/android"
+for file in "${WRAPPER#android/}" "${SETTINGS#android/}" "${PROPERTIES#android/}"; do
+  if [[ ! -f "$template/$file" ]]; then
+    echo "error: Flutter $flutter_version's template has no android/$file; this script needs updating." >&2
+    exit 1
+  fi
+done
 
 echo "== Comparing"
 
 # Gradle (the wrapper's distribution, gradle-VERSION-TYPE.zip).
-gradle_of() { property "$1" distributionUrl | sed -n 's|.*/gradle-\(.*\)-[a-z]*\.zip$|\1|p'; }
-ours_url="$(property "$WRAPPER" distributionUrl)"
-compare Gradle "$(gradle_of "$WRAPPER")" \
-  "$(gradle_of "$template/gradle/wrapper/gradle-wrapper.properties")" \
+declare -A ours_wrapper=() theirs_wrapper=()
+read_properties "$WRAPPER" ours_wrapper
+read_properties "$template/${WRAPPER#android/}" theirs_wrapper
+ours_url="${ours_wrapper[distributionUrl]:-}"
+gradle_of() { sed -n 's|.*/gradle-\(.*\)-[a-z]*\.zip$|\1|p' <<<"$1"; }
+compare Gradle "$(gradle_of "$ours_url")" \
+  "$(gradle_of "${theirs_wrapper[distributionUrl]:-}")" \
   "$WRAPPER (distributionUrl, and distributionSha256Sum to match)"
 
-# The plugins with versions in settings.gradle.kts.
+# The plugins with versions in settings.gradle.kts. The template must have
+# AGP among them, or nothing would be compared.
 declare -A ours_plugins=() theirs_plugins=()
-while read -r id version; do ours_plugins["$id"]=$version; done < <(plugins "$SETTINGS")
-while read -r id version; do theirs_plugins["$id"]=$version; done < <(plugins "$template/settings.gradle.kts")
+ours_list="$(plugins "$SETTINGS")"
+theirs_list="$(plugins "$template/${SETTINGS#android/}")"
+while read -r id version; do
+  if [[ -n "$id" ]]; then ours_plugins["$id"]=$version; fi
+done <<<"$ours_list"
+while read -r id version; do
+  if [[ -n "$id" ]]; then theirs_plugins["$id"]=$version; fi
+done <<<"$theirs_list"
+if [[ ! -v "theirs_plugins[com.android.application]" ]]; then
+  problem "couldn't read the Android Gradle plugin's version in Flutter $flutter_version's template (settings.gradle.kts); this script needs updating."
+fi
 while IFS= read -r id; do
   [[ -n "$id" ]] || continue
   name="$(plugin_name "$id")"
   if [[ ! -v "theirs_plugins[$id]" ]]; then
-    problem "$name ($id): Flutter $flutter_version's template no longer uses it. See how a new project (flutter create) is set up instead, and change $SETTINGS and android/app/build.gradle.kts to match."
+    problem "$name: Flutter $flutter_version's template doesn't use it. Remove it from $SETTINGS (and android/app/build.gradle.kts), or, if the template set it up another way, do as a new project (flutter create) does."
   elif [[ -v "ours_plugins[$id]" ]]; then
     compare "$name" "${ours_plugins[$id]}" "${theirs_plugins[$id]}" "$SETTINGS"
   elif grep -qF "\"$id\"" "$SETTINGS"; then
-    problem "$name: couldn't read the app's version of $id in $SETTINGS (write it as in the template: id(\"$id\") version \"...\")."
+    problem "$name: couldn't read the app's version in $SETTINGS (write it as the template does: id(\"$id\") version \"...\")."
   else
-    problem "$name: Flutter $flutter_version's template uses $id (version ${theirs_plugins[$id]}); add it to $SETTINGS as the template does, and see whether android/app/build.gradle.kts needs it too."
+    problem "$name: Flutter $flutter_version's template uses it (version ${theirs_plugins[$id]}); add it to $SETTINGS as the template does, and see whether android/app/build.gradle.kts needs it too."
   fi
 done < <(printf '%s\n' "${!ours_plugins[@]}" "${!theirs_plugins[@]}" | sort -u)
 
 # gradle.properties.
 declare -A ours_props=() theirs_props=()
-while IFS=$'\t' read -r key value; do ours_props["$key"]=$value; done < <(properties "$PROPERTIES")
-while IFS=$'\t' read -r key value; do theirs_props["$key"]=$value; done < <(properties "$template/gradle.properties")
+read_properties "$PROPERTIES" ours_props
+read_properties "$template/${PROPERTIES#android/}" theirs_props
 for key in "${OWN_PROPERTIES[@]}"; do
   unset "ours_props[$key]" "theirs_props[$key]"
 done
@@ -196,7 +240,7 @@ while IFS= read -r key; do
   elif [[ ! -v "ours_props[$key]" ]]; then
     problem "$PROPERTIES: add $key=${theirs_props[$key]}, as in Flutter $flutter_version's template."
   elif [[ "${ours_props[$key]}" != "${theirs_props[$key]}" ]]; then
-    problem "$PROPERTIES: $key is ${ours_props[$key]}; Flutter $flutter_version's template has $key=${theirs_props[$key]}."
+    problem "$PROPERTIES: $key is '${ours_props[$key]}'; Flutter $flutter_version's template has '${theirs_props[$key]}'."
   else
     continue
   fi
@@ -208,14 +252,14 @@ fi
 
 # The Gradle distribution: from Gradle's site, with its published checksum.
 distribution="${ours_url##*/}"
-ours_sum="$(property "$WRAPPER" distributionSha256Sum)"
+ours_sum="${ours_wrapper[distributionSha256Sum]:-}"
 if [[ "$ours_url" != "$GRADLE_DISTRIBUTIONS"gradle-*.zip ]]; then
   problem "$WRAPPER: distributionUrl is '$ours_url', not a Gradle distribution on Gradle's own site ($GRADLE_DISTRIBUTIONS)."
 elif [[ -z "$ours_sum" ]]; then
   problem "$WRAPPER has no distributionSha256Sum: add Gradle's checksum of the distribution ($GRADLE_DISTRIBUTIONS$distribution.sha256)."
 elif ! published="$(curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 \
                       "$GRADLE_DISTRIBUTIONS$distribution.sha256")"; then
-  problem "couldn't download Gradle's checksum ($GRADLE_DISTRIBUTIONS$distribution.sha256) to compare."
+  warning "couldn't download Gradle's checksum ($GRADLE_DISTRIBUTIONS$distribution.sha256), so distributionSha256Sum wasn't compared with it."
 elif [[ "$ours_sum" != "$published" ]]; then
   problem "$WRAPPER: distributionSha256Sum is $ours_sum, but Gradle publishes $published for $distribution."
 else
