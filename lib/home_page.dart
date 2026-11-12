@@ -14,6 +14,7 @@ import 'contacts_gateway.dart';
 import 'input_checks.dart';
 import 'result_messages.dart';
 import 'settings_store.dart';
+import 'text_field_keys.dart';
 
 /// How long to wait after the last keystroke before saving the settings.
 const Duration kSaveDelay = Duration(milliseconds: 500);
@@ -171,6 +172,8 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
     firstNamesController.dispose();
     phoneNumberTemplateController.dispose();
     emailAddressTemplateController.dispose();
+    _lastNamesFocus.dispose();
+    _firstNamesFocus.dispose();
     _phoneFocus.dispose();
     _emailFocus.dispose();
     _createFocus.dispose();
@@ -779,10 +782,18 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         failed: deleteFailedMessage,
       );
 
-  // While the phone or email template is edited, the preview under the
-  // fields should stay above the keyboard: it shows what the template gives.
-  final FocusNode _phoneFocus = FocusNode();
-  final FocusNode _emailFocus = FocusNode();
+  // The fields' focus nodes. The arrow keys can move the focus out of a
+  // field at its start or end (see leaveTextFieldAtEdge). While the phone or
+  // email template is edited, the preview under the fields should stay
+  // above the keyboard: it shows what the template gives.
+  final FocusNode _lastNamesFocus =
+      FocusNode(debugLabel: "Last names", onKeyEvent: leaveTextFieldAtEdge);
+  final FocusNode _firstNamesFocus =
+      FocusNode(debugLabel: "First names", onKeyEvent: leaveTextFieldAtEdge);
+  final FocusNode _phoneFocus = FocusNode(
+      debugLabel: "Phone number template", onKeyEvent: leaveTextFieldAtEdge);
+  final FocusNode _emailFocus = FocusNode(
+      debugLabel: "Email address template", onKeyEvent: leaveTextFieldAtEdge);
   final GlobalKey _previewBox = GlobalKey();
   bool _revealScheduled = false;
 
@@ -966,6 +977,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                           TextField(
                             key: keyLastNames,
                             controller: lastNamesController,
+                            focusNode: _lastNamesFocus,
                             onChanged: _settingsChanged,
                             enabled: bCanAct,
                             minLines: 1,
@@ -976,6 +988,7 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
                           TextField(
                             key: keyFirstNames,
                             controller: firstNamesController,
+                            focusNode: _firstNamesFocus,
                             onChanged: _settingsChanged,
                             enabled: bCanAct,
                             minLines: 1,

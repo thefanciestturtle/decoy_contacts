@@ -3368,6 +3368,111 @@ void main() {
       handle.dispose();
     });
   });
+
+  group('arrow keys in and out of the text fields (U12)', () {
+    const fieldKeys = ['LastNames', 'FirstNames', 'PhoneNumberTemplate',
+        'EmailAddressTemplate'];
+
+    /// Where the keyboard focus is: 'menu', a field's key, a button's
+    /// label, or null.
+    String? focused(WidgetTester tester) {
+      if (menuFocused(tester)) return 'menu';
+      final context = FocusManager.instance.primaryFocus?.context;
+      for (final key in fieldKeys) {
+        final field = find.byKey(Key(key));
+        if (context != null && field.evaluate().isNotEmpty) {
+          var bIn = false;
+          context.visitAncestorElements(
+              (e) => !(bIn = e == field.evaluate().single));
+          if (bIn) return key;
+        }
+      }
+      return focusedButton();
+    }
+
+    /// The four fields' text, in order.
+    List<String> fields(WidgetTester tester) => [
+          for (final key in fieldKeys)
+            tester.widget<TextField>(find.byKey(Key(key))).controller!.text,
+        ];
+
+    Future<List<String?>> pressAll(
+        WidgetTester tester, LogicalKeyboardKey key, int times) async {
+      final seen = <String?>[];
+      for (var i = 0; i < times; i++) {
+        await tester.sendKeyEvent(key);
+        await tester.pumpAndSettle();
+        seen.add(focused(tester));
+      }
+      return seen;
+    }
+
+    testWidgets('with only the arrow keys, as with a D-pad: Down from the '
+        'menu through each field to Create and Delete; Up all the way back, '
+        'each field left at its start', (tester) async {
+      await pumpApp(tester, book);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      expect(focused(tester), 'menu');
+
+      // Each field gets the caret at its end, so Down leaves it at once.
+      expect(await pressAll(tester, LogicalKeyboardKey.arrowDown, 7), [
+        ...fieldKeys, kCreateButton, kDeleteButton, kDeleteButton]);
+      // Out of the fields, the on-screen keyboard is closed.
+      expect(tester.testTextInput.isVisible, isFalse);
+      expectRingAround(tester, find.byKey(const Key('Delete')));
+
+      // Up takes a field's caret to the start of its (only) line first.
+      expect(await pressAll(tester, LogicalKeyboardKey.arrowUp, 11), [
+        kCreateButton,
+        for (final key in fieldKeys.reversed) ...[key, key],
+        'menu', 'menu',
+      ]);
+      expectRingAround(tester, menu);
+      // Nothing was typed or changed on the way.
+      expect(fields(tester), kSettings.values);
+    });
+
+    testWidgets('in a name list of several lines, Up goes a line at a time to '
+        'the start, then out; a key held down stops at the start',
+        (tester) async {
+      await pumpApp(tester, book);
+      final names = List.filled(30, 'Zen').join(', ');
+      await tester.enterText(find.byKey(const Key('FirstNames')), names);
+      await tester.pumpAndSettle();
+      final field = find.byKey(const Key('FirstNames'));
+      expect(tester.getSize(field).height, greaterThan(100),
+          reason: 'several lines');
+
+      // Held down from the end, it stops at the start.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowUp);
+      for (var i = 0; i < 10; i++) {
+        await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowUp);
+      }
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pumpAndSettle();
+      expect(focused(tester), 'FirstNames');
+      expect(
+          tester.widget<TextField>(field).controller!.selection,
+          const TextSelection.collapsed(offset: 0));
+      // A fresh press goes on up.
+      expect(await pressAll(tester, LogicalKeyboardKey.arrowUp, 1),
+          ['LastNames']);
+
+      // Fresh presses from the end: a line at a time, then out.
+      await tester.tap(field);
+      await tester.pumpAndSettle();
+      tester.widget<TextField>(field).controller!.selection =
+          TextSelection.collapsed(offset: names.length);
+      await tester.pump();
+      final seen = await pressAll(tester, LogicalKeyboardKey.arrowUp, 8);
+      final int inField = seen.takeWhile((f) => f == 'FirstNames').length;
+      // (Some 4 lines, so at least 3 moves up and 1 to the start.)
+      expect(inField, greaterThanOrEqualTo(4), reason: '$seen');
+      expect(seen[inField], 'LastNames');
+      expect(fields(tester)[1], names);
+    });
+  });
 }
 
 /// Scales small text more than large text, as Android 14 and later do with

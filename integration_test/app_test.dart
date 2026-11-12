@@ -455,6 +455,97 @@ void main() {
     expect(describeAll(await readAddressBook()), describeAll(real));
   });
 
+  testWidgets('U12: with only the arrow keys and the centre button, as with '
+      'a D-pad, the focus goes through the fields to the buttons and back',
+      (tester) async {
+    await startWithEmptyAddressBook(tester);
+    final real = await seed(kRealContacts);
+    await launchApp(tester);
+    await expectStatus(tester, 'No fake contacts on this phone.');
+    const fieldKeys = ['LastNames', 'FirstNames', 'PhoneNumberTemplate',
+        'EmailAddressTemplate'];
+
+    /// Where the keyboard focus is: 'menu', a field's key, a button's
+    /// label, or null.
+    String? focused() {
+      final context = FocusManager.instance.primaryFocus?.context;
+      if (context == null) return null;
+      String? found;
+      context.visitAncestorElements((e) {
+        final key = e.widget.key;
+        if (key == const Key('Menu')) found = 'menu';
+        if (key is ValueKey<String> && fieldKeys.contains(key.value)) {
+          found = key.value;
+        }
+        if (key == const Key('Create')) found = kCreate;
+        if (key == const Key('Delete')) found = kDelete;
+        return found == null;
+      });
+      return found;
+    }
+
+    /// The label of the dialog's button with the focus, if any.
+    String? dialogFocus() {
+      final child = FocusManager.instance.primaryFocus?.context
+          ?.findAncestorWidgetOfExactType<TextButton>()
+          ?.child;
+      return child is Text ? child.data : null;
+    }
+
+    Future<List<String?>> pressAll(LogicalKeyboardKey key, int times) async {
+      final seen = <String?>[];
+      for (var i = 0; i < times; i++) {
+        await tester.sendKeyEvent(key);
+        await tester.pumpAndSettle();
+        seen.add(focused());
+      }
+      return seen;
+    }
+
+    // Into the app (a D-pad's first press focuses something), to the menu.
+    for (var i = 0; i < 3 && focused() != 'menu'; i++) {
+      await pressAll(LogicalKeyboardKey.arrowDown, 1);
+    }
+    expect(focused(), 'menu');
+    expect(await pressAll(LogicalKeyboardKey.arrowDown, 5),
+        [...fieldKeys, kCreate]);
+    // The centre button presses Create; in the dialog, Right to its Create
+    // button (after Cancel) and the centre button confirm.
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    await pumpUntil(tester, () => find.byType(AlertDialog).evaluate().isNotEmpty,
+        'dialog of "$kCreate"');
+    expectDialog(tester, 'Create 4 fake contacts?');
+    for (var i = 0; i < 4 && dialogFocus() != 'Create'; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pumpAndSettle();
+    }
+    expect(dialogFocus(), 'Create');
+    await tester.sendKeyEvent(LogicalKeyboardKey.select);
+    expect(await waitForResult(tester, kCreate), 'Created 4 fake contacts.');
+    await pumpUntil(tester, () => focused() == kCreate, 'focus back on Create');
+
+    // Back up: each field's caret to the start of its line first.
+    expect(await pressAll(LogicalKeyboardKey.arrowUp, 9), [
+      for (final key in fieldKeys.reversed) ...[key, key],
+      'menu',
+    ]);
+    // Nothing was typed on the way.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    for (final MapEntry(:key, :value) in kSettings.entries) {
+      expect(prefs.getString(key), value, reason: key);
+    }
+    final book = await readAddressBook();
+    expect(
+        book.values.where((c) => !real.containsKey(c.id)).map((c) => c.displayName),
+        unorderedEquals(kFakes.keys));
+    expectUnchanged(book, real);
+
+    await tapAndWaitForResult(tester, kDelete,
+        confirm: 'Delete 4 fake contacts?');
+    expect(describeAll(await readAddressBook()), describeAll(real));
+  });
+
   testWidgets('U9: Reset to defaults puts the settings back and saves them; '
       'the fakes made before stay recorded, and Delete removes them',
       (tester) async {
