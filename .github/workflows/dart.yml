@@ -37,11 +37,11 @@ jobs:
       # The Gradle distribution and the Kotlin compiler are downloaded from
       # GitHub releases, which sometimes time out (HTTP 504). Restoring them
       # from the cache avoids that, and speeds up the build. The build job and
-      # the on-device jobs share one cache, which only the on-device job for
-      # API 36 saves, and only on master: it is about 2 GB, the repo gets
-      # 10 GB, and a cache saved by a PR can only be used by that PR. A change
-      # to the Gradle files, the Flutter or JDK version or pubspec.lock makes
-      # a new entry.
+      # the on-device jobs share one cache, which only the on-device jobs
+      # save, and only on master: it is about 2 GB, the repo gets 10 GB, and
+      # a cache saved by a PR can only be used by that PR. A change to the
+      # Gradle files, the Flutter or JDK version or pubspec.lock makes a new
+      # entry.
       - &restore-gradle-cache
         name: Restore Gradle cache
         id: gradle-cache
@@ -108,8 +108,9 @@ jobs:
 
   # Create and Delete against the real Android contacts provider, on an
   # emulator: API 36, the app's target SDK; and Android 17 (API 37.0), which
-  # phones already run, and which limits the memory of every app, whatever
-  # it targets.
+  # phones already run, whatever the app targets. (Android 17 also limits
+  # each app's memory, but not on the emulator, which has no limits set; how
+  # far below them the app stays was measured by hand, in C10d's PR.)
   integration-test:
     name: On-device tests (Android emulator, API ${{ matrix.api-level }})
     runs-on: ubuntu-latest
@@ -157,19 +158,21 @@ jobs:
       - name: Build release APK (x86_64)
         run: flutter build apk --release --target-platform android-x64
 
-      # On master only (see "Restore Gradle cache"), and from one of the two
-      # jobs, save the Gradle cache once both builds have worked, before the
-      # emulator starts. Stop Gradle first, so nothing is written to the
-      # cache while it is being saved, and drop its lock files.
+      # On master only (see "Restore Gradle cache"), save the Gradle cache
+      # once this job's debug and release builds have worked, before the
+      # emulator starts. Both on-device jobs try: whichever comes second
+      # finds the entry taken, and only says so. Stop Gradle first, so nothing
+      # is written to the cache while it is being saved, and drop its lock
+      # files.
       - name: Stop Gradle
-        if: github.event_name == 'push' && steps.gradle-cache.outputs.cache-hit != 'true' && matrix.api-level == '36'
+        if: github.event_name == 'push' && steps.gradle-cache.outputs.cache-hit != 'true'
         run: |
           if [ -x android/gradlew ]; then (cd android && ./gradlew --stop); fi
           find ~/.gradle/caches -name '*.lock' -delete
           rm -f ~/.gradle/caches/*/gc.properties
 
       - name: Save Gradle cache
-        if: github.event_name == 'push' && steps.gradle-cache.outputs.cache-hit != 'true' && matrix.api-level == '36'
+        if: github.event_name == 'push' && steps.gradle-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.GRADLE_CACHE_PATHS }}
