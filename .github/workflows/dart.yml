@@ -24,6 +24,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,6 +71,39 @@ jobs:
 
       - name: Build debug APK
         run: flutter build apk --debug
+
+  # Gradle, the Android Gradle plugin and Kotlin on the versions of this
+  # Flutter's project template, and the same gradle.properties; and the
+  # tests of the scripts that check this and Flutter's releases. A job of
+  # its own, where nothing is built: a build adds missing flags to
+  # gradle.properties by itself, so the check would miss them.
+  build-tools:
+    name: Build tools match Flutter
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Disable analytics
+        run: flutter config --no-analytics
+
+      - name: Check the build tools against Flutter's template
+        run: tool/check_build_tools.sh
+
+      - name: Test tool/check_build_tools.sh
+        if: ${{ !cancelled() }}
+        run: tool/test/check_build_tools_test.sh
+
+      - name: Test tool/check_flutter_release.sh
+        if: ${{ !cancelled() }}
+        run: tool/test/check_flutter_release_test.sh
 
   # Create and Delete against the real Android contacts provider, on an
   # emulator. API 36 matches the app's target SDK and the local test AVD.

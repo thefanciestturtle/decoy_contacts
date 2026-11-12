@@ -1,0 +1,54 @@
+name: Flutter release check
+
+# Once a week: is a newer stable Flutter out than the one CI builds with
+# (FLUTTER_VERSION in dart.yml)? If so, tool/check_flutter_release.sh keeps
+# one issue open saying so; it closes the issue once FLUTTER_VERSION has
+# caught up. Also runs when dart.yml changes on master (so the issue closes
+# when the upgrade is merged), and can be started by hand (Actions tab).
+# Only on the default branch: elsewhere FLUTTER_VERSION may not be
+# master's yet.
+#
+# GitHub turns scheduled workflows off in a fork until they are turned on,
+# and in a public repository after 60 days without activity; the Actions
+# tab then offers to turn it back on.
+on:
+  schedule:
+    - cron: "23 5 * * 1" # Mondays, 05:23 UTC
+  push:
+    branches: [ "master" ]
+    paths: [ ".github/workflows/dart.yml" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time, so two can't both open the issue.
+concurrency:
+  group: flutter-release-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    # (Not the event's default branch: a scheduled run's event may not
+    # name the repository.)
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The only job here that may write: it opens, edits, comments on and
+    # closes that issue.
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      # (No token left in the checkout: only gh needs it, from GH_TOKEN.)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare with Flutter's current stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # (This repository's issues, whatever git remotes say.)
+          GH_REPO: ${{ github.repository }}
+        run: tool/check_flutter_release.sh
