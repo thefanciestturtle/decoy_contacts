@@ -44,3 +44,10 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 /android/build/
+
+# Release builds, and keys (tool/build_release.sh, tool/sign_release.sh).
+# The release key never goes into the repository.
+/dist/
+*.jks
+*.keystore
+*.p12

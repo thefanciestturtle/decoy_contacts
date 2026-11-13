@@ -1,8 +1,9 @@
 # shellcheck shell=bash
-# Shared by tool/check_build_tools.sh and tool/check_flutter_release.sh;
+# Shared by the scripts in tool/ (the checks of the build tools and of
+# Flutter's releases, and the release scripts, with tool/release_lib.sh);
 # source it from the repository's root.
 
-# Both need bash 4.4 or newer (empty arrays under set -u, associative
+# They need bash 4.4 or newer (empty arrays under set -u, associative
 # arrays).
 if ((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 404)); then
   echo "error: this needs bash 4.4 or newer (this is $BASH_VERSION)" >&2
@@ -21,16 +22,27 @@ need() {
   fi
 }
 
-# Prints FLUTTER_VERSION, the Flutter CI builds with, from
-# .github/workflows/dart.yml: an exact version (e.g. 3.50.0), quoted or
-# not, with or without a comment after it (after a space, as YAML wants).
-# Fails if there isn't exactly one such line.
-ci_flutter_version() {
+# Prints the value of setting $1 (a plain name: letters, digits and _) in
+# .github/workflows/dart.yml, which must match the basic regular expression
+# $2: quoted or not, with or without a comment after it (after a space, as
+# YAML wants). Fails if there isn't exactly one such line.
+ci_env_value() {
   local found
-  found="$(sed -n 's/^[[:space:]]*FLUTTER_VERSION:[[:space:]]*["'\'']\{0,1\}\([0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\)["'\'']\{0,1\}\([[:space:]]\{1,\}#.*\)\{0,1\}[[:space:]]*$/\1/p' \
+  found="$(sed -n "s/^[[:space:]]*$1:[[:space:]]*[\"']\{0,1\}\($2\)[\"']\{0,1\}\([[:space:]]\{1,\}#.*\)\{0,1\}[[:space:]]*\$/\1/p" \
     .github/workflows/dart.yml 2>/dev/null)" || return 1
   [[ -n "$found" && "$found" != *$'\n'* ]] || return 1
   echo "$found"
+}
+
+# Prints FLUTTER_VERSION, the Flutter CI builds with: an exact version
+# (e.g. 3.50.0).
+ci_flutter_version() {
+  ci_env_value FLUTTER_VERSION '[0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}'
+}
+
+# Prints JAVA_VERSION, the major version of the JDK CI builds with (e.g. 25).
+ci_java_version() {
+  ci_env_value JAVA_VERSION '[0-9]\{1,\}'
 }
 
 # A release version with three parts: 9.5 -> 9.5.0.

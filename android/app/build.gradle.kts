@@ -22,12 +22,17 @@ android {
         versionName = flutter.versionName
     }
 
-    buildTypes {
-        release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
-        }
+    // Release builds are left unsigned. The maintainer signs them with
+    // tool/sign_release.sh, and F-Droid checks that its own build is the
+    // same APK. To install one for testing, sign a copy with the debug key
+    // (tool/release_smoke_test.sh does).
+
+    // Leave out Google's dependency metadata: a block in the APK's signature
+    // that is encrypted for Google Play, so nobody else can read it. F-Droid
+    // rejects APKs that have it. (Only a signing build adds it.)
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
 }
 

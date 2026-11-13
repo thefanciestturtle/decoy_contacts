@@ -4,6 +4,10 @@
 #   tool/release_smoke_test.sh [path/to/app-release.apk]
 #
 # Without an APK, it builds a release APK for the emulator's ABI first.
+# Release builds are unsigned (the release key signs them by hand, see
+# tool/sign_release.sh), so it installs a copy signed with the debug key, as
+# tool/debug_sign.sh makes; an APK that is already signed is installed as
+# it is.
 #
 # The other tests use debug builds, which skip R8. R8 shrinks release builds
 # and can remove classes that a plugin only looks up at run time, so such a
@@ -27,8 +31,11 @@
 # app and its data are replaced, and the app is uninstalled at the end.
 set -euo pipefail
 
+readonly CALLER_DIR="$PWD"
 cd "$(dirname "$0")/.."
 source tool/emulator_lib.sh
+source tool/check_lib.sh
+source tool/release_lib.sh
 
 readonly PREFS="/data/data/$APP_ID/shared_prefs/FlutterSharedPreferences.xml"
 readonly DEFAULT_TEMPLATE='+447700900nnn'
@@ -57,6 +64,21 @@ become_root() {
   done
   return 1
 }
+
+# What it needs, checked before anything on the emulator is changed (the
+# cleanup below uninstalls the app): to sign an unsigned APK, or the one it
+# builds, with the debug key, apksigner and that key.
+need python3
+needs_signing=true
+if [[ $# -ge 1 ]]; then
+  apk="$(absolute_path "$1" "$CALLER_DIR")"
+  [[ -f "$apk" ]] || { echo "error: no APK at $apk" >&2; exit 1; }
+  if is_signed "$apk"; then needs_signing=false; fi
+fi
+if $needs_signing; then
+  apksigner_path >/dev/null || exit 1
+  debug_keystore >/dev/null || exit 1
+fi
 
 tmp="$(mktemp -d)"
 was_root=false
@@ -173,9 +195,7 @@ check_app_ok() {
     fail "the app is no longer running"
 }
 
-if [[ $# -ge 1 ]]; then
-  apk="$1"
-else
+if [[ $# -eq 0 ]]; then
   abi="$(adb_ shell getprop ro.product.cpu.abi | tr -d '\r')"
   case "$abi" in
     x86_64) platform=android-x64 ;;
@@ -188,6 +208,12 @@ else
   apk=build/app/outputs/flutter-apk/app-release.apk
 fi
 [[ -f "$apk" ]] || fail "no APK at $apk"
+if $needs_signing; then
+  echo "== Signing a copy with the debug key"
+  debug_sign "$apk" "$tmp/debug-signed.apk" ||
+    fail "couldn't sign $apk with the debug key"
+  apk="$tmp/debug-signed.apk"
+fi
 
 echo "== Getting root (to read the release app's data)"
 is_root && was_root=true

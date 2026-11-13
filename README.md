@@ -57,6 +57,14 @@ You could uninstall this app after creating the fake contacts, without causing a
 
 
 ## Releases
+Release APKs are signed with this app's own key. The SHA-256 fingerprint of its certificate is:
+
+`7e9a346a64feba002aa3d9fe060c3a2df5f78dd1a79a56bdb1873072245f6d6c`
+
+Android installs an update only if it is signed with the same key. To check an APK you downloaded, `apksigner verify --print-certs` (from the Android SDK's build-tools) shows the fingerprint as "Signer #1 certificate SHA-256 digest".
+
+Each release is built so that a build of the same source gives the same file, apart from the signature (see "Release builds" below).
+
 ### 1.0.0
 Got working.
 ### 1.6.0
@@ -88,9 +96,16 @@ Added Spanish description to Fastlane per https://github.com/BillDietrich/fake_c
 ### Tests
 * `flutter test` runs the unit and widget tests.
 * `tool/integration_test.sh --wipe-contacts` runs the on-device tests in `integration_test/`, which create and delete contacts through the app. The script only runs on an Android emulator, and `--wipe-contacts` empties the emulator's address book first.
-* `tool/release_smoke_test.sh` builds a release APK, installs it on an emulator, starts it, and checks it doesn't crash and can read and write its settings. Release builds go through R8, which the other tests don't, and which can break plugins. It doesn't exercise contacts (the app only touches them when a button is tapped). It needs an emulator image without Play Store (for `adb root`).
+* `tool/release_smoke_test.sh` builds a release APK, signs a copy with the debug key, installs it on an emulator, starts it, and checks it doesn't crash and can read and write its settings. Release builds go through R8, which the other tests don't, and which can break plugins. It doesn't exercise contacts (the app only touches them when a button is tapped). It needs an emulator image without Play Store (for `adb root`).
 * `tool/check_build_tools.sh` checks that Gradle, the Android Gradle plugin, Kotlin and `gradle.properties` match the project template of the Flutter in use, and that the Gradle download's checksum is Gradle's. Run it after a Flutter upgrade: it says what to change. `tool/test/` has tests for it and for `tool/check_flutter_release.sh`.
 * CI runs all of these; the on-device tests and the smoke test run on both Android 16 (API 36) and Android 17 (API 37.0) (whose memory limits for apps the emulator doesn't set). A weekly workflow also opens an issue when a newer stable Flutter is out (`tool/check_flutter_release.sh`), and closes it once the app has moved to it.
+
+### Release builds
+* `tool/build_release.sh [TAG]` builds the release APK of a commit, unsigned, into `dist/`. It builds in a sandbox (bubblewrap) where the project, its packages, Flutter and the Android SDK are at the paths F-Droid's build server uses, so that F-Droid's build of the same commit is the same file. (Flutter compiles these paths into the app, so a build in your own folder would also name your home folder.) It keeps a copy of the Flutter that CI uses, and Gradle's downloads, in `~/.cache/decoy_contacts`.
+* `tool/sign_release.sh KEYSTORE dist/decoy_contacts-<version>-unsigned.apk` signs it with the release key (it asks for the password) and checks the signed APK: the key's fingerprint, and that only the signature was added.
+* `tool/make_release_key.sh` made the release key, once.
+* Release builds are unsigned, so `flutter run --release` can't install them. `tool/debug_sign.sh build/app/outputs/flutter-apk/app-release.apk` makes a copy signed with the debug key, for `adb install`.
+* CI builds the release APK twice and checks that the two are the same file. `tool/test/release_test.sh` tests the release scripts with throwaway keys.
 
 ### Development Environment
 I'm no expert on this stuff, this is my first phone app, maybe I'm doing some things stupidly.
