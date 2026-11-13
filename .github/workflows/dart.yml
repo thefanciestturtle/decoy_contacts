@@ -106,6 +106,62 @@ jobs:
         if: ${{ !cancelled() }}
         run: tool/test/check_flutter_release_test.sh
 
+  # The release APK, built by tool/build_release.sh as it is built for a
+  # release and as F-Droid will build it: twice, from fresh clones, and the
+  # two must be the same file. F-Droid publishes the signed APK only if its
+  # own build of the same commit is that APK too. Also the tests of the
+  # release scripts.
+  release-build:
+    name: Release build is reproducible
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      # Same step as in the build job (a YAML alias). The sandbox uses this
+      # ~/.gradle as its own.
+      - *restore-gradle-cache
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      # The build's sandbox. Ubuntu 24.04 and newer stop programs without
+      # their own AppArmor profile from making user namespaces, which
+      # bubblewrap needs.
+      - name: Install bubblewrap
+        run: |
+          if ! command -v bwrap >/dev/null; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q --no-install-recommends bubblewrap
+          fi
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
+      - name: Test the release scripts
+        run: tool/test/release_test.sh
+
+      # With this job's Flutter (the version is checked) and Gradle cache.
+      - name: Build the release APK twice
+        run: |
+          flutter_sdk="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
+          tool/build_release.sh --flutter-sdk "$flutter_sdk" --gradle-home ~/.gradle
+          mkdir first
+          mv dist/*-unsigned.apk first/
+          tool/build_release.sh --flutter-sdk "$flutter_sdk" --gradle-home ~/.gradle
+
+      - name: The two builds are the same file
+        run: python3 -I tool/apk_check.py same first/*-unsigned.apk dist/*-unsigned.apk
+
   # Create and Delete against the real Android contacts provider, on an
   # emulator: API 36, the app's target SDK; and Android 17 (API 37.0), which
   # phones already run, whatever the app targets. (Android 17 also limits
@@ -155,7 +211,8 @@ jobs:
       # For the release smoke test, built before the emulator starts like the
       # debug APK (the test's own build is then up to date). Only for the
       # emulator's ABI: R8, which is what can break release builds, runs the
-      # same way for every ABI.
+      # same way for every ABI. (Unsigned, as release builds are; the smoke
+      # test signs a copy with the debug key, which the debug build made.)
       - name: Build release APK (x86_64)
         run: flutter build apk --release --target-platform android-x64
 

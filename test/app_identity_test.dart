@@ -38,6 +38,10 @@ void main() {
 
     expect(File('tool/emulator_lib.sh').readAsLinesSync(),
         contains('readonly APP_ID=$kAppId'));
+    // Release builds are made in the folder F-Droid builds the app in,
+    // named after the ID.
+    expect(File('tool/release_lib.sh').readAsLinesSync(),
+        contains('readonly RELEASE_PROJECT_DIR=/home/vagrant/build/$kAppId'));
   });
 
   test('the package, the repository and the ID end in the same name', () {

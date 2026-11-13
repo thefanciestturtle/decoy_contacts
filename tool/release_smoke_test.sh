@@ -4,6 +4,9 @@
 #   tool/release_smoke_test.sh [path/to/app-release.apk]
 #
 # Without an APK, it builds a release APK for the emulator's ABI first.
+# Release builds are unsigned (the release key signs them by hand, see
+# tool/sign_release.sh), so it installs a copy signed with the debug key;
+# an APK that is already signed is installed as it is.
 #
 # The other tests use debug builds, which skip R8. R8 shrinks release builds
 # and can remove classes that a plugin only looks up at run time, so such a
@@ -29,6 +32,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 source tool/emulator_lib.sh
+source tool/check_lib.sh
+source tool/release_lib.sh
 
 readonly PREFS="/data/data/$APP_ID/shared_prefs/FlutterSharedPreferences.xml"
 readonly DEFAULT_TEMPLATE='+447700900nnn'
@@ -188,6 +193,12 @@ else
   apk=build/app/outputs/flutter-apk/app-release.apk
 fi
 [[ -f "$apk" ]] || fail "no APK at $apk"
+if [[ -z "$(apk_check signature "$apk")" ]]; then
+  echo "== Signing a copy with the debug key"
+  debug_sign "$apk" "$tmp/debug-signed.apk" ||
+    fail "couldn't sign $apk with the debug key"
+  apk="$tmp/debug-signed.apk"
+fi
 
 echo "== Getting root (to read the release app's data)"
 is_root && was_root=true
