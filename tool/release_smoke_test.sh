@@ -30,6 +30,7 @@
 # app and its data are replaced, and the app is uninstalled at the end.
 set -euo pipefail
 
+readonly CALLER_DIR="$PWD"
 cd "$(dirname "$0")/.."
 source tool/emulator_lib.sh
 source tool/check_lib.sh
@@ -179,7 +180,7 @@ check_app_ok() {
 }
 
 if [[ $# -ge 1 ]]; then
-  apk="$1"
+  apk="$(absolute_path "$1" "$CALLER_DIR")"
 else
   abi="$(adb_ shell getprop ro.product.cpu.abi | tr -d '\r')"
   case "$abi" in
@@ -193,7 +194,7 @@ else
   apk=build/app/outputs/flutter-apk/app-release.apk
 fi
 [[ -f "$apk" ]] || fail "no APK at $apk"
-if [[ -z "$(apk_check signature "$apk")" ]]; then
+if ! is_signed "$apk"; then
   echo "== Signing a copy with the debug key"
   debug_sign "$apk" "$tmp/debug-signed.apk" ||
     fail "couldn't sign $apk with the debug key"

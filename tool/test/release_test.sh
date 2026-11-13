@@ -16,8 +16,10 @@ cd "$(dirname "$0")/../.."
 source tool/check_lib.sh
 source tool/release_lib.sh
 
-keytool="${JAVA_HOME:+$JAVA_HOME/bin/}keytool"
+java_home="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")}"
+keytool="$java_home/bin/keytool"
 need python3 openssl setsid git "$keytool"
+java_major="$(java_version "$java_home/bin/java")"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -29,23 +31,33 @@ mkdir -p "$repo/tool" "$repo/.github/workflows" "$repo/dist"
 cp tool/check_lib.sh tool/release_lib.sh tool/apk_check.py \
   tool/make_release_key.sh tool/sign_release.sh tool/build_release.sh \
   "$repo/tool/"
-echo "  FLUTTER_VERSION: 9.99.0" >"$repo/.github/workflows/dart.yml"
 echo 'version: 1.2.3+4' >"$repo/pubspec.yaml"
 git -C "$repo" init --quiet
-git -C "$repo" add -A
-git -C "$repo" -c user.name=test -c user.email=test@example.invalid \
-  commit --quiet -m test
+# commit FLUTTER JAVA [TAG] : commits CI's versions of Flutter and the JDK.
+commit() {
+  printf '  FLUTTER_VERSION: %s\n  JAVA_VERSION: "%s"\n' "$1" "$2" \
+    >"$repo/.github/workflows/dart.yml"
+  git -C "$repo" add -A
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid \
+    commit --quiet -m test
+  if [[ -n "${3:-}" ]]; then git -C "$repo" tag "$3"; fi
+}
+commit 9.97.0 "$java_major" older-flutter
+commit 9.99.0 "$((java_major + 1))" other-jdk
+commit 9.99.0 "$java_major"
 
 failures=0
 cases=0
 
-# run INPUT COMMAND... : runs COMMAND in the copy, without a terminal and
-# with INPUT on stdin; sets $status and $out (stdout and stderr).
+# run INPUT COMMAND... : runs COMMAND in the copy (or in folder RUN_IN),
+# without a terminal and with INPUT on stdin; sets $status and $out (stdout
+# and stderr).
 run() {
   local input=$1
   shift
   status=0
-  out="$(cd "$repo" && printf '%b' "$input" | setsid -w "$@" 2>&1)" || status=$?
+  out="$(cd "${RUN_IN:-$repo}" && printf '%b' "$input" | setsid -w "$@" 2>&1)" ||
+    status=$?
 }
 
 # expect NAME STATUS TEXT : wants the last run to have exited with STATUS
@@ -176,9 +188,14 @@ for v in 34.0.0 35.0.0 36.1.0 36.0.0; do
   chmod +x "$tmp/sdk/build-tools/$v/apksigner"
 done
 mkdir -p "$tmp/sdk/build-tools/37.0.0" # no apksigner in it
+for v in 36.2.0-rc1 37.0.0-rc1; do # previews
+  mkdir -p "$tmp/sdk/build-tools/$v"
+  touch "$tmp/sdk/build-tools/$v/apksigner"
+  chmod +x "$tmp/sdk/build-tools/$v/apksigner"
+done
 run "" env ANDROID_HOME="$tmp/sdk" bash -c \
   'source tool/check_lib.sh; source tool/release_lib.sh; apksigner_path'
-expect "apksigner from the newest build-tools that has one" 0 \
+expect "apksigner from the newest build-tools release that has one" 0 \
   "$tmp/sdk/build-tools/36.1.0/apksigner"
 rm -r "$tmp/sdk/build-tools/"3[5-7]*
 run "" env ANDROID_HOME="$tmp/sdk" bash -c \
@@ -202,6 +219,31 @@ run "" env ANDROID_USER_HOME="$tmp/android" bash -c \
    apksigner_ verify --print-certs '$tmp/debug.apk'"
 expect "debug signing signs with the debug key" 0 "CN=Android Debug"
 
+# --- release_lib.sh: apksigner_ allows native access only on Java 17 and
+# newer. A stand-in java says it is $SPEC and rejects that option.
+mkdir -p "$tmp/java/bin"
+cat >"$tmp/java/bin/java" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == -XshowSettings:properties ]]; then
+  echo "    java.specification.version = \$SPEC" >&2
+  exit 0
+fi
+for arg in "\$@"; do
+  [[ "\$arg" != --enable-native-access=* ]] || { echo "Unrecognized option: \$arg" >&2; exit 1; }
+done
+exec "$java_home/bin/java" "\$@"
+EOF
+chmod +x "$tmp/java/bin/java"
+for spec in 11 1.8; do
+  run "" env JAVA_HOME="$tmp/java" SPEC="$spec" bash -c \
+    "source tool/check_lib.sh; source tool/release_lib.sh; apksigner_ verify '$tmp/debug.apk' && echo verified"
+  expect "apksigner runs on Java $spec" 0 "verified"
+done
+run "" env JAVA_HOME="$tmp/java" SPEC=17 bash -c \
+  "source tool/check_lib.sh; source tool/release_lib.sh; apksigner_ verify '$tmp/debug.apk'"
+expect "... and on Java 17 it allows native access" 1 \
+  "Unrecognized option: --enable-native-access=ALL-UNNAMED"
+
 # --- tool/make_release_key.sh
 readonly PW=release-pw
 # Not UTC, so a start date read in local time would show.
@@ -209,8 +251,11 @@ export TZ=America/Chicago
 run "$PW\nother\n" tool/make_release_key.sh "$tmp/release.p12"
 expect "passwords that differ fail" 1 "the passwords differ"
 check "... and make no keystore" test ! -e "$tmp/release.p12"
-run "$PW\n$PW\n" tool/make_release_key.sh "$tmp/release.p12"
+# From another folder, with a path relative to it.
+RUN_IN="$tmp" run "$PW\n$PW\n" repo/tool/make_release_key.sh release.p12
 expect "makes the key" 0 "Copy the keystore to two safe places"
+check "... where it was asked to, not in the repository" bash -c \
+  "[[ -f '$tmp/release.p12' && ! -e release.p12 && ! -e tool/release.p12 ]]"
 cert="$(cert_text "$tmp/release.p12" release "$PW" 2>&1)" || cert=""
 cases=$((cases + 1))
 want_start="notBefore=$(TZ=UTC date +'%b %e 00:00:00 %Y GMT')"
@@ -252,8 +297,10 @@ unset TZ
 
 # --- tool/sign_release.sh
 cp "$tmp/clean.apk" "$repo/dist/app-1.0-unsigned.apk"
-run "$PW\n" tool/sign_release.sh "$tmp/release.p12" dist/app-1.0-unsigned.apk
-expect "signs with the release key" 0 "Signed dist/app-1.0.apk"
+# From another folder, with paths relative to it.
+RUN_IN="$tmp" run "$PW\n" repo/tool/sign_release.sh release.p12 \
+  repo/dist/app-1.0-unsigned.apk
+expect "signs with the release key" 0 "Signed $repo/dist/app-1.0.apk"
 signed="$repo/dist/app-1.0.apk"
 check "... with v2 and v3 only" bash -c \
   "[[ \"\$(python3 -I tool/apk_check.py signature '$signed' | tr '\n' ' ')\" == 'v2 v3 '* ]]"
@@ -277,6 +324,11 @@ cp "$tmp/leak.apk" "$repo/dist/leak-unsigned.apk"
 run "$PW\n" tool/sign_release.sh "$tmp/release.p12" dist/leak-unsigned.apk
 expect "won't sign an APK that names a home folder" 1 "names a home folder"
 check "... and writes nothing" test ! -e dist/leak.apk
+
+cp "$tmp/AndroidManifest.xml" "$repo/dist/broken-unsigned.apk"
+run "$PW\n" tool/sign_release.sh "$tmp/release.p12" dist/broken-unsigned.apk
+expect "won't sign a file that isn't an APK" 1 \
+  "couldn't read $repo/dist/broken-unsigned.apk as an APK"
 
 cp "$tmp/clean.apk" "$repo/dist/app-2.0.apk.in"
 run "$PW\n" tool/sign_release.sh "$tmp/release.p12" dist/app-2.0.apk.in
@@ -311,16 +363,24 @@ mkdir "$tmp/flutter"
 git -C "$tmp/flutter" init --quiet
 git -C "$tmp/flutter" -c user.name=test -c user.email=test@example.invalid \
   commit --quiet --allow-empty -m flutter
-run "" env JAVA_HOME="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")}" \
+run "" env JAVA_HOME="$java_home" \
   tool/build_release.sh --flutter-sdk "$tmp/flutter" no-such-commit
 expect "build: a commit that doesn't exist fails" 1 "no commit 'no-such-commit'"
-run "" env JAVA_HOME="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")}" \
-  tool/build_release.sh --flutter-sdk "$tmp/flutter"
+run "" env JAVA_HOME="$java_home" \
+  tool/build_release.sh --flutter-sdk "$tmp/flutter" other-jdk
+expect "build: another JDK than the commit's fails" 1 \
+  "JAVA_HOME is Java $java_major; this commit is built with Java $((java_major + 1))"
+run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/flutter"
 expect "build: a Flutter that isn't a release fails" 1 "is 'not a release', not 9.99.0"
 git -C "$tmp/flutter" tag 9.98.0
-run "" env JAVA_HOME="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")}" \
-  tool/build_release.sh --flutter-sdk "$tmp/flutter"
+run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/flutter"
 expect "build: another Flutter version fails" 1 "is '9.98.0', not 9.99.0"
+# The commit's own version, not the one checked out now; and the Flutter
+# folder given relative to where the script runs.
+RUN_IN="$tmp" run "" env JAVA_HOME="$java_home" \
+  repo/tool/build_release.sh --flutter-sdk flutter older-flutter
+expect "build: the Flutter version is the commit's" 1 \
+  "Flutter in $tmp/flutter is '9.98.0', not 9.97.0"
 check "... and builds nothing" bash -c '! ls dist/decoy_contacts-*'
 
 if ((failures)); then

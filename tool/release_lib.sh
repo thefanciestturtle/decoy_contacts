@@ -15,9 +15,39 @@ readonly RELEASE_CERT_FILE=tool/release_certificate.sha256
 # The release builds and the signed APKs go here (not tracked by git).
 readonly DIST_DIR=dist
 
+fail() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+# Path $1 as an absolute path, a relative one taken from folder $2: the
+# scripts move to the repository's root, so they turn the paths they are
+# given into absolute ones first, from the folder they were run in.
+absolute_path() {
+  if [[ "$1" == /* ]]; then
+    echo "$1"
+  else
+    echo "$2/$1"
+  fi
+}
+
 # Runs tool/apk_check.py.
 apk_check() {
   python3 -I tool/apk_check.py "$@"
+}
+
+# Whether APK $1 is signed; stops the script (fail) if it can't be read.
+is_signed() {
+  local found
+  found="$(apk_check signature "$1")" || fail "couldn't read $1 as an APK"
+  [[ -n "$found" ]]
+}
+
+# The Java version (java.specification.version: 25, 21, 17, 1.8, ...) of
+# the java command $1.
+java_version() {
+  "$1" -XshowSettings:properties -version 2>&1 |
+    sed -n 's/^[[:space:]]*java\.specification\.version = //p'
 }
 
 # The Android SDK: ANDROID_HOME, else ANDROID_SDK_ROOT. Fails if neither is
@@ -31,22 +61,23 @@ android_sdk() {
   echo "$sdk"
 }
 
-# apksigner from the newest build-tools in the Android SDK, 35 or newer:
-# since 35 apksigner moves files within the APK as it signs, unless told
-# --alignment-preserved, which older ones don't know. (F-Droid can't copy a
-# signature made that way onto its own build: fdroiddata issue 3299.)
+# apksigner from the newest build-tools release in the Android SDK (not a
+# preview such as 36.0.0-rc1), 35 or newer: since 35 apksigner moves files
+# within the APK as it signs, unless told --alignment-preserved, which older
+# ones don't know. (F-Droid can't copy a signature made that way onto its
+# own build: fdroiddata issue 3299.)
 apksigner_path() {
   local sdk dir newest=""
   sdk="$(android_sdk)" || return 1
   for dir in "$sdk"/build-tools/*/; do
     [[ -x "${dir}apksigner" ]] || continue
     dir="$(basename "$dir")"
-    if [[ -z "$newest" ||
-          "$(printf '%s\n%s\n' "$newest" "$dir" | sort -V | tail -n 1)" == "$dir" ]]; then
+    [[ "$dir" =~ ^[0-9]+(\.[0-9]+)*$ ]] || continue
+    if [[ -z "$newest" ]] || version_older "$newest" "$dir"; then
       newest="$dir"
     fi
   done
-  if [[ -z "$newest" ]] || version_older "${newest%%-*}" 35; then
+  if [[ -z "$newest" ]] || version_older "$newest" 35; then
     echo "error: this needs apksigner from Android build-tools 35 or newer" \
          "in $sdk/build-tools (has: ${newest:-none})" >&2
     return 1
@@ -55,14 +86,18 @@ apksigner_path() {
 }
 
 # Runs apksigner with "$@", with the JDK in JAVA_HOME if that is set (the
-# apksigner script runs the `java` on the PATH). Allowing native access
-# keeps newer JDKs from warning that apksigner loads a native library (its
-# -J options are passed to java with one more "-").
+# apksigner script runs the `java` on the PATH). On Java 17 and newer it
+# allows apksigner native access, which keeps newer JDKs from warning that
+# it loads a native library (its -J options are passed to java with one
+# more "-"); older ones don't know that option.
 apksigner_() {
-  local apksigner
+  local apksigner java_options=()
   apksigner="$(apksigner_path)" || return 1
-  PATH="${JAVA_HOME:+$JAVA_HOME/bin:}$PATH" \
-    "$apksigner" -J-enable-native-access=ALL-UNNAMED "$@"
+  local -x PATH="${JAVA_HOME:+$JAVA_HOME/bin:}$PATH"
+  if ! version_older "$(java_version java)" 17; then
+    java_options=(-J-enable-native-access=ALL-UNNAMED)
+  fi
+  "$apksigner" "${java_options[@]}" "$@"
 }
 
 # Signs release APK $1 with the debug key into $2, so it can be installed
@@ -90,4 +125,15 @@ release_cert_sha256() {
     return 1
   fi
   echo "$sum"
+}
+
+# The major version of the JDK CI builds with (JAVA_VERSION in
+# .github/workflows/dart.yml, e.g. "25"), as ci_flutter_version reads
+# FLUTTER_VERSION. Fails if there isn't exactly one such line.
+ci_java_version() {
+  local found
+  found="$(sed -n 's/^[[:space:]]*JAVA_VERSION:[[:space:]]*["'\'']\{0,1\}\([0-9]\{1,\}\)["'\'']\{0,1\}\([[:space:]]\{1,\}#.*\)\{0,1\}[[:space:]]*$/\1/p' \
+    .github/workflows/dart.yml 2>/dev/null)" || return 1
+  [[ -n "$found" && "$found" != *$'\n'* ]] || return 1
+  echo "$found"
 }

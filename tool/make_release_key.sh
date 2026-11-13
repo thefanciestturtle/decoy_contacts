@@ -21,6 +21,7 @@
 # zone, so it runs in UTC; otherwise the certificate would give that away.
 set -euo pipefail
 
+readonly CALLER_DIR="$PWD"
 cd "$(dirname "$0")/.."
 source tool/check_lib.sh
 source tool/release_lib.sh
@@ -29,16 +30,11 @@ readonly NAME='CN=Decoy Contacts'
 readonly ALIAS=release
 readonly DAYS=10950 # 30 years
 
-fail() {
-  echo "error: $*" >&2
-  exit 1
-}
-
 if (($# != 1)); then
   echo "usage: tool/make_release_key.sh KEYSTORE" >&2
   exit 2
 fi
-keystore="$1"
+keystore="$(absolute_path "$1" "$CALLER_DIR")"
 
 keytool="${JAVA_HOME:+$JAVA_HOME/bin/}keytool"
 need "$keytool"

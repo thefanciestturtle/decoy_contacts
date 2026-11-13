@@ -4,9 +4,10 @@
 #   tool/sign_release.sh KEYSTORE dist/decoy_contacts-<version>-unsigned.apk
 #
 # Run it in a terminal of your own: apksigner asks for the keystore's
-# password. It writes dist/decoy_contacts-<version>.apk, signed with APK
-# Signature Scheme v2 and v3 (Android 7 and newer read v2; v3 would let a
-# later release move to a new key), and checks that:
+# password. It writes dist/decoy_contacts-<version>.apk (next to the
+# unsigned one), signed with APK Signature Scheme v2 and v3 (Android 7 and
+# newer read v2; v3 would let a later release move to a new key), and
+# checks that:
 #
 # - it is signed with the release key: the certificate's fingerprint is the
 #   one in tool/release_certificate.sha256;
@@ -18,21 +19,17 @@
 # If any check fails, nothing is written.
 set -euo pipefail
 
+readonly CALLER_DIR="$PWD"
 cd "$(dirname "$0")/.."
 source tool/check_lib.sh
 source tool/release_lib.sh
-
-fail() {
-  echo "error: $*" >&2
-  exit 1
-}
 
 if (($# != 2)); then
   echo "usage: tool/sign_release.sh KEYSTORE UNSIGNED_APK" >&2
   exit 2
 fi
-keystore="$1"
-unsigned="$2"
+keystore="$(absolute_path "$1" "$CALLER_DIR")"
+unsigned="$(absolute_path "$2" "$CALLER_DIR")"
 
 need python3
 [[ -f "$keystore" ]] || fail "no keystore at $keystore"
@@ -44,8 +41,9 @@ signed="${unsigned%-unsigned.apk}.apk"
 want="$(release_cert_sha256)" || exit 1
 apksigner_path >/dev/null || exit 1
 
-[[ -z "$(apk_check signature "$unsigned")" ]] ||
+if is_signed "$unsigned"; then
   fail "$unsigned is already signed"
+fi
 apk_check home-paths "$unsigned" || fail "$unsigned names a home folder"
 
 partial="$signed.partial"
@@ -57,8 +55,8 @@ apksigner_ sign --ks "$keystore" \
   --out "$partial" "$unsigned" ||
   fail "apksigner couldn't sign $unsigned"
 
-verified="$(apksigner_ verify --verbose --print-certs "$partial" 2>/dev/null)" ||
-  fail "the signed APK doesn't verify"
+verified="$(apksigner_ verify --verbose --print-certs "$partial" 2>&1)" ||
+  fail "the signed APK doesn't verify:"$'\n'"$verified"
 signers="$(sed -n 's/^Number of signers: //p' <<<"$verified")"
 [[ "$signers" == 1 ]] || fail "the signed APK has ${signers:-no} signers, not 1"
 got="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$verified")"
