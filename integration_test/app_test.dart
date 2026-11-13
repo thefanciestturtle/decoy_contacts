@@ -617,22 +617,24 @@ void main() {
   testWidgets('S1: a ledger whose raw IDs point at real contacts deletes '
       'nothing', (tester) async {
     await startWithEmptyAddressBook(tester);
+    final (fakePhone, fakeEmail) = kFakes['Zoe Zen']!;
     final real = await seed([
       ...kRealContacts,
-      // Exactly the details of a fake.
-      (
-        first: 'Zoe',
-        last: 'Zen',
-        phone: kFakes['Zoe Zen']!.$1,
-        email: kFakes['Zoe Zen']!.$2,
-      ),
+      // Two of a fake's name: one with another number, one with exactly
+      // the fake's details.
+      (first: 'Zoe', last: 'Zen', phone: '+15555550101', email: null),
+      (first: 'Zoe', last: 'Zen', phone: fakePhone, email: fakeEmail),
     ]);
-    String rawIdOf(String name) =>
-        rawIdsOf(real.values.firstWhere((c) => c.displayName == name)).single;
+    Contact seeded(String name, [String? phone]) =>
+        real.values.firstWhere((c) =>
+            c.displayName == name &&
+            (phone == null || c.phones.any((p) => p.number == phone)));
+    String rawIdOf(String name, [String? phone]) =>
+        rawIdsOf(seeded(name, phone)).single;
     // As if the ledger came from another phone, where these raw IDs were
-    // fakes. The entry for Zoe Zen has only a name, as early test builds
-    // stored them: it can't be checked, so it is dropped when read, and
-    // Zoe Zen is left alone although it has exactly a fake's details.
+    // fakes. The last entry has only a name, as early test builds stored
+    // them: it can't be checked, so it is dropped when read, and that Zoe
+    // Zen is left alone although it has exactly a fake's details.
     final ledger = {
       rawIdOf('Alice Example'): {
         'name': 'Zoe Zen',
@@ -644,7 +646,12 @@ void main() {
         'phone': '+447700900010',
         'email': 'Zach.Zen@example.com',
       },
-      rawIdOf('Zoe Zen'): 'Zoe Zen',
+      rawIdOf('Zoe Zen', '+15555550101'): {
+        'name': 'Zoe Zen',
+        'phone': fakePhone,
+        'email': fakeEmail,
+      },
+      rawIdOf('Zoe Zen', fakePhone): 'Zoe Zen',
     };
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(kLedgerPrefsKey, jsonEncode(ledger));
@@ -656,7 +663,7 @@ void main() {
 
     // Nothing to delete, so no dialog.
     expect(await tapAndWaitForResult(tester, kDelete),
-        "No fake contacts to delete. 2 no longer match what this app created "
+        "No fake contacts to delete. 3 no longer match what this app created "
         "(edited, or the app's records came from another phone) and were left "
         "alone.");
 

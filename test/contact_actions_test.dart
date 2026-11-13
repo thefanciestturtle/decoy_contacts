@@ -633,8 +633,9 @@ void main() {
     });
 
     test('a pending record that is left for later survives the saves of '
-        "Delete and a Create with nothing to do, and Delete's preview",
-        () async {
+        'Delete and a Create with nothing to do', () async {
+      // (Delete's preview saves nothing then: see 'a pending Create is kept
+      // while the address book reads as empty'.)
       final broken = _ReadsEmpty();
       final e = entryFor(const FakeName('Zoe', 'Zen'), kDefaultPhoneTemplate,
           kDefaultEmailTemplate);
@@ -644,17 +645,13 @@ void main() {
           .save(Ledger({broken.rawIdsOf(zoe).single: e}), pending: pending);
       broken.empty = true;
 
-      await previewDelete(broken, const LedgerStore());
-      var stored = await storedWithPending();
-      expect(stored.pending!.entries, pending.entries);
-
       const noNames = Settings(
           lastNamesText: '',
           firstNamesText: '',
           phoneTemplateText: kDefaultPhoneTemplate,
           emailTemplateText: kDefaultEmailTemplate);
       await createFakeContacts(broken, const LedgerStore(), noNames);
-      stored = await storedWithPending();
+      var stored = await storedWithPending();
       expect(stored.pending!.entries, pending.entries);
 
       // And Delete's own save, with nothing to delete.

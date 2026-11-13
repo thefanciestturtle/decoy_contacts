@@ -113,11 +113,12 @@ wait_for_pref() {
 
 # The text in the app's text field labelled $1, as the screen shows it now;
 # nothing if there is no such field (or the dump failed, say because the
-# app was still drawing its spinner). The dump is XML, one tag per line
-# once split at "<" (which an attribute escapes); a label or text with &,
-# < or " in it is escaped too, so this only works for plain ones.
+# app was still drawing its spinner, or it stalled). The dump is XML, one
+# tag per line once split at "<" (which an attribute escapes); a label or
+# text with &, < or " in it is escaped too, so this only works for plain
+# ones.
 field_text() {
-  adb_ exec-out uiautomator dump /dev/tty 2>/dev/null |
+  timeout 20 adb -s "$serial" exec-out uiautomator dump /dev/tty 2>/dev/null |
     tr '<' '\n' |
     grep -F "class=\"android.widget.EditText\"" |
     grep -F "hint=\"$1\"" |
@@ -139,6 +140,10 @@ wait_for_field() {
 }
 
 start_app() {
+  # The second start reads the app's screen, so the screen must be on and
+  # unlocked (else the dump shows no app at all). Neither changes a setting.
+  adb_ shell input keyevent KEYCODE_WAKEUP
+  adb_ shell wm dismiss-keyguard
   # Only the buffers this script reads; clearing some others can fail.
   adb_ logcat -b main -b system -b crash -c || true
   local out

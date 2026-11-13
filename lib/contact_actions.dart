@@ -560,7 +560,8 @@ DeletePreview _previewOf(DeletePlan plan) => DeletePreview(
 /// Deletes nothing, and changes the ledger in one way only, as Delete does:
 /// the fakes of a Create that was cut short are recorded (see
 /// [createdByPending]), even if the user then cancels or there is nothing
-/// to delete.
+/// to delete. (Like every save, that one leaves out entries it can't read:
+/// see [Ledger.decode].)
 Future<DeletePreview> previewDelete(
     ContactsGateway contacts, LedgerStore ledgerStore) async {
   final check =
