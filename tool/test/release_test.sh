@@ -160,6 +160,33 @@ for home in /var/home/someone /Users/someone /root; do
   run "" python3 -I tool/apk_check.py home-paths "$tmp/other-home.apk"
   expect "a path in $home fails too" 1 "libapp.so: $home/app/main.dart"
 done
+# add_entry APK NAME HOW TEXT : adds a file holding TEXT, as UTF-16 or
+# zlib-compressed (HOW: utf16, zlib).
+add_entry() {
+  python3 -I - "$@" <<'EOF'
+import sys, zipfile, zlib
+path, name, how, text = sys.argv[1:]
+if how == 'utf16':
+    data = b'\0\1' + text.encode('utf-16-le') + b'\0\0'
+else:
+    data = zlib.compress(text.encode())
+with zipfile.ZipFile(path, 'a') as apk:
+    apk.writestr(name, data)
+EOF
+}
+cp "$tmp/clean.apk" "$tmp/utf16.apk"
+add_entry "$tmp/utf16.apk" res/raw/allowed.bin utf16 "x /home/vagrant/build/y"
+run "" python3 -I tool/apk_check.py home-paths "$tmp/utf16.apk"
+expect "UTF-16 text in /home/vagrant/ is fine" 0 ""
+add_entry "$tmp/utf16.apk" res/raw/strings.bin utf16 "x /home/someone/app"
+run "" python3 -I tool/apk_check.py home-paths "$tmp/utf16.apk"
+expect "UTF-16 text naming another home folder fails" 1 \
+  "res/raw/strings.bin: /home/someone/app"
+cp "$tmp/clean.apk" "$tmp/zlib.apk"
+add_entry "$tmp/zlib.apk" assets/flutter_assets/NOTICES.Z zlib "see /Users/someone/app"
+run "" python3 -I tool/apk_check.py home-paths "$tmp/zlib.apk"
+expect "a home folder inside a compressed asset fails" 1 \
+  "assets/flutter_assets/NOTICES.Z: /Users/someone/app"
 make_apk "$tmp/names.apk" "built on buildhost7 by abc"
 run "" python3 -I tool/apk_check.py home-paths "$tmp/names.apk" buildhost7
 expect "a text it is given fails" 1 "libapp.so: buildhost7"
@@ -221,6 +248,9 @@ mkdir -p "$tmp/android-empty" "$tmp/android"
 run "" env ANDROID_USER_HOME="$tmp/android-empty" bash -c \
   "source tool/check_lib.sh; source tool/release_lib.sh; debug_sign '$tmp/clean.apk' '$tmp/debug.apk'"
 expect "debug signing without a debug key fails" 1 "no debug key at $tmp/android-empty/debug.keystore"
+run "" env ANDROID_USER_HOME="$tmp/android-empty" bash -c \
+  "source tool/check_lib.sh; source tool/release_lib.sh; debug_keystore"
+expect "... and debug_keystore says so" 1 "no debug key at $tmp/android-empty/debug.keystore"
 "$keytool" -genkeypair -keystore "$tmp/android/debug.keystore" \
   -storetype PKCS12 -alias androiddebugkey -storepass android \
   -keypass android -keyalg RSA -keysize 2048 -validity 1 \
@@ -262,6 +292,21 @@ check "... which is left as it was" \
 run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
   "$tmp/app-release.apk"
 expect "debug_sign.sh won't replace an earlier copy" 1 "already exists"
+
+# --- release_lib.sh: check_home_paths, with this computer's home folder
+# (Not in a folder named "home", which fails anyway.)
+mkdir -p "$tmp/people/me"
+make_apk "$tmp/my-home.apk" "file://$tmp/people/me/app/main.dart"
+make_apk "$tmp/near-home.apk" "file://$tmp/people/me-too/app/main.dart"
+for apk in my-home near-home; do
+  run "" env HOME="$tmp/people/me" bash -c \
+    "source tool/check_lib.sh; source tool/release_lib.sh; check_home_paths '$tmp/$apk.apk' && echo clean"
+  if [[ "$apk" == my-home ]]; then
+    expect "check_home_paths: this computer's home folder fails" 1 "names a home folder"
+  else
+    expect "... a folder whose name only starts the same is fine" 0 "clean"
+  fi
+done
 
 # --- release_lib.sh: place_release
 mkdir -p "$tmp/place"

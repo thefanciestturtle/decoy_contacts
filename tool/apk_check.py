@@ -10,7 +10,8 @@
       Fails, listing them, if any file in the APK names a home folder
       (in /home, /var/home, /Users or /root) other than /home/vagrant/, the
       release build sandbox's, or holds any of the TEXTs of 4 characters or
-      more (say this computer's home folder and name).
+      more (say this computer's home folder): as ASCII or UTF-16 text, and
+      also inside zlib-compressed assets (.Z).
 
   apk_check.py same APK1 APK2
       Fails unless the two are the same file; lists the files inside that
@@ -27,6 +28,7 @@ import re
 import struct
 import sys
 import zipfile
+import zlib
 
 # IDs of the blocks in an APK signing block.
 BLOCK_NAMES = {
@@ -43,8 +45,9 @@ MAGIC = b'APK Sig Block 42'
 
 # Where home folders are, and the one a release build may name: the
 # sandbox's.
-HOME_FOLDERS = rb'/home/|/var/home/|/Users/|/root/'
-ALLOWED_HOME = b'/home/vagrant/'
+HOME_FOLDERS = ('/home/', '/var/home/', '/Users/', '/root/')
+ALLOWED_HOME = '/home/vagrant/'
+TEXT_ENCODINGS = ('ascii', 'utf-16-le')
 
 
 class NotAnApk(Exception):
@@ -103,28 +106,39 @@ def signature(path):
     return 0
 
 
+def _contents(info, data):
+    """What an APK entry holds: its bytes, and for a zlib-compressed asset
+    (.Z, such as Flutter's NOTICES.Z) its decompressed bytes too."""
+    yield data
+    if info.filename.endswith('.Z'):
+        try:
+            yield zlib.decompress(data)
+        except zlib.error:
+            pass
+
+
 def home_paths(path, *texts):
-    words = [text.encode() for text in texts if len(text) >= 4]
+    words = tuple(text for text in texts if len(text) >= 4)
     bad = []
-
-    def found(info, content, start):
-        text = re.match(rb'[\x21-\x7e]{0,120}', content[start:]).group()
-        bad.append('%s: %s' % (info.filename,
-                               text.decode('ascii', 'replace')))
-
     with zipfile.ZipFile(path) as apk:
         for info in apk.infolist():
-            content = apk.read(info)
-            for match in re.finditer(HOME_FOLDERS, content):
-                if not content.startswith(ALLOWED_HOME, match.start()):
-                    found(info, content, match.start())
-            for word in words:
-                start = content.find(word)
-                if start >= 0:
-                    found(info, content, start)
+            for content in _contents(info, apk.read(info)):
+                # Text is mostly ASCII (UTF-8); resources.arsc keeps it in
+                # UTF-16.
+                for encoding in TEXT_ENCODINGS:
+                    allowed = ALLOWED_HOME.encode(encoding)
+                    pattern = b'|'.join(re.escape(text.encode(encoding))
+                                        for text in HOME_FOLDERS + words)
+                    for match in re.finditer(pattern, content):
+                        if content.startswith(allowed, match.start()):
+                            continue
+                        text = content[match.start():match.start() + 240]
+                        text = re.match(r'[\x21-\x7e]{0,120}',
+                                        text.decode(encoding, 'replace'))
+                        bad.append('%s: %s' % (info.filename, text.group()))
     if bad:
-        print('names a home folder other than %s, or this computer:'
-              % ALLOWED_HOME.decode(), file=sys.stderr)
+        print('names a home folder other than %s:' % ALLOWED_HOME,
+              file=sys.stderr)
         for line in sorted(set(bad)):
             print('  ' + line, file=sys.stderr)
         return 1

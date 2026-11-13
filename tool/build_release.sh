@@ -161,7 +161,7 @@ echo buildserver >"$work/hostname"
 inner='set -euo pipefail
 flutter config --no-analytics >/dev/null
 flutter --version
-java -version 2>&1 | head -n 1
+java -version 2>&1
 flutter pub get --enforce-lockfile
 flutter build apk --release'
 

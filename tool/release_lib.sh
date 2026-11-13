@@ -37,13 +37,15 @@ apk_check() {
 }
 
 # Stops the script (fail) if APK $1 names a home folder other than the
-# build sandbox's, this computer's home folder or its name.
+# build sandbox's, this computer's (wherever it is) included. (Not the
+# computer's name: the sandbox has its own, and short or common names, such
+# as localhost, are in every APK.)
 check_home_paths() {
   local status=0
-  apk_check home-paths "$1" "$(cd ~ && pwd -P)" "$(uname -n)" || status=$?
+  apk_check home-paths "$1" "$(cd ~ && pwd -P)/" || status=$?
   case "$status" in
     0) ;;
-    1) fail "$1 names a home folder, or this computer" ;;
+    1) fail "$1 names a home folder" ;;
     *) fail "couldn't read $1 as an APK" ;;
   esac
 }
@@ -144,24 +146,30 @@ readonly SIGNING_OPTIONS=(
   --v3-signing-enabled true --v4-signing-enabled false
 )
 
-# Signs release APK $1 with the debug key into $2, as release APKs are
-# signed, so it can be installed for testing. Android Studio and Gradle make
-# the debug key with the first debug build, in the folder Android's tools
-# keep their settings in: ANDROID_USER_HOME, else .android in
-# ANDROID_PREFS_ROOT, ANDROID_SDK_HOME (both deprecated) or the home folder.
-debug_sign() {
+# The debug key. Android Studio and Gradle make it with the first debug
+# build, in the folder Android's tools keep their settings in:
+# ANDROID_USER_HOME, else .android in ANDROID_PREFS_ROOT, ANDROID_SDK_HOME
+# (both deprecated) or the home folder. Fails, saying so, if it isn't there.
+debug_keystore() {
   local folder
   if [[ -n "${ANDROID_USER_HOME:-}" ]]; then
     folder="$ANDROID_USER_HOME"
   else
     folder="${ANDROID_PREFS_ROOT:-${ANDROID_SDK_HOME:-$HOME}}/.android"
   fi
-  local keystore="$folder/debug.keystore"
-  if [[ ! -f "$keystore" ]]; then
-    echo "error: no debug key at $keystore; a debug build makes one" \
-         "(flutter build apk --debug)" >&2
+  if [[ ! -f "$folder/debug.keystore" ]]; then
+    echo "error: no debug key at $folder/debug.keystore; a debug build" \
+         "makes one (flutter build apk --debug)" >&2
     return 1
   fi
+  echo "$folder/debug.keystore"
+}
+
+# Signs release APK $1 with the debug key into $2, as release APKs are
+# signed, so it can be installed for testing.
+debug_sign() {
+  local keystore
+  keystore="$(debug_keystore)" || return 1
   apksigner_ sign --ks "$keystore" --ks-pass pass:android \
     --ks-key-alias androiddebugkey --key-pass pass:android \
     "${SIGNING_OPTIONS[@]}" --out "$2" "$1"

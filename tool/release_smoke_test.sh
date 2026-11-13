@@ -66,11 +66,16 @@ become_root() {
 }
 
 # What it needs, checked before anything on the emulator is changed (the
-# cleanup below uninstalls the app). Without an APK it builds one and signs
-# it with the debug key.
+# cleanup below uninstalls the app): to sign an unsigned APK, or the one it
+# builds, with the debug key, apksigner and that key.
 need python3
-if [[ $# -eq 0 ]]; then
+if [[ $# -ge 1 ]]; then
+  apk="$(absolute_path "$1" "$CALLER_DIR")"
+  [[ -f "$apk" ]] || { echo "error: no APK at $apk" >&2; exit 1; }
+fi
+if [[ $# -eq 0 ]] || ! is_signed "$apk"; then
   apksigner_path >/dev/null || exit 1
+  debug_keystore >/dev/null || exit 1
 fi
 
 tmp="$(mktemp -d)"
@@ -188,9 +193,7 @@ check_app_ok() {
     fail "the app is no longer running"
 }
 
-if [[ $# -ge 1 ]]; then
-  apk="$(absolute_path "$1" "$CALLER_DIR")"
-else
+if [[ $# -eq 0 ]]; then
   abi="$(adb_ shell getprop ro.product.cpu.abi | tr -d '\r')"
   case "$abi" in
     x86_64) platform=android-x64 ;;

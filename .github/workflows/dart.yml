@@ -153,15 +153,14 @@ jobs:
       # With this job's Flutter (an unpacked release archive, which is on
       # the stable branch; the version is checked) and Gradle cache. The
       # second build finds the first one's APK in dist/, and stops unless it
-      # is the same file.
+      # is the same file; the APK there must not change either.
       - name: Build the release APK twice
         run: |
-          set -o pipefail
           flutter_sdk="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
           tool/build_release.sh --flutter-sdk "$flutter_sdk" --gradle-home ~/.gradle
-          tool/build_release.sh --flutter-sdk "$flutter_sdk" --gradle-home ~/.gradle 2>&1 |
-            tee second.log
-          grep -q '^== The same file as the dist/' second.log
+          first="$(sha256sum dist/*-unsigned.apk)"
+          tool/build_release.sh --flutter-sdk "$flutter_sdk" --gradle-home ~/.gradle
+          [ "$(sha256sum dist/*-unsigned.apk)" = "$first" ]
 
   # Create and Delete against the real Android contacts provider, on an
   # emulator: API 36, the app's target SDK; and Android 17 (API 37.0), which
