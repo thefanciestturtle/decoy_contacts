@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:ui' show Tristate;
 
 import 'package:decoy_contacts/about_page.dart' show AboutPage, kAppVersion;
+import 'package:decoy_contacts/app_info.dart';
 import 'package:decoy_contacts/app_log.dart';
 import 'package:decoy_contacts/app_theme.dart' show FocusRing, RenderFocusRing;
 import 'package:decoy_contacts/contact_actions.dart'
@@ -1048,7 +1049,7 @@ void main() {
       await tapCreate(tester);
 
       expect(logged.single,
-          startsWith('Decoy Contacts: _createAllContacts, stopped after 2 of 4:'
+          startsWith('$kAppName: _createAllContacts, stopped after 2 of 4:'
               ' Exception: provider gone\n'));
       expect(logged.single, contains('InMemoryContactsGateway.createAll'));
     });

@@ -8,7 +8,7 @@ Nothing about these fake contacts will interfere with your normal use of your ph
 
 Only Android is supported, because the app keeps track of the contacts it created by their Android contact IDs.
 
-Decoy Contacts is a separate app from Fake Contacts (version 1.8, on F-Droid), and installs next to it.  Your name lists and templates aren't carried over.  Decoy Contacts can't delete the fake contacts that Fake Contacts made, because Fake Contacts kept no record of them.  To clear them, tap "Delete Fake Contacts" in Fake Contacts before you uninstall it (it deletes every contact with one of its names, real ones too), or delete them by hand in your Contacts app.
+Decoy Contacts is a separate app from Fake Contacts (version 1.8, on F-Droid), and installs next to it.  Your name lists and templates aren't carried over.  Decoy Contacts can't delete the fake contacts that Fake Contacts made, because Fake Contacts kept no record of them.  If you have some, clear them before you start using Decoy Contacts: tap "Delete Fake Contacts" in Fake Contacts (it deletes every contact with one of its names, real ones too), then uninstall it.  Or delete them by hand in your Contacts app.
 
 The original Fake Contacts has a sister-application, "Fake Contacts 2", which puts fake information in some fields of all contacts.
 
@@ -102,11 +102,11 @@ Now using:
 * Linux
 * Phone running Android 9
 
-[F-Droid page for this app](https://fdroid.gitlab.io/fdroid-website/en/packages/me.billdietrich.fake_contacts/)
+[F-Droid page of the original Fake Contacts](https://fdroid.gitlab.io/fdroid-website/en/packages/me.billdietrich.fake_contacts/)
 
-[GitHub repo for this app](https://github.com/BillDietrich/fake_contacts)
+[GitHub repo of the original Fake Contacts](https://github.com/BillDietrich/fake_contacts)
 
-[My web site](https://www.billdietrich.me/)
+[Bill Dietrich's web site](https://www.billdietrich.me/)
 
 
 ---

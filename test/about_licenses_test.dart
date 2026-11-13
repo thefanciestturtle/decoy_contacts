@@ -3,6 +3,7 @@
 // app's own first would hide a failure to register it here.
 
 import 'package:decoy_contacts/about_page.dart';
+import 'package:decoy_contacts/app_info.dart';
 import 'package:decoy_contacts/app_theme.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -18,7 +19,7 @@ void main() {
     await tester.tap(licenses);
     await tester.pumpAndSettle();
     expect(find.byType(LicensePage), findsOneWidget);
-    expect(find.text('Decoy Contacts'), findsOneWidget);
+    expect(find.text(kAppName), findsOneWidget);
     expect(find.text(kAppVersion), findsOneWidget);
     await tester.scrollUntilVisible(find.text(kLicensePackage), 200,
         scrollable: find.byType(Scrollable).last);

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:decoy_contacts/app_info.dart';
 import 'package:decoy_contacts/contacts_gateway.dart';
 import 'package:decoy_contacts/fake_contacts_core.dart';
 import 'package:decoy_contacts/home_page.dart';
@@ -110,9 +111,9 @@ void main() {
     await tester.pumpAndSettle();
 
     // The app's name, in the title bar and for Android's recent apps.
-    expect(find.widgetWithText(AppBar, 'Decoy Contacts'), findsOneWidget);
+    expect(find.widgetWithText(AppBar, kAppName), findsOneWidget);
     expect(tester.widget<MaterialApp>(find.byType(MaterialApp)).title,
-        'Decoy Contacts');
+        kAppName);
     expect(find.text('Last names'), findsOneWidget);
     expect(find.text('First names'), findsOneWidget);
     expect(find.text('Phone number template'), findsOneWidget);
@@ -524,7 +525,7 @@ void main() {
     final store = _SlowSaveStore();
     await tester.pumpWidget(MaterialApp(
         home: MyHomePage(
-            title: 'Decoy Contacts',
+            title: kAppName,
             contacts: InMemoryContactsGateway(),
             settingsStore: store)));
     await tester.pumpAndSettle();
@@ -646,7 +647,7 @@ void main() {
       final store = _SlowSettingsStore();
       await tester.pumpWidget(MaterialApp(
           home: MyHomePage(
-              title: 'Decoy Contacts',
+              title: kAppName,
               contacts: InMemoryContactsGateway(),
               settingsStore: store)));
       await tester.pump();
@@ -662,7 +663,7 @@ void main() {
       final store = _SlowSettingsStore();
       await tester.pumpWidget(MaterialApp(
           home: MyHomePage(
-              title: 'Decoy Contacts',
+              title: kAppName,
               contacts: InMemoryContactsGateway(),
               settingsStore: store)));
       await tester.pump();
