@@ -4,7 +4,7 @@ Android phone app that creates fake contacts, which will be stored on your smart
 
 Nothing about these fake contacts will interfere with your normal use of your phone or your real contacts.
 
-Only Android is supported.
+Only Android is supported, because the app keeps track of the contacts it created by their Android contact IDs.
 
 The app is available through F-Droid.
 
