@@ -100,9 +100,18 @@ apksigner_() {
   "$apksigner" "${java_options[@]}" "$@"
 }
 
-# Signs release APK $1 with the debug key into $2, so it can be installed
-# for testing. Android Studio and Gradle make the debug key with the first
-# debug build.
+# How release APKs are signed: APK Signature Scheme v2 and v3 only (Android
+# 7 and newer read v2; v3 would let a later release move to a new key; v1
+# only matters before Android 7), keeping the files where they are.
+readonly SIGNING_OPTIONS=(
+  --alignment-preserved
+  --v1-signing-enabled false --v2-signing-enabled true
+  --v3-signing-enabled true --v4-signing-enabled false
+)
+
+# Signs release APK $1 with the debug key into $2, as release APKs are
+# signed, so it can be installed for testing. Android Studio and Gradle make
+# the debug key with the first debug build.
 debug_sign() {
   local keystore="${ANDROID_USER_HOME:-$HOME/.android}/debug.keystore"
   if [[ ! -f "$keystore" ]]; then
@@ -112,28 +121,17 @@ debug_sign() {
   fi
   apksigner_ sign --ks "$keystore" --ks-pass pass:android \
     --ks-key-alias androiddebugkey --key-pass pass:android \
-    --alignment-preserved --out "$2" "$1"
+    "${SIGNING_OPTIONS[@]}" --out "$2" "$1"
 }
 
 # The pinned release certificate's fingerprint; fails if there is none.
 release_cert_sha256() {
   local sum
-  sum="$(tr -d '[:space:]' <"$RELEASE_CERT_FILE" 2>/dev/null)" || sum=""
+  sum="$(tr -d '[:space:]' 2>/dev/null <"$RELEASE_CERT_FILE")" || sum=""
   if [[ ! "$sum" =~ ^[0-9a-f]{64}$ ]]; then
     echo "error: no release certificate fingerprint in $RELEASE_CERT_FILE" \
          "(tool/make_release_key.sh writes it)" >&2
     return 1
   fi
   echo "$sum"
-}
-
-# The major version of the JDK CI builds with (JAVA_VERSION in
-# .github/workflows/dart.yml, e.g. "25"), as ci_flutter_version reads
-# FLUTTER_VERSION. Fails if there isn't exactly one such line.
-ci_java_version() {
-  local found
-  found="$(sed -n 's/^[[:space:]]*JAVA_VERSION:[[:space:]]*["'\'']\{0,1\}\([0-9]\{1,\}\)["'\'']\{0,1\}\([[:space:]]\{1,\}#.*\)\{0,1\}[[:space:]]*$/\1/p' \
-    .github/workflows/dart.yml 2>/dev/null)" || return 1
-  [[ -n "$found" && "$found" != *$'\n'* ]] || return 1
-  echo "$found"
 }

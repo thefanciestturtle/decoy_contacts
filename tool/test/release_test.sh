@@ -30,7 +30,7 @@ repo="$tmp/repo"
 mkdir -p "$repo/tool" "$repo/.github/workflows" "$repo/dist"
 cp tool/check_lib.sh tool/release_lib.sh tool/apk_check.py \
   tool/make_release_key.sh tool/sign_release.sh tool/build_release.sh \
-  "$repo/tool/"
+  tool/debug_sign.sh "$repo/tool/"
 echo 'version: 1.2.3+4' >"$repo/pubspec.yaml"
 git -C "$repo" init --quiet
 # commit FLUTTER JAVA [TAG] : commits CI's versions of Flutter and the JDK.
@@ -144,9 +144,8 @@ make_apk "$tmp/clean.apk" "$CLEAN"
 make_apk "$tmp/leak.apk" "$LEAK"
 
 # --- tool/apk_check.py
-run "" python3 -I tool/apk_check.py signature "$tmp/clean.apk"
-expect "an unsigned APK has no signature" 0 ""
-[[ -z "$out" ]] || { echo "FAIL: ... and prints nothing: '$out'"; failures=$((failures + 1)); }
+check "an unsigned APK has no signature" bash -c \
+  "[[ -z \"\$(python3 -I tool/apk_check.py signature '$tmp/clean.apk')\" ]]"
 cp "$tmp/clean.apk" "$tmp/blocks.apk"
 add_block "$tmp/blocks.apk" 7109871a 504b4453 42726577 12345678
 run "" python3 -I tool/apk_check.py signature "$tmp/blocks.apk"
@@ -219,6 +218,23 @@ run "" env ANDROID_USER_HOME="$tmp/android" bash -c \
    apksigner_ verify --print-certs '$tmp/debug.apk'"
 expect "debug signing signs with the debug key" 0 "CN=Android Debug"
 
+# --- tool/debug_sign.sh
+cp "$tmp/clean.apk" "$tmp/app-release.apk"
+RUN_IN="$tmp" run "" env ANDROID_USER_HOME="$tmp/android" \
+  repo/tool/debug_sign.sh app-release.apk
+expect "debug_sign.sh signs a copy next to the APK" 0 \
+  "Signed with the debug key: $tmp/app-release-debug-signed.apk"
+check "... which verifies" bash -c \
+  "source tool/check_lib.sh; source tool/release_lib.sh; apksigner_ verify '$tmp/app-release-debug-signed.apk'"
+check "... signed as releases are: v2 and v3, nothing else added" bash -c \
+  "[[ \"\$(python3 -I tool/apk_check.py signature '$tmp/app-release-debug-signed.apk' | tr '\n' ' ')\" == 'v2 v3 '* ]] &&
+   python3 -I tool/apk_check.py only-signature-added '$tmp/app-release-debug-signed.apk' '$tmp/app-release.apk'"
+check "... leaving the APK unsigned" bash -c \
+  "[[ -z \"\$(python3 -I tool/apk_check.py signature '$tmp/app-release.apk')\" ]]"
+run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
+  "$tmp/app-release-debug-signed.apk" "$tmp/twice.apk"
+expect "debug_sign.sh won't sign a signed APK" 1 "is already signed"
+
 # --- release_lib.sh: apksigner_ allows native access only on Java 17 and
 # newer. A stand-in java says it is $SPEC and rejects that option.
 mkdir -p "$tmp/java/bin"
@@ -251,20 +267,27 @@ export TZ=America/Chicago
 run "$PW\nother\n" tool/make_release_key.sh "$tmp/release.p12"
 expect "passwords that differ fail" 1 "the passwords differ"
 check "... and make no keystore" test ! -e "$tmp/release.p12"
-# From another folder, with a path relative to it.
+# From another folder, with a path relative to it. (The day before and
+# after, in case it is midnight UTC.)
+day_before="$(TZ=UTC date +'%Y-%m-%d')"
 RUN_IN="$tmp" run "$PW\n$PW\n" repo/tool/make_release_key.sh release.p12
+day_after="$(TZ=UTC date +'%Y-%m-%d')"
 expect "makes the key" 0 "Copy the keystore to two safe places"
 check "... where it was asked to, not in the repository" bash -c \
   "[[ -f '$tmp/release.p12' && ! -e release.p12 && ! -e tool/release.p12 ]]"
 cert="$(cert_text "$tmp/release.p12" release "$PW" 2>&1)" || cert=""
 cases=$((cases + 1))
-want_start="notBefore=$(TZ=UTC date +'%b %e 00:00:00 %Y GMT')"
-want_end="notAfter=$(TZ=UTC date -d '+10950 days' +'%b %e 00:00:00 %Y GMT')"
+# validity DAY : the certificate's dates if it was made on DAY.
+validity() {
+  echo "notBefore=$(TZ=UTC date -d "$1" +'%b %e 00:00:00 %Y GMT')"
+  echo "notAfter=$(TZ=UTC date -d "$1 +10950 days" +'%b %e 00:00:00 %Y GMT')"
+}
 want_sum="$(sed -n 's/^sha256 Fingerprint=//p' <<<"$cert" | tr -d ':' |
   tr '[:upper:]' '[:lower:]')"
 if [[ "$cert" == *$'subject=CN=Decoy Contacts\n'* &&
       "$cert" == *$'issuer=CN=Decoy Contacts\n'* &&
-      "$cert" == *"$want_start"* && "$cert" == *"$want_end"* &&
+      ( "$cert" == *"$(validity "$day_before")"* ||
+        "$cert" == *"$(validity "$day_after")"* ) &&
       "$cert" == *"Public-Key: (4096 bit)"* &&
       "$want_sum" =~ ^[0-9a-f]{64}$ &&
       "$(cat "$repo/$RELEASE_CERT_FILE")" == "$want_sum" &&

@@ -48,10 +48,7 @@ apk_check home-paths "$unsigned" || fail "$unsigned names a home folder"
 
 partial="$signed.partial"
 trap 'rm -f "$partial" "$partial.idsig"' EXIT
-apksigner_ sign --ks "$keystore" \
-  --alignment-preserved \
-  --v1-signing-enabled false --v2-signing-enabled true \
-  --v3-signing-enabled true --v4-signing-enabled false \
+apksigner_ sign --ks "$keystore" "${SIGNING_OPTIONS[@]}" \
   --out "$partial" "$unsigned" ||
   fail "apksigner couldn't sign $unsigned"
 

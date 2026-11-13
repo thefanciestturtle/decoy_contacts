@@ -8,9 +8,10 @@
 # REF is the commit or tag to build (default HEAD). Only what is committed
 # is built: the script builds a fresh clone, never the working tree. The
 # APK goes to dist/decoy_contacts-<version>-unsigned.apk. If that file is
-# already there, the new build must be the same file (it is then kept);
-# otherwise the script stops, so a signed APK beside it can't end up next
-# to a different build.
+# already there, the new build must be the same file (it is then kept), and
+# if the signed dist/decoy_contacts-<version>.apk is there, it must be this
+# build signed; otherwise the script stops, so a signed APK can't end up
+# next to a different build.
 #
 # Flutter compiles absolute paths into the app: the project's path into
 # libapp.so, and the paths of the project, its packages and the Android NDK
@@ -120,10 +121,10 @@ if [[ -z "$flutter_sdk" ]]; then
     mv "$flutter_sdk.partial" "$flutter_sdk"
   fi
 fi
-found="$(git -C "$flutter_sdk" describe --tags --exact-match HEAD 2>/dev/null)" ||
-  found=""
-[[ "$found" == "$flutter_version" ]] ||
-  fail "Flutter in $flutter_sdk is '${found:-not a release}', not $flutter_version"
+found="$(git -C "$flutter_sdk" tag --points-at HEAD 2>/dev/null)" || found=""
+grep -qxF "$flutter_version" <<<"$found" ||
+  fail "Flutter in $flutter_sdk is '$(paste -sd ' ' <<<"${found:-not a release}")'," \
+       "not $flutter_version"
 gradle_home="${gradle_home:-$cache/gradle}"
 mkdir -p "$gradle_home"
 
@@ -133,9 +134,11 @@ printf 'root:x:0:0:root:/root:/bin/sh\nvagrant:x:%s:%s:vagrant:/home/vagrant:/bi
 printf 'root:x:0:\nvagrant:x:%s:\n' "$(id -g)" >"$work/group"
 echo buildserver >"$work/hostname"
 
-# In the sandbox. No Gradle daemon, and the Kotlin compiler in Gradle's
-# process: a daemon could outlive the sandbox or be one from outside it.
+# In the sandbox, in UTC and with the usual umask, whatever this computer
+# uses. No Gradle daemon, and the Kotlin compiler in Gradle's process: a
+# daemon could outlive the sandbox or be one from outside it.
 inner='set -euo pipefail
+umask 022
 flutter config --no-analytics >/dev/null
 flutter --version
 java -version 2>&1 | head -n 1
@@ -143,7 +146,7 @@ flutter pub get --enforce-lockfile
 flutter build apk --release'
 
 env -i \
-  HOME=/home/vagrant USER=vagrant LOGNAME=vagrant LANG=C.UTF-8 TERM=dumb \
+  HOME=/home/vagrant USER=vagrant LOGNAME=vagrant LANG=C.UTF-8 TERM=dumb TZ=UTC \
   PATH="$SANDBOX_FLUTTER/bin:$SANDBOX_JDK/bin:/usr/local/bin:/usr/bin:/bin" \
   JAVA_HOME="$SANDBOX_JDK" \
   ANDROID_HOME="$SANDBOX_ANDROID_SDK" ANDROID_SDK_ROOT="$SANDBOX_ANDROID_SDK" \
@@ -176,13 +179,20 @@ fi
 apk_check home-paths "$apk" || fail "the APK names a home folder"
 
 mkdir -p "$DIST_DIR"
+signed="${out%-unsigned.apk}.apk"
+if [[ -e "$signed" ]]; then
+  apk_check only-signature-added "$signed" "$apk" ||
+    fail "$signed, already there, isn't this build signed;" \
+         "move it and $out away first"
+fi
 if [[ -e "$out" ]]; then
   apk_check same "$out" "$apk" ||
     fail "this build isn't the same file as the $out already there;" \
          "move that away first"
   echo "== The same file as the $out already there"
 else
-  cp "$apk" "$out"
+  cp "$apk" "$out.partial"
+  mv "$out.partial" "$out"
   echo "== Built $out"
 fi
 sha256sum "$out"

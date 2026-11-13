@@ -104,6 +104,7 @@ Added Spanish description to Fastlane per https://github.com/BillDietrich/fake_c
 * `tool/build_release.sh [TAG]` builds the release APK of a commit, unsigned, into `dist/`. It builds in a sandbox (bubblewrap) where the project, its packages, Flutter and the Android SDK are at the paths F-Droid's build server uses, so that F-Droid's build of the same commit is the same file. (Flutter compiles these paths into the app, so a build in your own folder would also name your home folder.) It keeps a copy of the Flutter that CI uses, and Gradle's downloads, in `~/.cache/decoy_contacts`.
 * `tool/sign_release.sh KEYSTORE dist/decoy_contacts-<version>-unsigned.apk` signs it with the release key (it asks for the password) and checks the signed APK: the key's fingerprint, and that only the signature was added.
 * `tool/make_release_key.sh` made the release key, once.
+* Release builds are unsigned, so `flutter run --release` can't install them. `tool/debug_sign.sh build/app/outputs/flutter-apk/app-release.apk` makes a copy signed with the debug key, for `adb install`.
 * CI builds the release APK twice and checks that the two are the same file. `tool/test/release_test.sh` tests the release scripts with throwaway keys.
 
 ### Development Environment

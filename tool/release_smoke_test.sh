@@ -5,8 +5,9 @@
 #
 # Without an APK, it builds a release APK for the emulator's ABI first.
 # Release builds are unsigned (the release key signs them by hand, see
-# tool/sign_release.sh), so it installs a copy signed with the debug key;
-# an APK that is already signed is installed as it is.
+# tool/sign_release.sh), so it installs a copy signed with the debug key, as
+# tool/debug_sign.sh makes; an APK that is already signed is installed as
+# it is.
 #
 # The other tests use debug builds, which skip R8. R8 shrinks release builds
 # and can remove classes that a plugin only looks up at run time, so such a
