@@ -453,7 +453,7 @@ void main() {
     testWidgets('skips a contact identical to a fake even if the ledger is lost',
         (tester) async {
       final e = fakeEntry('Zoe', 'Zen');
-      final existing = book.add('Zoe Zen', phones: [e.phone!], emails: [e.email!]);
+      final existing = book.add('Zoe Zen', phones: [e.phone], emails: [e.email]);
       await pumpApp(tester, book);
       await tapCreate(tester);
 
@@ -689,65 +689,44 @@ void main() {
         expect((await storedLedger()).length, 3);
       });
 
-      testWidgets('old name-only entries pointing at real contacts delete '
-          'nothing', (tester) async {
+      testWidgets("entries it can't read, such as name-only ones, delete and "
+          'count nothing; the next Create leaves them out', (tester) async {
+        // Only a name, as early test builds stored them, in both forms. One
+        // contact has exactly a fake's details.
         final alice = book.add('Alice Example', phones: ['+1 555 0101']);
-        final zoe = book.add('Zoe Zen', phones: ['+1 555 0100']);
+        final e = fakeEntry('Zoe', 'Zen');
+        final zoe = book.add('Zoe Zen', phones: [e.phone], emails: [e.email]);
+        final unreadable = [
+          book.rawIdsOf(alice).single,
+          book.rawIdsOf(zoe).single,
+        ];
         setPrefs(ledger: {
-          book.rawIdsOf(alice).single: 'Zoe Zen',
-          book.rawIdsOf(zoe).single: 'Zoe Zen',
+          unreadable[0]: 'Zoe Zen',
+          unreadable[1]: {'name': 'Zoe Zen', 'phone': null, 'email': null},
         });
+        final ledger = await storedLedgerJson();
         await pumpApp(tester, book);
 
+        // Not this app's, so not even left alone as no longer matching.
+        expect(statusText(tester), 'No fake contacts on this phone.');
         await tapExpectingNoDialog(tester, kDeleteButton);
-
-        expect(resultText(tester), 'No fake contacts to delete.${someChanged(2)}');
-        expect(book.displayNames, unorderedEquals(['Alice Example', 'Zoe Zen']));
+        expect(resultText(tester), 'No fake contacts to delete.');
         expect(book.deleteAllCalls, isEmpty);
-        // Saved with the details they were checked against, even though
-        // nothing was deleted.
-        expect((await storedLedger()).entries.values,
-            everyElement(fakeEntry('Zoe', 'Zen')));
-      });
+        // Nothing saved yet.
+        expect(await storedLedgerJson(), ledger);
 
-      testWidgets('once checked, name-only entries stay checked against the '
-          'same details', (tester) async {
-        final zoe = book.add('Zoe Zen',
-            phones: ['+15550100'], emails: ['zoe@real.test']);
-        setPrefs(ledger: {book.rawIdsOf(zoe).single: 'Zoe Zen'});
-        await pumpApp(tester, book);
-        await tapExpectingNoDialog(tester, kDeleteButton);
-        expect(resultText(tester), 'No fake contacts to delete.$kOneChanged');
-
-        // Templates that happen to give exactly the real contact's details.
-        await tester.enterText(
-            find.byKey(const Key('PhoneNumberTemplate')), '+15550100');
-        await tester.enterText(
-            find.byKey(const Key('EmailAddressTemplate')), 'zoe@real.test');
-        await tapExpectingNoDialog(tester, kDeleteButton);
-
-        expect(resultText(tester), 'No fake contacts to delete.$kOneChanged');
-        expect(book.all.map((c) => c.id), [zoe]);
-        expect(book.deleteAllCalls, isEmpty);
-      });
-
-      testWidgets('old name-only entries for real fakes are still deleted',
-          (tester) async {
-        // Fakes made by an older version, which recorded only the name.
-        final ledger = <String, Object>{};
-        for (final (first, last) in [('Zoe', 'Zen'), ('Zach', 'Zima')]) {
-          final e = fakeEntry(first, last);
-          final id = book.add(e.name, phones: [e.phone!], emails: [e.email!]);
-          ledger[book.rawIdsOf(id).single] = e.name;
-        }
-        final alice = book.add('Alice Example');
-        setPrefs(ledger: ledger);
-        await pumpApp(tester, book);
+        // The contact with Zoe Zen's details counts as that fake, but isn't
+        // recorded.
+        await tapCreate(tester);
+        expect(resultText(tester), 'Created 3 fake contacts. 1 already existed.');
+        final saved = jsonDecode((await storedLedgerJson())!) as Map;
+        expect(saved, hasLength(3));
+        expect(saved.keys, isNot(anyOf(contains(unreadable[0]),
+            contains(unreadable[1]))));
 
         await tapDelete(tester);
-
-        expect(resultText(tester), 'Deleted 2 fake contacts.');
-        expect(book.all.map((c) => c.id), [alice]);
+        expect(resultText(tester), 'Deleted 3 fake contacts.');
+        expect(book.all.map((c) => c.id), unorderedEquals([alice, zoe]));
       });
 
       testWidgets('entries for raw IDs that no longer exist are dropped',
@@ -1236,7 +1215,7 @@ void main() {
 
       // Meanwhile one of them appears, e.g. from a sync.
       final e = fakeEntry('Zoe', 'Zen');
-      book.add('Zoe Zen', phones: [e.phone!], emails: [e.email!]);
+      book.add('Zoe Zen', phones: [e.phone], emails: [e.email]);
       await tester.tap(dialogButton('Create'));
       await tester.pumpAndSettle();
 
@@ -1247,7 +1226,7 @@ void main() {
     testWidgets('Create does no more than the dialog said', (tester) async {
       // Identical to a fake, so Create asks about only 3.
       final e = fakeEntry('Zoe', 'Zen');
-      final copy = book.add('Zoe Zen', phones: [e.phone!], emails: [e.email!]);
+      final copy = book.add('Zoe Zen', phones: [e.phone], emails: [e.email]);
       await pumpApp(tester, book);
       await tapAndOpenDialog(tester, kCreateButton);
       expect(dialogText(tester).title, 'Create 3 fake contacts?');
@@ -1326,8 +1305,8 @@ void main() {
     Map<String, Object> addFakes(List<(String, String)> names) => {
           for (final (first, last) in names)
             book.rawIdsOf(book.add('$first $last',
-                    phones: [fakeEntry(first, last).phone!],
-                    emails: [fakeEntry(first, last).email!])).single:
+                    phones: [fakeEntry(first, last).phone],
+                    emails: [fakeEntry(first, last).email])).single:
                 fakeEntry(first, last).toJson(),
         };
 
@@ -1459,7 +1438,7 @@ void main() {
       await pumpApp(tester, book);
 
       expect(statusText(tester), 'No fake contacts this app can delete.');
-      // Counting changes nothing, not even old name-only entries.
+      // Counting changes nothing, not even an entry it can't read.
       expect(await storedLedgerJson(), ledger);
     });
 
@@ -1525,20 +1504,6 @@ void main() {
       holding.held.complete();
       await tester.pumpAndSettle();
       expect(statusText(tester), isNull);
-    });
-
-    testWidgets('old name-only entries are not counted, whatever the '
-        'templates say', (tester) async {
-      // A fake from an older version, which recorded only the name. Its
-      // details match the current settings, so Delete would delete it.
-      final e = fakeEntry('Zoe', 'Zen');
-      final zoe = book.add('Zoe Zen', phones: [e.phone!], emails: [e.email!]);
-      setPrefs(ledger: {book.rawIdsOf(zoe).single: 'Zoe Zen'});
-      await pumpApp(tester, book);
-
-      expect(statusText(tester), 'No fake contacts this app can delete.');
-      await tapAndOpenDialog(tester, kDeleteButton);
-      expect(dialogText(tester).title, 'Delete 1 fake contact?');
     });
 
     testWidgets('a failed update keeps the last count', (tester) async {

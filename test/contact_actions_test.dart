@@ -116,7 +116,7 @@ void main() {
     // Plan, then look up the new ones; no third read.
     expect(book.getAllCalls, 2);
 
-    final deleted = await deleteFakeContacts(book, store, kSettings);
+    final deleted = await deleteFakeContacts(book, store);
     expect(deleted!.deleted, 4);
     expect(book.all, isEmpty);
   });
@@ -195,8 +195,7 @@ void main() {
     await createFakeContacts(broken, const LedgerStore(), kSettings);
     broken.deleteAllError = Exception('provider gone');
     broken.deleteAllStopsAfter = 2;
-    final error = await deleteFakeContacts(
-            broken, const LedgerStore(), kSettings)
+    final error = await deleteFakeContacts(broken, const LedgerStore())
         .then<Object?>((_) => null, onError: (Object e) => e);
 
     final stopped = error! as StoppedPartway;
@@ -221,8 +220,7 @@ void main() {
     book.deleteAllError = Exception('provider gone');
     book.deleteAllStopsAfter = 4;
 
-    final result =
-        await deleteFakeContacts(book, const LedgerStore(), kSettings);
+    final result = await deleteFakeContacts(book, const LedgerStore());
 
     expect(result!.deleted, 4);
     expect(book.all, isEmpty);
@@ -230,31 +228,31 @@ void main() {
     expect(logged.single, contains('recovered: Exception: provider gone'));
   });
 
-  test("Delete's preview: a failed save of old entries' details does no "
-      'harm', () async {
-    // A fake from an older version, which recorded only the name.
-    final e = entryFor(const FakeName('Zoe', 'Zen'), kDefaultPhoneTemplate,
-        kDefaultEmailTemplate);
-    final zoe = book.add('Zoe Zen', phones: [e.phone!], emails: [e.email!]);
-    await const LedgerStore()
-        .save(Ledger({book.rawIdsOf(zoe).single: const LedgerEntry.nameOnly('Zoe Zen')}),
-            pending: null);
-    final store = FailingLedgerStore(1);
+  test("Delete's preview: a failed save of the fakes of a Create that was "
+      'killed does no harm', () async {
+    book.afterCreateAll =
+        (call) => call == 0 ? Completer<void>().future : Future.value();
+    unawaited(createFakeContacts(book, const LedgerStore(), kSettings));
+    await pumpEventQueue();
+    final store = _WritesNothingWhenFull(succeeding: 0);
 
-    final preview = await previewDelete(book, store, kSettings);
+    final preview = await previewDelete(book, store);
 
-    expect(preview.toDelete, 1);
+    expect(preview.toDelete, 4);
     expect(logged.single, contains('previewDelete, saving the ledger'));
-    final result = await deleteFakeContacts(book, store, kSettings);
-    expect(result!.deleted, 1);
+    // Not written: Delete finds them from the pending record again.
+    final onDisk = await const LedgerStore().loadWithPending();
+    expect((onDisk.ledger.length, onDisk.pending!.entries.length), (0, 4));
+    store.succeeding = 1;
+    final result = await deleteFakeContacts(book, store);
+    expect(result!.deleted, 4);
     expect(book.all, isEmpty);
   });
 
   test('Delete: if saving the ledger fails, all were still deleted', () async {
     await createFakeContacts(book, const LedgerStore(), kSettings);
 
-    final result =
-        await deleteFakeContacts(book, FailingLedgerStore(1), kSettings);
+    final result = await deleteFakeContacts(book, FailingLedgerStore(1));
 
     expect(result!.deleted, 4);
     expect(result.skippedMerged + result.skippedChanged, 0);
@@ -290,11 +288,9 @@ void main() {
       final onDisk = await const LedgerStore().loadWithPending();
       expect(onDisk.ledger.length, created - chunkSize);
       expect(onDisk.pending!.entries, hasLength(chunkSize));
-      final preview =
-          await previewDelete(book, const LedgerStore(), kSettings);
+      final preview = await previewDelete(book, const LedgerStore());
       expect(preview.toDelete, created);
-      final deleted =
-          await deleteFakeContacts(book, const LedgerStore(), kSettings);
+      final deleted = await deleteFakeContacts(book, const LedgerStore());
       expect(deleted!.deleted, created);
       expect(book.all, isEmpty);
     }
@@ -454,8 +450,7 @@ void main() {
       expect(stored.ledger.length, 4);
       expect(stored.pending, isNull);
 
-      final deleted =
-          await deleteFakeContacts(book, const LedgerStore(), kSettings);
+      final deleted = await deleteFakeContacts(book, const LedgerStore());
       expect(deleted!.deleted, 4);
       expect(book.all.map((c) => c.id), [real]);
     });
@@ -472,7 +467,7 @@ void main() {
       // An empty ledger with a pending record is still counted.
       expect(
           (await countFakeContacts(book, const LedgerStore())).toDelete, 4);
-      final preview = await previewDelete(book, const LedgerStore(), kSettings);
+      final preview = await previewDelete(book, const LedgerStore());
       expect(preview.toDelete, 4);
       final stored = await storedWithPending();
       expect(stored.ledger.length, 4);
@@ -491,14 +486,13 @@ void main() {
       // As with the contacts provider missing: nothing is found, and nothing
       // is given up.
       broken.empty = true;
-      final none = await previewDelete(broken, const LedgerStore(), kSettings);
+      final none = await previewDelete(broken, const LedgerStore());
       expect(none.toDelete, 0);
       final kept = await storedWithPending();
       expect(kept.pending!.entries, killed.pending!.entries);
 
       broken.empty = false;
-      final preview =
-          await previewDelete(broken, const LedgerStore(), kSettings);
+      final preview = await previewDelete(broken, const LedgerStore());
       expect(preview.toDelete, 4);
       expect((await storedWithPending()).pending, isNull);
     });
@@ -526,7 +520,7 @@ void main() {
       final progress = <(int, int)>[];
       var bStop = false;
       final result = await deleteFakeContacts(
-          book, const LedgerStore(), kSettings,
+          book, const LedgerStore(),
           chunkSize: 1,
           onProgress: (done, total) {
             progress.add((done, total));
@@ -542,7 +536,7 @@ void main() {
       final ledger = await const LedgerStore().load();
       expect(ledger.entries.keys, book.all.single.rawContactIds);
 
-      final rest = await deleteFakeContacts(book, const LedgerStore(), kSettings,
+      final rest = await deleteFakeContacts(book, const LedgerStore(),
           chunkSize: 1);
       expect((rest!.deleted, rest.stopped), (1, false));
       expect(book.all, isEmpty);
@@ -558,7 +552,7 @@ void main() {
         }
       };
       final error = await deleteFakeContacts(
-              book, const LedgerStore(), kSettings, chunkSize: 2)
+              book, const LedgerStore(), chunkSize: 2)
           .then<Object?>((_) => null, onError: (Object e) => e);
 
       final stopped = error! as StoppedPartway;
@@ -580,7 +574,7 @@ void main() {
         }
       };
       final error = await deleteFakeContacts(
-              book, const LedgerStore(), kSettings, chunkSize: 1)
+              book, const LedgerStore(), chunkSize: 1)
           .then<Object?>((_) => null, onError: (Object e) => e);
 
       final stopped = error! as StoppedPartway;
@@ -602,7 +596,7 @@ void main() {
         }
       };
       final error = await deleteFakeContacts(
-              book, const LedgerStore(), kSettings, chunkSize: 2)
+              book, const LedgerStore(), chunkSize: 2)
           .then<Object?>((_) => null, onError: (Object e) => e);
 
       final stopped = error! as StoppedPartway;
@@ -639,22 +633,19 @@ void main() {
     });
 
     test('a pending record that is left for later survives the saves of '
-        "Delete, Delete's preview and a Create with nothing to do", () async {
+        "Delete and a Create with nothing to do, and Delete's preview",
+        () async {
       final broken = _ReadsEmpty();
-      // A fake from an older version, which recorded only the name, so the
-      // preview saves its details.
       final e = entryFor(const FakeName('Zoe', 'Zen'), kDefaultPhoneTemplate,
           kDefaultEmailTemplate);
-      final zoe = broken.add('Zoe Zen', phones: [e.phone!], emails: [e.email!]);
+      final zoe = broken.add('Zoe Zen', phones: [e.phone], emails: [e.email]);
       final pending = PendingCreate(maxRawId: 5, entries: [e]);
-      await const LedgerStore().save(
-          Ledger({broken.rawIdsOf(zoe).single: const LedgerEntry.nameOnly('Zoe Zen')}),
-          pending: pending);
+      await const LedgerStore()
+          .save(Ledger({broken.rawIdsOf(zoe).single: e}), pending: pending);
       broken.empty = true;
 
-      await previewDelete(broken, const LedgerStore(), kSettings);
+      await previewDelete(broken, const LedgerStore());
       var stored = await storedWithPending();
-      expect(stored.ledger.entries.values.single.hasDetails, isTrue);
       expect(stored.pending!.entries, pending.entries);
 
       const noNames = Settings(
@@ -667,7 +658,7 @@ void main() {
       expect(stored.pending!.entries, pending.entries);
 
       // And Delete's own save, with nothing to delete.
-      await deleteFakeContacts(broken, const LedgerStore(), kSettings);
+      await deleteFakeContacts(broken, const LedgerStore());
       stored = await storedWithPending();
       expect(stored.pending!.entries, pending.entries);
     });
@@ -718,7 +709,7 @@ void main() {
         broken.deleteAllStopsAfter = 0;
       };
       final error = await deleteFakeContacts(
-              broken, const LedgerStore(), kSettings, chunkSize: 2)
+              broken, const LedgerStore(), chunkSize: 2)
           .then<Object?>((_) => null, onError: (Object e) => e);
 
       expect((error! as StoppedPartway).done, isNull);
@@ -756,8 +747,7 @@ void main() {
         book.deleteAllError = call == 0 ? Exception('provider gone') : null;
         book.deleteAllStopsAfter = call == 0 ? 2 : null;
       };
-      final result = await deleteFakeContacts(
-          book, const LedgerStore(), kSettings,
+      final result = await deleteFakeContacts(book, const LedgerStore(),
           chunkSize: 2);
 
       expect((result!.deleted, result.stopped), (4, false));

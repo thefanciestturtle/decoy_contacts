@@ -77,21 +77,23 @@ void main() {
     expect(s.firstNamesText, '');
     expect(s.phoneTemplateText, '');
     expect(s.emailTemplateText, '');
-    // Nothing to migrate, so nothing is written.
+    // Only a first run writes.
     expect(await stored(), {'sListOfLastNames': 'Zen'});
   });
 
-  test('the old +213 default phone template is migrated and saved', () async {
-    SharedPreferences.setMockInitialValues({
+  test("Fake Contacts 1.8's default phone template is kept like any other",
+      () async {
+    // In Algeria's country code (+213). This app is a separate one, so
+    // nothing of 1.8's reaches it; someone who types it gets it.
+    final values = {
       'sListOfLastNames': 'Zen',
       'sListOfFirstNames': 'Zoe',
-      'sPhoneNumberTemplate': kLegacyDefaultPhoneTemplate,
+      'sPhoneNumberTemplate': '+2134567nnnn',
       'sEmailAddressTemplate': kDefaultEmailTemplate,
-    });
-    final s = await store.load();
-    expect(s.phoneTemplateText, kDefaultPhoneTemplate);
-    expect(s.lastNamesText, 'Zen');
-    expect((await stored())['sPhoneNumberTemplate'], kDefaultPhoneTemplate);
+    };
+    SharedPreferences.setMockInitialValues(values);
+    expect((await store.load()).phoneTemplateText, '+2134567nnnn');
+    expect(await stored(), values);
   });
 
   test('save then load round-trips', () async {

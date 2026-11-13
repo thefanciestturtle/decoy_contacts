@@ -619,12 +619,20 @@ void main() {
     await startWithEmptyAddressBook(tester);
     final real = await seed([
       ...kRealContacts,
-      (first: 'Zoe', last: 'Zen', phone: '+15555550101', email: null),
+      // Exactly the details of a fake.
+      (
+        first: 'Zoe',
+        last: 'Zen',
+        phone: kFakes['Zoe Zen']!.$1,
+        email: kFakes['Zoe Zen']!.$2,
+      ),
     ]);
     String rawIdOf(String name) =>
         rawIdsOf(real.values.firstWhere((c) => c.displayName == name)).single;
     // As if the ledger came from another phone, where these raw IDs were
-    // fakes. One entry is in the old name-only format.
+    // fakes. The entry for Zoe Zen has only a name, as early test builds
+    // stored them: it can't be checked, so it is dropped when read, and
+    // Zoe Zen is left alone although it has exactly a fake's details.
     final ledger = {
       rawIdOf('Alice Example'): {
         'name': 'Zoe Zen',
@@ -643,26 +651,18 @@ void main() {
     await launchApp(tester);
     // None of them counts: their contacts no longer match the ledger.
     await expectStatus(tester, 'No fake contacts this app can delete.');
-    // Counting changed nothing, not even the name-only entry.
+    // Counting changed nothing.
     expect(await storedLedger(), ledger);
 
     // Nothing to delete, so no dialog.
     expect(await tapAndWaitForResult(tester, kDelete),
-        "No fake contacts to delete. 3 no longer match what this app created "
+        "No fake contacts to delete. 2 no longer match what this app created "
         "(edited, or the app's records came from another phone) and were left "
         "alone.");
 
     expect(describeAll(await readAddressBook()), describeAll(real));
-    // Skipped entries stay in the ledger, and the name-only one is saved
-    // with the details it was checked against.
-    expect(await storedLedger(), {
-      ...ledger,
-      rawIdOf('Zoe Zen'): {
-        'name': 'Zoe Zen',
-        'phone': '+447700900010',
-        'email': 'Zoe.Zen@example.com',
-      },
-    });
+    // Nothing deleted, so nothing saved.
+    expect(await storedLedger(), ledger);
   });
 }
 

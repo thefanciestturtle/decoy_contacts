@@ -8,12 +8,12 @@
 # The other tests use debug builds, which skip R8. R8 shrinks release builds
 # and can remove classes that a plugin only looks up at run time, so such a
 # plugin breaks only in release builds. This script installs a release build,
-# starts it twice and checks it can read and write its settings:
+# starts it twice and checks it can write and read its settings:
 #
 # 1. First start of a fresh install: the app saves its default settings.
-# 2. The stored phone template is set to the old +213 default, and the last
-#    names to a custom list. Second start: the app must keep the custom names
-#    (it read them) and replace the template (it wrote).
+# 2. The stored last names are changed to a custom list. Second start: the
+#    app must show them in its Last names field (read from the screen with
+#    `uiautomator dump`, as accessibility services see it).
 #
 # After each start the app must still be running, with no crash, no ANR and
 # no Dart error in the log. Contacts are not exercised: the app only touches
@@ -31,8 +31,7 @@ cd "$(dirname "$0")/.."
 source tool/emulator_lib.sh
 
 readonly PREFS="/data/data/$APP_ID/shared_prefs/FlutterSharedPreferences.xml"
-readonly NEW_TEMPLATE='+447700900nnn'
-readonly OLD_TEMPLATE='+2134567nnnn'
+readonly DEFAULT_TEMPLATE='+447700900nnn'
 readonly CUSTOM_NAMES='Zen, Zima'
 readonly TIMEOUT_S=60
 
@@ -112,6 +111,33 @@ wait_for_pref() {
   done
 }
 
+# The text in the app's text field labelled $1, as the screen shows it now;
+# nothing if there is no such field (or the dump failed, say because the
+# app was still drawing its spinner). The dump is XML, one tag per line
+# once split at "<" (which an attribute escapes); a label or text with &,
+# < or " in it is escaped too, so this only works for plain ones.
+field_text() {
+  adb_ exec-out uiautomator dump /dev/tty 2>/dev/null |
+    tr '<' '\n' |
+    grep -F "class=\"android.widget.EditText\"" |
+    grep -F "hint=\"$1\"" |
+    sed -n 's/.* text="\([^"]*\)".*/\1/p' |
+    head -n 1 || true
+}
+
+wait_for_field() {
+  local label="$1" want="$2"
+  local deadline=$((SECONDS + TIMEOUT_S))
+  until [[ "$(field_text "$label")" == "$want" ]]; do
+    check_no_errors
+    if (( SECONDS >= deadline )); then
+      fail "after ${TIMEOUT_S}s, the $label field shows" \
+           "'$(field_text "$label")', expected '$want'"
+    fi
+    sleep 1
+  done
+}
+
 start_app() {
   # Only the buffers this script reads; clearing some others can fail.
   adb_ logcat -b main -b system -b crash -c || true
@@ -167,7 +193,7 @@ fi
 
 echo "== First start: the app should save its default settings"
 start_app
-wait_for_pref sPhoneNumberTemplate "$NEW_TEMPLATE"
+wait_for_pref sPhoneNumberTemplate "$DEFAULT_TEMPLATE"
 [[ -n "$(pref sListOfLastNames)" ]] || fail "no last names saved"
 check_app_ok
 adb_ shell am force-stop "$APP_ID"
@@ -177,22 +203,18 @@ echo "== Changing the stored settings"
 # SELinux label.
 adb_ pull "$PREFS" "$tmp/prefs.xml" >/dev/null 2>&1 ||
   fail "couldn't read the app's settings file"
-sed -e "s|\(name=\"flutter\.sPhoneNumberTemplate\">\)[^<]*|\1$OLD_TEMPLATE|" \
-    -e "s|\(name=\"flutter\.sListOfLastNames\">\)[^<]*|\1$CUSTOM_NAMES|" \
+sed -e "s|\(name=\"flutter\.sListOfLastNames\">\)[^<]*|\1$CUSTOM_NAMES|" \
     "$tmp/prefs.xml" > "$tmp/edited.xml"
 adb_ push "$tmp/edited.xml" /data/local/tmp/decoy_contacts_prefs.xml >/dev/null 2>&1 ||
   fail "couldn't copy the edited settings to the device"
 adb_ shell "cat /data/local/tmp/decoy_contacts_prefs.xml > $PREFS && rm /data/local/tmp/decoy_contacts_prefs.xml" ||
   fail "couldn't write the app's settings file"
-[[ "$(pref sPhoneNumberTemplate)" == "$OLD_TEMPLATE" &&
-   "$(pref sListOfLastNames)" == "$CUSTOM_NAMES" ]] ||
+[[ "$(pref sListOfLastNames)" == "$CUSTOM_NAMES" ]] ||
   fail "couldn't change the stored settings"
 
-echo "== Second start: the app should keep the names and replace the template"
+echo "== Second start: the app should show the stored names"
 start_app
-wait_for_pref sPhoneNumberTemplate "$NEW_TEMPLATE"
-[[ "$(pref sListOfLastNames)" == "$CUSTOM_NAMES" ]] ||
-  fail "last names are '$(pref sListOfLastNames)', expected '$CUSTOM_NAMES'"
+wait_for_field "Last names" "$CUSTOM_NAMES"
 check_app_ok
 
 echo "== Release build OK"
