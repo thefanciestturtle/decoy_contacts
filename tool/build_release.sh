@@ -36,8 +36,14 @@
 # for release builds in ~/.cache/decoy_contacts/flutter-<version>, cloned
 # from Flutter's repository the first time (Flutter writes into its own
 # folder when it runs from another path, so the Flutter you use otherwise is
-# left alone). Gradle's downloads are kept in ~/.cache/decoy_contacts/gradle.
-# CI passes its own Flutter and Gradle folders.
+# left alone). Gradle's downloads, and the build while it runs, are kept in
+# ~/.cache/decoy_contacts. CI passes its own Flutter and Gradle folders.
+#
+# Flutter must be a git checkout of that version's tag on a branch named
+# "stable", with no changes: Flutter turns on features that are still off
+# on its stable channel (it changed the app's manifest) when it isn't on
+# one of its channels' branches, as with a plain checkout of the tag.
+# F-Droid's recipes check Flutter out the same way.
 #
 # Needs: git, bubblewrap (bwrap) with unprivileged user namespaces,
 # python3, JAVA_HOME and ANDROID_HOME set, and the internet.
@@ -47,6 +53,12 @@ readonly CALLER_DIR="$PWD"
 cd "$(dirname "$0")/.."
 source tool/check_lib.sh
 source tool/release_lib.sh
+
+# The usual umask whatever this computer uses, for every file the build
+# writes; and none of this computer's git settings (line ends, filters),
+# which could change the files checked out.
+umask 022
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
 readonly SANDBOX_FLUTTER=/home/vagrant/build/srclib/flutter
 readonly SANDBOX_ANDROID_SDK=/opt/android-sdk
@@ -83,16 +95,15 @@ sdk="$(android_sdk)" || exit 1
 commit="$(git rev-parse --verify --quiet "$ref^{commit}")" ||
   fail "no commit '$ref'"
 
-work="$(mktemp -d)"
+# On disk, not in /tmp, which can be in memory and too small.
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/decoy_contacts"
+mkdir -p "$cache"
+work="$(mktemp -d "$cache/build.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
-# Without this computer's git settings (line ends, filters), which could
-# change the files checked out.
 echo "== Building $(git describe --always --tags "$commit") ($commit)"
-GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-  git clone --quiet --no-checkout . "$work/src"
-GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-  git -C "$work/src" checkout --quiet --detach "$commit"
+git clone --quiet --no-checkout . "$work/src"
+git -C "$work/src" checkout --quiet --detach "$commit"
 
 # The versions that commit's CI builds with.
 flutter_version="$(cd "$work/src" && ci_flutter_version)" ||
@@ -108,23 +119,30 @@ version="$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' \
 [[ -n "$version" ]] || fail "no version in pubspec.yaml"
 out="$DIST_DIR/decoy_contacts-$version-unsigned.apk"
 
-cache="${XDG_CACHE_HOME:-$HOME/.cache}/decoy_contacts"
 if [[ -z "$flutter_sdk" ]]; then
   flutter_sdk="$cache/flutter-$flutter_version"
   if [[ ! -d "$flutter_sdk" ]]; then
     echo "== Getting Flutter $flutter_version for release builds into $flutter_sdk"
-    mkdir -p "$cache"
     rm -rf "$flutter_sdk.partial"
-    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-      git clone --quiet --depth 1 --branch "$flutter_version" \
-        https://github.com/flutter/flutter.git "$flutter_sdk.partial"
+    git clone --quiet --depth 1 --branch "$flutter_version" \
+      https://github.com/flutter/flutter.git "$flutter_sdk.partial"
+    git -C "$flutter_sdk.partial" checkout --quiet -B stable
     mv "$flutter_sdk.partial" "$flutter_sdk"
   fi
 fi
-found="$(git -C "$flutter_sdk" tag --points-at HEAD 2>/dev/null)" || found=""
+[[ "$(git -C "$flutter_sdk" rev-parse --show-toplevel 2>/dev/null)" == \
+   "$(cd "$flutter_sdk" 2>/dev/null && pwd -P)" ]] ||
+  fail "$flutter_sdk isn't a git checkout of Flutter"
+found="$(git -C "$flutter_sdk" tag --points-at HEAD)"
 grep -qxF "$flutter_version" <<<"$found" ||
   fail "Flutter in $flutter_sdk is '$(paste -sd ' ' <<<"${found:-not a release}")'," \
        "not $flutter_version"
+branch="$(git -C "$flutter_sdk" rev-parse --abbrev-ref HEAD)"
+[[ "$branch" == stable ]] ||
+  fail "Flutter in $flutter_sdk is on '$branch', not on a branch named" \
+       "stable (git -C $flutter_sdk checkout -B stable)"
+[[ -z "$(git -C "$flutter_sdk" status --porcelain --untracked-files=no)" ]] ||
+  fail "Flutter in $flutter_sdk has changes (git -C $flutter_sdk status)"
 gradle_home="${gradle_home:-$cache/gradle}"
 mkdir -p "$gradle_home"
 
@@ -134,11 +152,10 @@ printf 'root:x:0:0:root:/root:/bin/sh\nvagrant:x:%s:%s:vagrant:/home/vagrant:/bi
 printf 'root:x:0:\nvagrant:x:%s:\n' "$(id -g)" >"$work/group"
 echo buildserver >"$work/hostname"
 
-# In the sandbox, in UTC and with the usual umask, whatever this computer
-# uses. No Gradle daemon, and the Kotlin compiler in Gradle's process: a
-# daemon could outlive the sandbox or be one from outside it.
+# In the sandbox, in UTC whatever this computer uses. No Gradle daemon, and
+# the Kotlin compiler in Gradle's process: a daemon could outlive the
+# sandbox or be one from outside it.
 inner='set -euo pipefail
-umask 022
 flutter config --no-analytics >/dev/null
 flutter --version
 java -version 2>&1 | head -n 1
@@ -160,7 +177,7 @@ env -i \
     --ro-bind "$work/group" /etc/group \
     --ro-bind "$work/hostname" /etc/hostname \
     --unshare-uts --hostname buildserver \
-    --unshare-pid --die-with-parent \
+    --unshare-pid --proc /proc --die-with-parent \
     --bind "$work/src" "$RELEASE_PROJECT_DIR" \
     --bind "$flutter_sdk" "$SANDBOX_FLUTTER" \
     --bind "$sdk" "$SANDBOX_ANDROID_SDK" \

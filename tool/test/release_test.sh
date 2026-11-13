@@ -234,6 +234,15 @@ check "... leaving the APK unsigned" bash -c \
 run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
   "$tmp/app-release-debug-signed.apk" "$tmp/twice.apk"
 expect "debug_sign.sh won't sign a signed APK" 1 "is already signed"
+before="$(sha256sum "$tmp/app-release.apk")"
+run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
+  "$tmp/app-release.apk" "$tmp/app-release.apk"
+expect "debug_sign.sh won't write over its APK" 1 "already exists"
+check "... which is left as it was" \
+  test "$(sha256sum "$tmp/app-release.apk")" == "$before"
+run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
+  "$tmp/app-release.apk"
+expect "debug_sign.sh won't replace an earlier copy" 1 "already exists"
 
 # --- release_lib.sh: apksigner_ allows native access only on Java 17 and
 # newer. A stand-in java says it is $SPEC and rejects that option.
@@ -382,10 +391,19 @@ run "" tool/build_release.sh --bogus
 expect "build: an unknown option fails" 2 "usage:"
 run "" tool/build_release.sh HEAD HEAD
 expect "build: two commits fail" 2 "usage:"
-mkdir "$tmp/flutter"
-git -C "$tmp/flutter" init --quiet
+# A stand-in for Flutter's repository.
+mkdir -p "$tmp/flutter/sub" "$tmp/not-git"
+echo flutter >"$tmp/flutter/README.md"
+git -C "$tmp/flutter" init --quiet --initial-branch=main
+git -C "$tmp/flutter" add README.md
 git -C "$tmp/flutter" -c user.name=test -c user.email=test@example.invalid \
-  commit --quiet --allow-empty -m flutter
+  commit --quiet -m flutter
+run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/not-git"
+expect "build: a Flutter that isn't a git checkout fails" 1 \
+  "$tmp/not-git isn't a git checkout of Flutter"
+run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/flutter/sub"
+expect "build: a folder within a checkout fails" 1 \
+  "$tmp/flutter/sub isn't a git checkout of Flutter"
 run "" env JAVA_HOME="$java_home" \
   tool/build_release.sh --flutter-sdk "$tmp/flutter" no-such-commit
 expect "build: a commit that doesn't exist fails" 1 "no commit 'no-such-commit'"
@@ -404,6 +422,14 @@ RUN_IN="$tmp" run "" env JAVA_HOME="$java_home" \
   repo/tool/build_release.sh --flutter-sdk flutter older-flutter
 expect "build: the Flutter version is the commit's" 1 \
   "Flutter in $tmp/flutter is '9.98.0', not 9.97.0"
+git -C "$tmp/flutter" tag 9.99.0
+run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/flutter"
+expect "build: a Flutter that isn't on a branch named stable fails" 1 \
+  "is on 'main', not on a branch named stable"
+git -C "$tmp/flutter" checkout --quiet -B stable
+echo changed >"$tmp/flutter/README.md"
+run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/flutter"
+expect "build: a Flutter with changes fails" 1 "has changes"
 check "... and builds nothing" bash -c '! ls dist/decoy_contacts-*'
 
 if ((failures)); then

@@ -25,6 +25,7 @@ out="$(absolute_path "${2:-${1%.apk}-debug-signed.apk}" "$CALLER_DIR")"
 
 need python3
 [[ -f "$apk" ]] || fail "no APK at $apk"
+[[ ! -e "$out" ]] || fail "$out already exists; move it away first"
 if is_signed "$apk"; then
   fail "$apk is already signed"
 fi

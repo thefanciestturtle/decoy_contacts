@@ -180,9 +180,12 @@ check_app_ok() {
     fail "the app is no longer running"
 }
 
+need python3
 if [[ $# -ge 1 ]]; then
   apk="$(absolute_path "$1" "$CALLER_DIR")"
 else
+  # It will sign the build with the debug key: check that it can first.
+  apksigner_path >/dev/null || exit 1
   abi="$(adb_ shell getprop ro.product.cpu.abi | tr -d '\r')"
   case "$abi" in
     x86_64) platform=android-x64 ;;
