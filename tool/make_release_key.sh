@@ -77,7 +77,9 @@ sum="$(TZ=UTC KEYSTORE_PASSWORD="$password" "$keytool" -list -v \
   sed -n 's/^[[:space:]]*SHA256:[[:space:]]*//p' | tr -d ':' |
   tr '[:upper:]' '[:lower:]')" || sum=""
 [[ "$sum" =~ ^[0-9a-f]{64}$ ]] ||
-  fail "couldn't read the certificate in $keystore; run this again to retry"
+  fail "couldn't read the certificate of the key '$ALIAS' in $keystore" \
+       "(a wrong password, or a keystore this script didn't make);" \
+       "run this again to retry"
 echo "$sum" >"$RELEASE_CERT_FILE"
 
 echo "== The release key is in $keystore"

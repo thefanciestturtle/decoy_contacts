@@ -22,10 +22,10 @@ need() {
   fi
 }
 
-# Prints the value of setting $1 in .github/workflows/dart.yml, which must
-# match the basic regular expression $2: quoted or not, with or without a
-# comment after it (after a space, as YAML wants). Fails if there isn't
-# exactly one such line.
+# Prints the value of setting $1 (a plain name: letters, digits and _) in
+# .github/workflows/dart.yml, which must match the basic regular expression
+# $2: quoted or not, with or without a comment after it (after a space, as
+# YAML wants). Fails if there isn't exactly one such line.
 ci_env_value() {
   local found
   found="$(sed -n "s/^[[:space:]]*$1:[[:space:]]*[\"']\{0,1\}\($2\)[\"']\{0,1\}\([[:space:]]\{1,\}#.*\)\{0,1\}[[:space:]]*\$/\1/p" \

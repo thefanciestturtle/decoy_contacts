@@ -115,7 +115,7 @@ java_found="$(java_version "$JAVA_HOME/bin/java")" ||
 [[ "$java_found" == "$java_wanted" ]] ||
   fail "JAVA_HOME is Java ${java_found:-unknown}; this commit is built with" \
        "Java $java_wanted (JAVA_VERSION in .github/workflows/dart.yml)"
-version="$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' \
+version="$(sed -n "s/^version:[[:space:]]*[\"']\{0,1\}\([^+\"'[:space:]]*\).*/\1/p" \
   "$work/src/pubspec.yaml")"
 [[ -n "$version" ]] || fail "no version in pubspec.yaml"
 out="$DIST_DIR/decoy_contacts-$version-unsigned.apk"
@@ -154,6 +154,7 @@ printf 'root:x:0:0:root:/root:/bin/sh\nvagrant:x:%s:%s:vagrant:/home/vagrant:/bi
   "$(id -u)" "$(id -g)" >"$work/passwd"
 printf 'root:x:0:\nvagrant:x:%s:\n' "$(id -g)" >"$work/group"
 echo buildserver >"$work/hostname"
+mkdir "$work/tmp" # the sandbox's /tmp, on disk
 
 # In the sandbox, in UTC whatever this computer uses. No Gradle daemon, and
 # the Kotlin compiler in Gradle's process: a daemon could outlive the
@@ -175,7 +176,7 @@ env -i \
   ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy=in-process \
   bwrap \
     --dev-bind / / \
-    --tmpfs /home --tmpfs /opt --tmpfs /tmp \
+    --tmpfs /home --tmpfs /opt --bind "$work/tmp" /tmp \
     --ro-bind "$work/passwd" /etc/passwd \
     --ro-bind "$work/group" /etc/group \
     --ro-bind "$work/hostname" /etc/hostname \

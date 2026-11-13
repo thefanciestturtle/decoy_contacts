@@ -119,17 +119,17 @@ def _contents(info, data):
 
 def home_paths(path, *texts):
     words = tuple(text for text in texts if len(text) >= 4)
+    # Text is mostly ASCII (UTF-8); resources.arsc keeps it in UTF-16.
+    searches = [(encoding, ALLOWED_HOME.encode(encoding),
+                 re.compile(b'|'.join(re.escape(text.encode(encoding))
+                                      for text in HOME_FOLDERS + words)))
+                for encoding in TEXT_ENCODINGS]
     bad = []
     with zipfile.ZipFile(path) as apk:
         for info in apk.infolist():
             for content in _contents(info, apk.read(info)):
-                # Text is mostly ASCII (UTF-8); resources.arsc keeps it in
-                # UTF-16.
-                for encoding in TEXT_ENCODINGS:
-                    allowed = ALLOWED_HOME.encode(encoding)
-                    pattern = b'|'.join(re.escape(text.encode(encoding))
-                                        for text in HOME_FOLDERS + words)
-                    for match in re.finditer(pattern, content):
+                for encoding, allowed, pattern in searches:
+                    for match in pattern.finditer(content):
                         if content.startswith(allowed, match.start()):
                             continue
                         text = content[match.start():match.start() + 240]
@@ -193,19 +193,21 @@ def only_signature_added(signed_path, unsigned_path):
 
 
 def main(argv):
+    # The function, and the least and most arguments (None: any number).
     commands = {
-        'signature': (signature, 1),
-        'home-paths': (home_paths, 1),
-        'same': (same, 2),
-        'only-signature-added': (only_signature_added, 2),
+        'signature': (signature, 1, 1),
+        'home-paths': (home_paths, 1, None),
+        'same': (same, 2, 2),
+        'only-signature-added': (only_signature_added, 2, 2),
     }
-    if len(argv) < 2 or argv[1] not in commands \
-            or len(argv) - 2 < commands[argv[1]][1] \
-            or (argv[1] != 'home-paths'
-                and len(argv) - 2 != commands[argv[1]][1]):
+    if len(argv) < 2 or argv[1] not in commands:
         print(__doc__, file=sys.stderr)
         return 2
-    function, _ = commands[argv[1]]
+    function, least, most = commands[argv[1]]
+    count = len(argv) - 2
+    if count < least or (most is not None and count > most):
+        print(__doc__, file=sys.stderr)
+        return 2
     try:
         return function(*argv[2:])
     except (OSError, zipfile.BadZipFile, NotAnApk) as error:

@@ -69,11 +69,13 @@ become_root() {
 # cleanup below uninstalls the app): to sign an unsigned APK, or the one it
 # builds, with the debug key, apksigner and that key.
 need python3
+needs_signing=true
 if [[ $# -ge 1 ]]; then
   apk="$(absolute_path "$1" "$CALLER_DIR")"
   [[ -f "$apk" ]] || { echo "error: no APK at $apk" >&2; exit 1; }
+  if is_signed "$apk"; then needs_signing=false; fi
 fi
-if [[ $# -eq 0 ]] || ! is_signed "$apk"; then
+if $needs_signing; then
   apksigner_path >/dev/null || exit 1
   debug_keystore >/dev/null || exit 1
 fi
@@ -206,7 +208,7 @@ if [[ $# -eq 0 ]]; then
   apk=build/app/outputs/flutter-apk/app-release.apk
 fi
 [[ -f "$apk" ]] || fail "no APK at $apk"
-if ! is_signed "$apk"; then
+if $needs_signing; then
   echo "== Signing a copy with the debug key"
   debug_sign "$apk" "$tmp/debug-signed.apk" ||
     fail "couldn't sign $apk with the debug key"

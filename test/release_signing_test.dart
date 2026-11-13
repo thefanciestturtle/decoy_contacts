@@ -12,10 +12,10 @@ String releaseCertificate() =>
 
 void main() {
   final gradle = File('android/app/build.gradle.kts').readAsStringSync();
-  // Without comments, which explain the signing.
+  // Without the comment lines, which explain the signing.
   final code = gradle
       .split('\n')
-      .map((line) => line.replaceFirst(RegExp(r'//.*'), ''))
+      .where((line) => !line.trimLeft().startsWith('//'))
       .join('\n');
 
   test('Gradle signs no release build, not even with the debug key', () {
