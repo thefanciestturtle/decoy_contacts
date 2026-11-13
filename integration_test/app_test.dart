@@ -656,7 +656,8 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(kLedgerPrefsKey, jsonEncode(ledger));
     await launchApp(tester);
-    // None of them counts: their contacts no longer match the ledger.
+    // None of them counts: three contacts no longer match their entries,
+    // and the name-only entry isn't read at all.
     await expectStatus(tester, 'No fake contacts this app can delete.');
     // Counting changed nothing.
     expect(await storedLedger(), ledger);

@@ -729,6 +729,33 @@ void main() {
         expect(book.all.map((c) => c.id), unorderedEquals([alice, zoe]));
       });
 
+      testWidgets("an entry it can't read beside fakes to delete: Cancel "
+          'saves nothing, and Delete then leaves it out', (tester) async {
+        final alice = book.add('Alice Example', phones: ['+1 555 0101']);
+        await pumpApp(tester, book);
+        await tapCreate(tester);
+        // Only a name, as early test builds stored them, for a real contact.
+        await (await SharedPreferences.getInstance()).setString(
+            kLedgerPrefsKey,
+            jsonEncode({
+              ...jsonDecode((await storedLedgerJson())!) as Map,
+              book.rawIdsOf(alice).single: 'Alice Example',
+            }));
+        final ledger = await storedLedgerJson();
+
+        await tapAndOpenDialog(tester, kDeleteButton);
+        expect(dialogText(tester).title, 'Delete 4 fake contacts?');
+        await tester.tap(dialogButton('Cancel'));
+        await tester.pumpAndSettle();
+        expect(await storedLedgerJson(), ledger);
+        expect(book.all, hasLength(5));
+
+        await tapDelete(tester);
+        expect(resultText(tester), 'Deleted 4 fake contacts.');
+        expect(book.all.map((c) => c.id), [alice]);
+        expect(jsonDecode((await storedLedgerJson())!), isEmpty);
+      });
+
       testWidgets('entries for raw IDs that no longer exist are dropped',
           (tester) async {
         final alice = book.add('Alice Example');

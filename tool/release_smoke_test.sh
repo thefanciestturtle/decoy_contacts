@@ -145,8 +145,10 @@ wait_for_field() {
     [[ "$shown" == "$want" ]] && return
     check_no_errors
     if (( SECONDS >= deadline )); then
+      # Which window was in front, in case it wasn't the app's.
       fail "after ${TIMEOUT_S}s, the $label field shows '$shown'," \
-           "expected '$want'"
+           "expected '$want'; in front:" \
+           "$(adb_ shell dumpsys window | grep -m 1 mCurrentFocus | tr -d '\r')"
     fi
     sleep 1
   done
@@ -231,5 +233,9 @@ echo "== Second start: the app should show the stored names"
 start_app
 wait_for_field "Last names" "$CUSTOM_NAMES"
 check_app_ok
+# Still stored as they were.
+[[ "$(pref sListOfLastNames)" == "$CUSTOM_NAMES" ]] ||
+  fail "last names are now stored as '$(pref sListOfLastNames)'," \
+       "expected '$CUSTOM_NAMES'"
 
 echo "== Release build OK"
