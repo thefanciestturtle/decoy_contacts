@@ -2,6 +2,7 @@
 // storage full. (The flow tests can't make saving fail.)
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:decoy_contacts/app_log.dart';
 import 'package:decoy_contacts/contact_actions.dart';
@@ -226,6 +227,36 @@ void main() {
     expect(book.all, isEmpty);
     expect((await stored()).isEmpty, isTrue);
     expect(logged.single, contains('recovered: Exception: provider gone'));
+  });
+
+  test("Delete, and its preview when it records a killed Create's fakes, "
+      "save the ledger without the entries they can't read", () async {
+    Future<Map<String, Object?>> storedJson() async => jsonDecode(
+        (await SharedPreferences.getInstance()).getString(kLedgerPrefsKey)!)
+        as Map<String, Object?>;
+    // Adds an entry with only a name, as early test builds stored them,
+    // for a real contact.
+    final alice = book.rawIdsOf(book.add('Alice Example')).single;
+    Future<void> addUnreadable() async =>
+        (await SharedPreferences.getInstance()).setString(kLedgerPrefsKey,
+            jsonEncode({...await storedJson(), alice: 'Alice Example'}));
+    book.afterCreateAll =
+        (call) => call == 0 ? Completer<void>().future : Future.value();
+    unawaited(createFakeContacts(book, const LedgerStore(), kSettings));
+    await pumpEventQueue();
+    await addUnreadable();
+
+    expect((await previewDelete(book, const LedgerStore())).toDelete, 4);
+    final fakes = [for (final c in book.all) ...c.rawContactIds]..remove(alice);
+    expect((await storedJson()).keys, unorderedEquals(fakes));
+
+    // One fake is edited, so Delete leaves it alone and saves its entry.
+    final edited = book.idOf('Zoe Zen');
+    book.setPhones(edited, ['+15555550199']);
+    await addUnreadable();
+    expect((await deleteFakeContacts(book, const LedgerStore()))!.deleted, 3);
+    expect((await storedJson()).keys, book.rawIdsOf(edited));
+    expect(book.displayNames, unorderedEquals(['Alice Example', 'Zoe Zen']));
   });
 
   test("Delete's preview: a failed save of the fakes of a Create that was "

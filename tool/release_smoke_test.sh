@@ -126,24 +126,34 @@ field_text() {
     head -n 1 || true
 }
 
+# Turns the screen on and dismisses the keyguard, if they aren't already.
+# The second start reads the app's screen, and with the screen off or
+# locked the dump shows no app at all. Neither changes a setting.
+wake_screen() {
+  if ! adb_ shell input keyevent KEYCODE_WAKEUP ||
+     ! adb_ shell wm dismiss-keyguard; then
+    fail "couldn't turn the screen on and unlock it"
+  fi
+}
+
 wait_for_field() {
-  local label="$1" want="$2"
+  local label="$1" want="$2" shown
   local deadline=$((SECONDS + TIMEOUT_S))
-  until [[ "$(field_text "$label")" == "$want" ]]; do
+  while true; do
+    wake_screen # in case it went off meanwhile
+    shown="$(field_text "$label")"
+    [[ "$shown" == "$want" ]] && return
     check_no_errors
     if (( SECONDS >= deadline )); then
-      fail "after ${TIMEOUT_S}s, the $label field shows" \
-           "'$(field_text "$label")', expected '$want'"
+      fail "after ${TIMEOUT_S}s, the $label field shows '$shown'," \
+           "expected '$want'"
     fi
     sleep 1
   done
 }
 
 start_app() {
-  # The second start reads the app's screen, so the screen must be on and
-  # unlocked (else the dump shows no app at all). Neither changes a setting.
-  adb_ shell input keyevent KEYCODE_WAKEUP
-  adb_ shell wm dismiss-keyguard
+  wake_screen
   # Only the buffers this script reads; clearing some others can fail.
   adb_ logcat -b main -b system -b crash -c || true
   local out

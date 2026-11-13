@@ -668,7 +668,8 @@ void main() {
         "alone.");
 
     expect(describeAll(await readAddressBook()), describeAll(real));
-    // Nothing deleted, so nothing saved.
+    // Delete itself didn't run, and its preview had nothing to record, so
+    // nothing was saved.
     expect(await storedLedger(), ledger);
   });
 }
