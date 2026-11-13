@@ -3,12 +3,12 @@
 
 import 'dart:async';
 
-import 'package:fake_contacts/app_log.dart';
-import 'package:fake_contacts/contact_actions.dart';
-import 'package:fake_contacts/contacts_gateway.dart';
-import 'package:fake_contacts/fake_contacts_core.dart';
-import 'package:fake_contacts/result_messages.dart';
-import 'package:fake_contacts/settings_store.dart';
+import 'package:decoy_contacts/app_log.dart';
+import 'package:decoy_contacts/contact_actions.dart';
+import 'package:decoy_contacts/contacts_gateway.dart';
+import 'package:decoy_contacts/fake_contacts_core.dart';
+import 'package:decoy_contacts/result_messages.dart';
+import 'package:decoy_contacts/settings_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

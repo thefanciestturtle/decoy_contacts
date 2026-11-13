@@ -180,9 +180,9 @@ adb_ pull "$PREFS" "$tmp/prefs.xml" >/dev/null 2>&1 ||
 sed -e "s|\(name=\"flutter\.sPhoneNumberTemplate\">\)[^<]*|\1$OLD_TEMPLATE|" \
     -e "s|\(name=\"flutter\.sListOfLastNames\">\)[^<]*|\1$CUSTOM_NAMES|" \
     "$tmp/prefs.xml" > "$tmp/edited.xml"
-adb_ push "$tmp/edited.xml" /data/local/tmp/fake_contacts_prefs.xml >/dev/null 2>&1 ||
+adb_ push "$tmp/edited.xml" /data/local/tmp/decoy_contacts_prefs.xml >/dev/null 2>&1 ||
   fail "couldn't copy the edited settings to the device"
-adb_ shell "cat /data/local/tmp/fake_contacts_prefs.xml > $PREFS && rm /data/local/tmp/fake_contacts_prefs.xml" ||
+adb_ shell "cat /data/local/tmp/decoy_contacts_prefs.xml > $PREFS && rm /data/local/tmp/decoy_contacts_prefs.xml" ||
   fail "couldn't write the app's settings file"
 [[ "$(pref sPhoneNumberTemplate)" == "$OLD_TEMPLATE" &&
    "$(pref sListOfLastNames)" == "$CUSTOM_NAMES" ]] ||

@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'app_info.dart';
 import 'app_log.dart';
 import 'app_theme.dart';
 
@@ -18,8 +19,8 @@ const String kAppVersion = '1.8.0';
 
 /// Where the source code is, and how the link to it reads.
 final Uri kSourceUrl =
-    Uri.parse('https://github.com/thefanciestturtle/fake_contacts');
-const String kSourceLabel = 'github.com/thefanciestturtle/fake_contacts';
+    Uri.parse('https://github.com/thefanciestturtle/decoy_contacts');
+const String kSourceLabel = 'github.com/thefanciestturtle/decoy_contacts';
 
 /// The privacy policy, word for word as under "Privacy Policy" in
 /// README.md, which is where it is kept (a test checks they match).
@@ -54,7 +55,7 @@ const String kAppLicense = 'The MIT License (MIT)\n'
     'SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.';
 
 /// The name the app's licence is listed under on the licence page.
-const String kLicensePackage = 'fake_contacts';
+const String kLicensePackage = 'decoy_contacts';
 
 bool _bLicenseRegistered = false;
 
@@ -230,7 +231,7 @@ class _AboutPageState extends State<AboutPage> {
     registerAppLicense();
     showLicensePage(
       context: context,
-      applicationName: 'Fake Contacts',
+      applicationName: kAppName,
       applicationVersion: kAppVersion,
     );
   }
@@ -272,7 +273,7 @@ class _AboutPageState extends State<AboutPage> {
                       Semantics(
                         header: true,
                         headingLevel: 1,
-                        child: Text('Fake Contacts',
+                        child: Text(kAppName,
                             style: theme.textTheme.headlineSmall),
                       ),
                       const SizedBox(height: 4),

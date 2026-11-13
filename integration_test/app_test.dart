@@ -9,15 +9,15 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:fake_contacts/about_page.dart'
+import 'package:decoy_contacts/about_page.dart'
     show AboutPage, kAppVersion, kLicensePackage;
-import 'package:fake_contacts/contact_actions.dart'
+import 'package:decoy_contacts/contact_actions.dart'
     show kCreateChunkSize, kDeleteChunkSize;
-import 'package:fake_contacts/contacts_gateway.dart' show NewContact;
-import 'package:fake_contacts/fake_contacts_core.dart';
-import 'package:fake_contacts/flutter_contacts_gateway.dart';
-import 'package:fake_contacts/main.dart';
-import 'package:fake_contacts/settings_store.dart';
+import 'package:decoy_contacts/contacts_gateway.dart' show NewContact;
+import 'package:decoy_contacts/fake_contacts_core.dart';
+import 'package:decoy_contacts/flutter_contacts_gateway.dart';
+import 'package:decoy_contacts/main.dart';
+import 'package:decoy_contacts/settings_store.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:flutter_test/flutter_test.dart';

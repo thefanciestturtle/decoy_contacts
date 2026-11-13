@@ -1,4 +1,4 @@
-import 'package:fake_contacts/app_theme.dart';
+import 'package:decoy_contacts/app_theme.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 

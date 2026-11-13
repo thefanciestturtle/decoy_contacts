@@ -4,7 +4,7 @@
 # `adb_` to talk to it, and stops unless it is an emulator: these scripts
 # change the device's contacts or app data.
 
-readonly APP_ID=me.billdietrich.fake_contacts
+readonly APP_ID=io.github.thefanciestturtle.decoy_contacts
 
 serial="${ANDROID_SERIAL:-$(adb get-serialno)}"
 adb_() { adb -s "$serial" "$@"; }

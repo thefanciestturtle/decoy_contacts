@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "me.billdietrich.fake_contacts"
+    namespace = "io.github.thefanciestturtle.decoy_contacts"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -15,7 +15,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "me.billdietrich.fake_contacts"
+        applicationId = "io.github.thefanciestturtle.decoy_contacts"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

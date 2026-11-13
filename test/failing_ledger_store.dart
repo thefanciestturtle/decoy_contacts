@@ -1,5 +1,5 @@
-import 'package:fake_contacts/fake_contacts_core.dart';
-import 'package:fake_contacts/settings_store.dart';
+import 'package:decoy_contacts/fake_contacts_core.dart';
+import 'package:decoy_contacts/settings_store.dart';
 
 /// Fails [failures] saves, after letting the first [succeeding] through, as
 /// on Android with the storage full: the ledger is kept in memory (later

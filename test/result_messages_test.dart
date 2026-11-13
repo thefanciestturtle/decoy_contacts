@@ -1,7 +1,7 @@
-import 'package:fake_contacts/contact_actions.dart';
-import 'package:fake_contacts/settings_store.dart' show LedgerNotSaved;
-import 'package:fake_contacts/result_messages.dart' as messages;
-import 'package:fake_contacts/result_messages.dart'
+import 'package:decoy_contacts/contact_actions.dart';
+import 'package:decoy_contacts/settings_store.dart' show LedgerNotSaved;
+import 'package:decoy_contacts/result_messages.dart' as messages;
+import 'package:decoy_contacts/result_messages.dart'
     hide
         createdMessage,
         deletedMessage,

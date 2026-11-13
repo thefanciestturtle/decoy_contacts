@@ -2,7 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
-import 'package:fake_contacts/text_field_keys.dart';
+import 'package:decoy_contacts/text_field_keys.dart';
 
 /// A button, a field of three lines, a field of one line and a button,
 /// one above the other, in [ArrowsLeaveTextFields].

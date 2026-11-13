@@ -4,6 +4,8 @@ import 'dart:developer' as developer;
 
 import 'package:flutter/foundation.dart';
 
+import 'app_info.dart';
+
 /// Where [logError] writes its text, besides `dart:developer`'s log.
 /// Android's log (logcat) by default; tests collect it instead.
 @visibleForTesting
@@ -22,6 +24,6 @@ void _toAndroidLog(String message) => debugPrint(message);
 /// [errorLogSink]). Routine trace lines use `log` alone.
 void logError(String where, Object error, [StackTrace? stackTrace]) {
   developer.log('$where: error', error: error, stackTrace: stackTrace, level: 1000);
-  errorLogSink('Fake Contacts: $where: $error'
+  errorLogSink('$kAppName: $where: $error'
       '${stackTrace == null ? '' : '\n$stackTrace'}');
 }
