@@ -35,6 +35,10 @@ if (($# != 1)); then
   exit 2
 fi
 keystore="$(absolute_path "$1" "$CALLER_DIR")"
+# Never in the repository, where git could take it in.
+case "$(realpath -m "$keystore")/" in
+  "$(pwd -P)"/*) fail "$keystore is in the repository; keep the key outside it" ;;
+esac
 
 keytool="${JAVA_HOME:+$JAVA_HOME/bin/}keytool"
 need "$keytool"

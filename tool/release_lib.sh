@@ -36,6 +36,41 @@ apk_check() {
   python3 -I tool/apk_check.py "$@"
 }
 
+# Stops the script (fail) if APK $1 names a home folder other than the
+# build sandbox's, this computer's home folder or its name.
+check_home_paths() {
+  local status=0
+  apk_check home-paths "$1" "$(cd ~ && pwd -P)" "$(uname -n)" || status=$?
+  case "$status" in
+    0) ;;
+    1) fail "$1 names a home folder, or this computer" ;;
+    *) fail "couldn't read $1 as an APK" ;;
+  esac
+}
+
+# Puts release build $1 into dist as $2 (…-unsigned.apk). If $2 is already
+# there, the build must be the same file (it is then kept); if the signed
+# APK (….apk) is there, it must be this build signed. Otherwise it stops, so
+# a signed APK can't end up next to a different build.
+place_release() {
+  local apk=$1 out=$2 signed="${2%-unsigned.apk}.apk"
+  if [[ -e "$signed" ]] && ! apk_check only-signature-added "$signed" "$apk"; then
+    fail "$signed, already there, isn't this build signed;" \
+         "move it and $out away first"
+  fi
+  if [[ -e "$out" ]]; then
+    apk_check same "$out" "$apk" ||
+      fail "this build isn't the same file as the $out already there;" \
+           "move that away first"
+    echo "== The same file as the $out already there"
+  else
+    mkdir -p "$(dirname "$out")"
+    cp "$apk" "$out.partial"
+    mv "$out.partial" "$out"
+    echo "== Built $out"
+  fi
+}
+
 # Whether APK $1 is signed; stops the script (fail) if it can't be read.
 is_signed() {
   local found
@@ -111,9 +146,17 @@ readonly SIGNING_OPTIONS=(
 
 # Signs release APK $1 with the debug key into $2, as release APKs are
 # signed, so it can be installed for testing. Android Studio and Gradle make
-# the debug key with the first debug build.
+# the debug key with the first debug build, in the folder Android's tools
+# keep their settings in: ANDROID_USER_HOME, else .android in
+# ANDROID_PREFS_ROOT, ANDROID_SDK_HOME (both deprecated) or the home folder.
 debug_sign() {
-  local keystore="${ANDROID_USER_HOME:-$HOME/.android}/debug.keystore"
+  local folder
+  if [[ -n "${ANDROID_USER_HOME:-}" ]]; then
+    folder="$ANDROID_USER_HOME"
+  else
+    folder="${ANDROID_PREFS_ROOT:-${ANDROID_SDK_HOME:-$HOME}}/.android"
+  fi
+  local keystore="$folder/debug.keystore"
   if [[ ! -f "$keystore" ]]; then
     echo "error: no debug key at $keystore; a debug build makes one" \
          "(flutter build apk --debug)" >&2

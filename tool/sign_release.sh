@@ -44,7 +44,7 @@ apksigner_path >/dev/null || exit 1
 if is_signed "$unsigned"; then
   fail "$unsigned is already signed"
 fi
-apk_check home-paths "$unsigned" || fail "$unsigned names a home folder"
+check_home_paths "$unsigned"
 
 partial="$signed.partial"
 trap 'rm -f "$partial" "$partial.idsig"' EXIT
@@ -61,7 +61,9 @@ got="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$verified")"
   fail "the key in $keystore isn't the release key: its certificate's" \
        "SHA-256 fingerprint is ${got:-unknown}, the release key's is $want" \
        "($RELEASE_CERT_FILE)"
-blocks="$(apk_check signature "$partial" | tr '\n' ' ')"
+blocks="$(apk_check signature "$partial")" ||
+  fail "couldn't read the signed APK"
+blocks="$(tr '\n' ' ' <<<"$blocks")"
 [[ "$blocks" == "v2 v3 padding " || "$blocks" == "v2 v3 " ]] ||
   fail "the signature should have v2 and v3 only, but has: $blocks"
 apk_check only-signature-added "$partial" "$unsigned" ||

@@ -6,9 +6,11 @@
       by name ("padding", "dependency-info", "source-stamp") or hex ID.
       Prints nothing for an unsigned APK.
 
-  apk_check.py home-paths APK
-      Fails, listing them, if any file in the APK names a folder in /home
-      other than /home/vagrant/, the release build sandbox's.
+  apk_check.py home-paths APK [TEXT...]
+      Fails, listing them, if any file in the APK names a home folder
+      (in /home, /var/home, /Users or /root) other than /home/vagrant/, the
+      release build sandbox's, or holds any of the TEXTs of 4 characters or
+      more (say this computer's home folder and name).
 
   apk_check.py same APK1 APK2
       Fails unless the two are the same file; lists the files inside that
@@ -39,7 +41,9 @@ BLOCK_NAMES = {
 
 MAGIC = b'APK Sig Block 42'
 
-# What a release build may name in /home: the sandbox's own folders.
+# Where home folders are, and the one a release build may name: the
+# sandbox's.
+HOME_FOLDERS = rb'/home/|/var/home/|/Users/|/root/'
 ALLOWED_HOME = b'/home/vagrant/'
 
 
@@ -99,19 +103,27 @@ def signature(path):
     return 0
 
 
-def home_paths(path):
+def home_paths(path, *texts):
+    words = [text.encode() for text in texts if len(text) >= 4]
     bad = []
+
+    def found(info, content, start):
+        text = re.match(rb'[\x21-\x7e]{0,120}', content[start:]).group()
+        bad.append('%s: %s' % (info.filename,
+                               text.decode('ascii', 'replace')))
+
     with zipfile.ZipFile(path) as apk:
         for info in apk.infolist():
             content = apk.read(info)
-            for match in re.finditer(rb'/home/', content):
+            for match in re.finditer(HOME_FOLDERS, content):
                 if not content.startswith(ALLOWED_HOME, match.start()):
-                    text = re.match(rb'[\x21-\x7e]{0,120}',
-                                    content[match.start():]).group()
-                    bad.append('%s: %s' % (info.filename,
-                                           text.decode('ascii')))
+                    found(info, content, match.start())
+            for word in words:
+                start = content.find(word)
+                if start >= 0:
+                    found(info, content, start)
     if bad:
-        print('names a home folder other than %s:'
+        print('names a home folder other than %s, or this computer:'
               % ALLOWED_HOME.decode(), file=sys.stderr)
         for line in sorted(set(bad)):
             print('  ' + line, file=sys.stderr)
@@ -174,7 +186,9 @@ def main(argv):
         'only-signature-added': (only_signature_added, 2),
     }
     if len(argv) < 2 or argv[1] not in commands \
-            or len(argv) - 2 != commands[argv[1]][1]:
+            or len(argv) - 2 < commands[argv[1]][1] \
+            or (argv[1] != 'home-paths'
+                and len(argv) - 2 != commands[argv[1]][1]):
         print(__doc__, file=sys.stderr)
         return 2
     function, _ = commands[argv[1]]

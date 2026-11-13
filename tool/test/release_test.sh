@@ -155,6 +155,18 @@ expect "paths in /home/vagrant/ are fine" 0 ""
 run "" python3 -I tool/apk_check.py home-paths "$tmp/leak.apk"
 expect "a path in another home folder fails" 1 \
   "lib/x86_64/libapp.so: /home/someone/code/app/.dart_tool"
+for home in /var/home/someone /Users/someone /root; do
+  make_apk "$tmp/other-home.apk" "file://$home/app/main.dart"
+  run "" python3 -I tool/apk_check.py home-paths "$tmp/other-home.apk"
+  expect "a path in $home fails too" 1 "libapp.so: $home/app/main.dart"
+done
+make_apk "$tmp/names.apk" "built on buildhost7 by abc"
+run "" python3 -I tool/apk_check.py home-paths "$tmp/names.apk" buildhost7
+expect "a text it is given fails" 1 "libapp.so: buildhost7"
+run "" python3 -I tool/apk_check.py home-paths "$tmp/names.apk" abc
+expect "... unless it is shorter than 4 characters" 0 ""
+run "" python3 -I tool/apk_check.py home-paths
+expect "home-paths without an APK fails" 2 "apk_check.py home-paths APK"
 run "" python3 -I tool/apk_check.py only-signature-added "$tmp/clean.apk" "$tmp/clean.apk"
 expect "an unsigned APK isn't a signed one" 1 "has no APK signing block"
 run "" python3 -I tool/apk_check.py only-signature-added "$tmp/blocks.apk" "$tmp/clean.apk"
@@ -217,6 +229,13 @@ run "" env ANDROID_USER_HOME="$tmp/android" bash -c \
   "source tool/check_lib.sh; source tool/release_lib.sh; debug_sign '$tmp/clean.apk' '$tmp/debug.apk' &&
    apksigner_ verify --print-certs '$tmp/debug.apk'"
 expect "debug signing signs with the debug key" 0 "CN=Android Debug"
+# (A home folder without one, so no other debug key can stand in.)
+mkdir -p "$tmp/prefs-root" "$tmp/no-home"
+cp -r "$tmp/android" "$tmp/prefs-root/.android"
+run "" env -u ANDROID_USER_HOME HOME="$tmp/no-home" \
+  ANDROID_PREFS_ROOT="$tmp/prefs-root" bash -c \
+  "source tool/check_lib.sh; source tool/release_lib.sh; debug_sign '$tmp/clean.apk' '$tmp/debug2.apk' && echo signed"
+expect "... also from ANDROID_PREFS_ROOT" 0 "signed"
 
 # --- tool/debug_sign.sh
 cp "$tmp/clean.apk" "$tmp/app-release.apk"
@@ -243,6 +262,28 @@ check "... which is left as it was" \
 run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
   "$tmp/app-release.apk"
 expect "debug_sign.sh won't replace an earlier copy" 1 "already exists"
+
+# --- release_lib.sh: place_release
+mkdir -p "$tmp/place"
+place() {
+  run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; place_release '$1' '$tmp/place/app-1.0-unsigned.apk'"
+}
+place "$tmp/clean.apk"
+expect "place_release: a new build goes in" 0 "Built $tmp/place/app-1.0-unsigned.apk"
+check "... as the same file" cmp "$tmp/clean.apk" "$tmp/place/app-1.0-unsigned.apk"
+place "$tmp/clean.apk"
+expect "place_release: the same build again is kept" 0 "The same file as"
+place "$tmp/leak.apk"
+expect "place_release: another build stops" 1 "isn't the same file as"
+check "... leaving the first one" cmp "$tmp/clean.apk" "$tmp/place/app-1.0-unsigned.apk"
+cp "$tmp/app-release-debug-signed.apk" "$tmp/place/app-1.0.apk"
+place "$tmp/clean.apk"
+expect "place_release: a signed APK of this build is fine" 0 "The same file as"
+rm "$tmp/place/app-1.0-unsigned.apk"
+place "$tmp/leak.apk"
+expect "place_release: a signed APK of another build stops" 1 \
+  "isn't this build signed"
+check "... and nothing goes in" test ! -e "$tmp/place/app-1.0-unsigned.apk"
 
 # --- release_lib.sh: apksigner_ allows native access only on Java 17 and
 # newer. A stand-in java says it is $SPEC and rejects that option.
@@ -313,6 +354,9 @@ else
   failures=$((failures + 1))
 fi
 
+run "$PW\n$PW\n" tool/make_release_key.sh inside.p12
+expect "won't put a key in the repository" 1 "is in the repository"
+check "... and makes none there" test ! -e inside.p12
 run "$PW\n$PW\n" tool/make_release_key.sh "$tmp/second.p12"
 expect "won't make a second key once one is pinned" 1 "already holds"
 check "... and makes no keystore" test ! -e "$tmp/second.p12"

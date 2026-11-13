@@ -1,8 +1,9 @@
 # shellcheck shell=bash
-# Shared by tool/check_build_tools.sh and tool/check_flutter_release.sh;
+# Shared by the scripts in tool/ (the checks of the build tools and of
+# Flutter's releases, and the release scripts, with tool/release_lib.sh);
 # source it from the repository's root.
 
-# Both need bash 4.4 or newer (empty arrays under set -u, associative
+# They need bash 4.4 or newer (empty arrays under set -u, associative
 # arrays).
 if ((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 404)); then
   echo "error: this needs bash 4.4 or newer (this is $BASH_VERSION)" >&2

@@ -110,7 +110,8 @@ flutter_version="$(cd "$work/src" && ci_flutter_version)" ||
   fail "couldn't read FLUTTER_VERSION from the commit's .github/workflows/dart.yml"
 java_wanted="$(cd "$work/src" && ci_java_version)" ||
   fail "couldn't read JAVA_VERSION from the commit's .github/workflows/dart.yml"
-java_found="$(java_version "$JAVA_HOME/bin/java")"
+java_found="$(java_version "$JAVA_HOME/bin/java")" ||
+  fail "couldn't run $JAVA_HOME/bin/java"
 [[ "$java_found" == "$java_wanted" ]] ||
   fail "JAVA_HOME is Java ${java_found:-unknown}; this commit is built with" \
        "Java $java_wanted (JAVA_VERSION in .github/workflows/dart.yml)"
@@ -133,11 +134,13 @@ fi
 [[ "$(git -C "$flutter_sdk" rev-parse --show-toplevel 2>/dev/null)" == \
    "$(cd "$flutter_sdk" 2>/dev/null && pwd -P)" ]] ||
   fail "$flutter_sdk isn't a git checkout of Flutter"
-found="$(git -C "$flutter_sdk" tag --points-at HEAD)"
+found="$(git -C "$flutter_sdk" tag --points-at HEAD)" ||
+  fail "couldn't read Flutter's tags in $flutter_sdk"
 grep -qxF "$flutter_version" <<<"$found" ||
   fail "Flutter in $flutter_sdk is '$(paste -sd ' ' <<<"${found:-not a release}")'," \
        "not $flutter_version"
-branch="$(git -C "$flutter_sdk" rev-parse --abbrev-ref HEAD)"
+branch="$(git -C "$flutter_sdk" rev-parse --abbrev-ref HEAD)" ||
+  fail "couldn't read Flutter's branch in $flutter_sdk"
 [[ "$branch" == stable ]] ||
   fail "Flutter in $flutter_sdk is on '$branch', not on a branch named" \
        "stable (git -C $flutter_sdk checkout -B stable)"
@@ -193,23 +196,6 @@ if is_signed "$apk"; then
   fail "the APK is signed: release builds must be unsigned" \
        "(android/app/build.gradle.kts)"
 fi
-apk_check home-paths "$apk" || fail "the APK names a home folder"
-
-mkdir -p "$DIST_DIR"
-signed="${out%-unsigned.apk}.apk"
-if [[ -e "$signed" ]]; then
-  apk_check only-signature-added "$signed" "$apk" ||
-    fail "$signed, already there, isn't this build signed;" \
-         "move it and $out away first"
-fi
-if [[ -e "$out" ]]; then
-  apk_check same "$out" "$apk" ||
-    fail "this build isn't the same file as the $out already there;" \
-         "move that away first"
-  echo "== The same file as the $out already there"
-else
-  cp "$apk" "$out.partial"
-  mv "$out.partial" "$out"
-  echo "== Built $out"
-fi
+check_home_paths "$apk"
+place_release "$apk" "$out"
 sha256sum "$out"
