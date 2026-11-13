@@ -101,9 +101,7 @@ class FlutterContactsGateway implements ContactsGateway {
 ///   and the app's activity is paused either way), so the app then offers
 ///   the settings once when it needn't have, which does no harm.
 ///
-/// This is Android's behaviour. (On iOS the plugin reports "permanently
-/// denied" after the first refusal, and restricted and limited exist; the
-/// app doesn't run there for now.)
+/// This is Android's behaviour (the app runs only on Android).
 PermissionAnswer permissionAnswer(
         {required PermissionStatus before, required PermissionStatus after}) =>
     switch (after) {

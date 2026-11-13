@@ -4,7 +4,7 @@ Android phone app that creates fake contacts, which will be stored on your smart
 
 Nothing about these fake contacts will interfere with your normal use of your phone or your real contacts.
 
-Only Android is supported.  The source still has an `ios/` folder, but don't build the app for iOS: there, "Create" adds the contacts but can't record them (it warns that they must be deleted by hand), and "Delete" then removes nothing.  On an iPhone the contacts usually sync to iCloud, so they would end up on all of your Apple devices.
+Only Android is supported, because the app keeps track of the contacts it created by their Android contact IDs.
 
 The app is available through F-Droid.
 
