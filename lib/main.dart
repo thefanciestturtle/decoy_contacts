@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import 'app_info.dart';
 import 'app_theme.dart';
 import 'contact_actions.dart';
 import 'contacts_gateway.dart';
@@ -37,7 +38,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
 
     return MaterialApp(
-      title: 'Fake Contacts',
+      title: kAppName,
       // Light or dark, as the system is set.
       theme: appTheme(Brightness.light),
       darkTheme: appTheme(Brightness.dark),
@@ -45,7 +46,7 @@ class MyApp extends StatelessWidget {
       // or end (a D-pad has no Tab).
       builder: (context, child) => ArrowsLeaveTextFields(child: child!),
       home: MyHomePage(
-          title: 'Fake Contacts',
+          title: kAppName,
           contacts: contacts,
           ledgerStore: ledgerStore,
           createChunkSize: createChunkSize,

@@ -151,9 +151,9 @@ expect() {
 expect "up to date: nothing to do" 3.50.0 3.50.0 0 "Nothing to do." ""
 grep -qx "repo " "$tmp/case$case_number/gh.log" ||
   { echo "FAIL: GH_REPO without a remote: $(grep ^repo "$tmp/case$case_number/gh.log")"; failures=$((failures + 1)); }
-ORIGIN=https://github.com/someone/fake_contacts.git expect \
+ORIGIN=https://github.com/someone/decoy_contacts.git expect \
   "the repository is origin's" 3.50.0 3.50.0 0 "Nothing to do." ""
-grep -qx "repo someone/fake_contacts" "$tmp/case$case_number/gh.log" ||
+grep -qx "repo someone/decoy_contacts" "$tmp/case$case_number/gh.log" ||
   { echo "FAIL: GH_REPO from origin: $(grep ^repo "$tmp/case$case_number/gh.log")"; failures=$((failures + 1)); }
 [[ "$(cat "$tmp/case$case_number/curl.log")" == "$RELEASES" ]] ||
   { echo "FAIL: the list's URL: $(cat "$tmp/case$case_number/curl.log")"; failures=$((failures + 1)); }

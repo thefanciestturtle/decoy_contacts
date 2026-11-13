@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:fake_contacts/fake_contacts_core.dart';
+import 'package:decoy_contacts/fake_contacts_core.dart';
 
 /// The ledger entry for a fake made with the default templates.
 LedgerEntry fake(String first, String last) =>

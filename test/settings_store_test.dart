@@ -1,6 +1,6 @@
-import 'package:fake_contacts/app_log.dart';
-import 'package:fake_contacts/fake_contacts_core.dart';
-import 'package:fake_contacts/settings_store.dart';
+import 'package:decoy_contacts/app_log.dart';
+import 'package:decoy_contacts/fake_contacts_core.dart';
+import 'package:decoy_contacts/settings_store.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';

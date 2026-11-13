@@ -1,4 +1,4 @@
-name: fake_contacts
+name: decoy_contacts
 description: Create fake phone contacts to do data-poisoning
 
 # The following line prevents the package from being accidentally published to

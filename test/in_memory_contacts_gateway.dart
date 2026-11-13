@@ -1,4 +1,4 @@
-import 'package:fake_contacts/contacts_gateway.dart';
+import 'package:decoy_contacts/contacts_gateway.dart';
 
 /// One raw contact: a single source's data for a contact.
 class _Raw {

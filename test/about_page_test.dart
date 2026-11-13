@@ -4,9 +4,9 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:fake_contacts/about_page.dart';
-import 'package:fake_contacts/app_log.dart';
-import 'package:fake_contacts/app_theme.dart';
+import 'package:decoy_contacts/about_page.dart';
+import 'package:decoy_contacts/app_log.dart';
+import 'package:decoy_contacts/app_theme.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -139,9 +139,9 @@ void main() {
     // (Android needs the level: without it, no heading.)
     int headingLevel(String text) =>
         tester.getSemantics(find.text(text)).getSemanticsData().headingLevel;
-    expect(tester.getSemantics(find.text('Fake Contacts')),
-        isSemantics(label: 'Fake Contacts', isHeader: true));
-    expect(headingLevel('Fake Contacts'), 1);
+    expect(tester.getSemantics(find.text('Decoy Contacts')),
+        isSemantics(label: 'Decoy Contacts', isHeader: true));
+    expect(headingLevel('Decoy Contacts'), 1);
     expect(kAboutSections.map((s) => s.$1), [
       'What it does',
       'Create and Delete',

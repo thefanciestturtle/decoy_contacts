@@ -1,6 +1,6 @@
-import 'package:fake_contacts/fake_contacts_core.dart';
-import 'package:fake_contacts/input_checks.dart';
-import 'package:fake_contacts/settings_store.dart';
+import 'package:decoy_contacts/fake_contacts_core.dart';
+import 'package:decoy_contacts/input_checks.dart';
+import 'package:decoy_contacts/settings_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const String kNoN = 'There is no n, so every contact gets the same number.';

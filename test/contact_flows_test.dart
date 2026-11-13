@@ -5,17 +5,17 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' show Tristate;
 
-import 'package:fake_contacts/about_page.dart' show AboutPage, kAppVersion;
-import 'package:fake_contacts/app_log.dart';
-import 'package:fake_contacts/app_theme.dart' show FocusRing, RenderFocusRing;
-import 'package:fake_contacts/contact_actions.dart'
+import 'package:decoy_contacts/about_page.dart' show AboutPage, kAppVersion;
+import 'package:decoy_contacts/app_log.dart';
+import 'package:decoy_contacts/app_theme.dart' show FocusRing, RenderFocusRing;
+import 'package:decoy_contacts/contact_actions.dart'
     show kCreateChunkSize, kDeleteChunkSize;
-import 'package:fake_contacts/contacts_gateway.dart';
-import 'package:fake_contacts/fake_contacts_core.dart';
-import 'package:fake_contacts/home_page.dart' show kSaveDelay;
-import 'package:fake_contacts/input_checks.dart' show phoneTemplateWarning;
-import 'package:fake_contacts/main.dart';
-import 'package:fake_contacts/settings_store.dart';
+import 'package:decoy_contacts/contacts_gateway.dart';
+import 'package:decoy_contacts/fake_contacts_core.dart';
+import 'package:decoy_contacts/home_page.dart' show kSaveDelay;
+import 'package:decoy_contacts/input_checks.dart' show phoneTemplateWarning;
+import 'package:decoy_contacts/main.dart';
+import 'package:decoy_contacts/settings_store.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1048,7 +1048,7 @@ void main() {
       await tapCreate(tester);
 
       expect(logged.single,
-          startsWith('Fake Contacts: _createAllContacts, stopped after 2 of 4:'
+          startsWith('Decoy Contacts: _createAllContacts, stopped after 2 of 4:'
               ' Exception: provider gone\n'));
       expect(logged.single, contains('InMemoryContactsGateway.createAll'));
     });

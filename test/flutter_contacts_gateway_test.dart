@@ -1,5 +1,5 @@
-import 'package:fake_contacts/contacts_gateway.dart';
-import 'package:fake_contacts/flutter_contacts_gateway.dart';
+import 'package:decoy_contacts/contacts_gateway.dart';
+import 'package:decoy_contacts/flutter_contacts_gateway.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:flutter_test/flutter_test.dart';
