@@ -56,11 +56,14 @@ verified="$(apksigner_ verify --verbose --print-certs "$partial" 2>&1)" ||
   fail "the signed APK doesn't verify:"$'\n'"$verified"
 signers="$(sed -n 's/^Number of signers: //p' <<<"$verified")"
 [[ "$signers" == 1 ]] || fail "the signed APK has ${signers:-no} signers, not 1"
-got="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$verified")"
+# Each signer's certificate, once ("Signer #1 certificate SHA-256 digest:"
+# up to build-tools 36, "V3.0 Signer: certificate SHA-256 digest:" from 37).
+got="$(sed -n 's/^.*[Ss]igner.* certificate SHA-256 digest: \([0-9a-f]\{64\}\)$/\1/p' \
+  <<<"$verified" | sort -u)"
 [[ "$got" == "$want" ]] ||
   fail "the key in $keystore isn't the release key: its certificate's" \
-       "SHA-256 fingerprint is ${got:-unknown}, the release key's is $want" \
-       "($RELEASE_CERT_FILE)"
+       "SHA-256 fingerprint is $(paste -sd ' ' <<<"${got:-unknown}")," \
+       "the release key's is $want ($RELEASE_CERT_FILE)"
 blocks="$(apk_check signature "$partial")" ||
   fail "couldn't read the signed APK"
 blocks="$(tr '\n' ' ' <<<"$blocks")"
