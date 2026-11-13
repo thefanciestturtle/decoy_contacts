@@ -141,22 +141,6 @@ void main() {
     expect(prefs.getString('sPhoneNumberTemplate'), kDefaultPhoneTemplate);
   });
 
-  testWidgets('Old +213 default phone template is migrated',
-      (WidgetTester tester) async {
-    SharedPreferences.setMockInitialValues({
-      'sListOfLastNames': 'Zen',
-      'sListOfFirstNames': 'Zoe',
-      'sPhoneNumberTemplate': kLegacyDefaultPhoneTemplate,
-      'sEmailAddressTemplate': kDefaultEmailTemplate,
-    });
-    await pumpMyApp(tester);
-    await tester.pumpAndSettle();
-
-    expect(find.text(kDefaultPhoneTemplate), findsOneWidget);
-    final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getString('sPhoneNumberTemplate'), kDefaultPhoneTemplate);
-  });
-
   testWidgets('A customised phone template is left alone',
       (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({
@@ -169,6 +153,26 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('+15555550nnn'), findsOneWidget);
+  });
+
+  testWidgets("Fake Contacts 1.8's default phone template is kept like any "
+      'other, with no warning', (WidgetTester tester) async {
+    // In Algeria's country code (+213); the app doesn't warn about real
+    // number ranges.
+    SharedPreferences.setMockInitialValues({
+      'sListOfLastNames': 'Zen',
+      'sListOfFirstNames': 'Zoe',
+      'sPhoneNumberTemplate': '+2134567nnnn',
+      'sEmailAddressTemplate': kDefaultEmailTemplate,
+    });
+    await pumpMyApp(tester);
+    await tester.pumpAndSettle();
+
+    expect(find.text('+2134567nnnn'), findsOneWidget);
+    final field = find.byKey(const Key('PhoneNumberTemplate'));
+    expect(tester.widget<TextField>(field).decoration!.helper, isNull);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('sPhoneNumberTemplate'), '+2134567nnnn');
   });
 
   testWidgets('Edits are saved once typing pauses, not on every keystroke',
@@ -686,7 +690,8 @@ void main() {
         'sPhoneNumberTemplate': kDefaultPhoneTemplate,
         'sEmailAddressTemplate': kDefaultEmailTemplate,
         // So the status line has to read the address book once.
-        kLedgerPrefsKey: '{"1": "Zoe Zen"}',
+        kLedgerPrefsKey:
+            '{"1": {"name": "Zoe Zen", "phone": "", "email": ""}}',
       });
       final book = InMemoryContactsGateway()..add('Zoe Zen');
       await pumpMyApp(tester, MyApp(contacts: book));

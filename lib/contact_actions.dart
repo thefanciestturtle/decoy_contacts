@@ -163,9 +163,8 @@ SettingsPreview previewSettings(Settings settings) {
   );
 }
 
-/// [entryFor] always fills in the phone number and email address.
 FakeSample _sampleOf(LedgerEntry entry) =>
-    (name: entry.name, phone: entry.phone!, email: entry.email!);
+    (name: entry.name, phone: entry.phone, email: entry.email);
 
 /// What Create would do right now, worked out without changing anything.
 class CreatePreview {
@@ -260,7 +259,7 @@ Future<_CreatePlan> _planCreate(
       entryFor(n, settings.phoneTemplate, settings.emailTemplate);
   final toCreate = namesToCreate(wanted, ledger, before,
       existingFingerprints: existingFingerprints,
-      fingerprintOf: (n) => entryOf(n).fingerprint!);
+      fingerprintOf: (n) => entryOf(n).fingerprint);
   return _CreatePlan(before, stored, ledger, left, wanted.length,
       [for (final n in toCreate) (n, entryOf(n))]);
 }
@@ -363,8 +362,8 @@ Future<CreateResult?> createFakeContacts(
         NewContact(
           first: name.first,
           last: name.last,
-          phone: entry.phone!,
-          email: entry.email!,
+          phone: entry.phone,
+          email: entry.email,
         ),
     ];
     // From here on, contacts may have been created, so an error must not
@@ -516,17 +515,13 @@ Future<({Map<String, LedgerEntry> created, Set<String> present})?>
   }
 }
 
-/// What Delete would do, and the ledger with details filled in for old
-/// name-only entries.
+/// What Delete would do, and the ledger it was worked out from.
 class _DeleteCheck {
   final DeletePlan plan;
 
   /// The stored ledger (not pruned), with the fakes of an unfinished Create
-  /// added (see [_withPendingResolved]) and old name-only entries given the
-  /// details they were checked against; how many of those got any; and
-  /// whether there was an unfinished Create.
-  final Ledger withDetails;
-  final int detailsFilledIn;
+  /// added (see [_withPendingResolved]); and whether there was one.
+  final Ledger ledger;
   final bool pendingResolved;
 
   /// A pending record that couldn't be resolved yet, which saves keep.
@@ -535,41 +530,23 @@ class _DeleteCheck {
   /// The address book the plan was made from.
   final AddressBook book;
 
-  _DeleteCheck(this.plan, this.withDetails, this.detailsFilledIn,
-      this.pendingResolved, this.pendingLeft, this.book);
-
-  /// Whether [withDetails] has anything the stored ledger doesn't.
-  bool get changedLedger => detailsFilledIn > 0 || pendingResolved;
+  _DeleteCheck(this.plan, this.ledger, this.pendingResolved, this.pendingLeft,
+      this.book);
 }
 
-int _nameOnlyEntries(Ledger ledger) =>
-    ledger.entries.values.where((e) => !e.hasDetails).length;
-
-/// Plans a Delete against the [stored] ledger (with the fakes of an
-/// unfinished Create added; see [_withPendingResolved]). Old name-only
-/// entries get the details the current [settings] would give a fake with
-/// that name; with no [settings] they stay name-only, so they are never
-/// deleted or counted.
+/// Plans a Delete against the [loaded] ledger, with the fakes of an
+/// unfinished Create added (see [_withPendingResolved]). Only the ledger and
+/// the address book decide it, never the settings.
 Future<_DeleteCheck> _planDelete(ContactsGateway contacts,
-    ({Ledger ledger, PendingCreate? pending}) loaded, Settings? settings) async {
+    ({Ledger ledger, PendingCreate? pending}) loaded) async {
   final everyone = await contacts.getAll();
   final book = addressBookOf(everyone);
   final fingerprintsByContact = fingerprintsByContactOf(everyone);
   final (ledger: stored, :resolved, :left) =
       _withPendingResolved(loaded, everyone, fingerprintsByContact);
-  final nameOnly = _nameOnlyEntries(stored);
-  final current = (nameOnly == 0 || settings == null)
-      ? const <String, LedgerEntry>{}
-      : {
-          for (final n in allCombinations(settings.firstNames, settings.lastNames))
-            n.displayName:
-                entryFor(n, settings.phoneTemplate, settings.emailTemplate),
-        };
-  final withDetails = stored.withDetailsForNameOnly((name) => current[name]);
-  final plan = planDelete(
-      withDetails.prunedTo(allRawIds(book)), book, fingerprintsByContact);
-  return _DeleteCheck(plan, withDetails,
-      nameOnly - _nameOnlyEntries(withDetails), resolved, left, book);
+  final plan =
+      planDelete(stored.prunedTo(allRawIds(book)), book, fingerprintsByContact);
+  return _DeleteCheck(plan, stored, resolved, left, book);
 }
 
 DeletePreview _previewOf(DeletePlan plan) => DeletePreview(
@@ -580,24 +557,22 @@ DeletePreview _previewOf(DeletePlan plan) => DeletePreview(
 
 /// Works out what [deleteFakeContacts] would do with the same arguments.
 ///
-/// Deletes nothing, and changes the ledger in two ways only, the same ways
-/// Delete does. Old name-only entries are saved with the phone and email
-/// they were checked against. That happens even if the user then cancels or
-/// there is nothing to delete, so they are never checked again against
-/// different settings. (Otherwise, after the templates were changed to give
-/// exactly a real contact's details, Delete would offer to delete it.) A
-/// wrong guess only means that contact is always left alone. And the fakes
-/// of a Create that was cut short are recorded (see [createdByPending]).
+/// Deletes nothing, and changes the ledger in one way only, as Delete does:
+/// the fakes of a Create that was cut short are recorded (see
+/// [createdByPending]), even if the user then cancels or there is nothing
+/// to delete. (Like every save, that one leaves out entries it can't read:
+/// see [Ledger.decode].)
 Future<DeletePreview> previewDelete(
-    ContactsGateway contacts, LedgerStore ledgerStore, Settings settings) async {
-  final check = await _planDelete(
-      contacts, await ledgerStore.loadWithPending(), settings);
-  if (check.changedLedger) {
+    ContactsGateway contacts, LedgerStore ledgerStore) async {
+  final check =
+      await _planDelete(contacts, await ledgerStore.loadWithPending());
+  if (check.pendingResolved) {
     try {
-      await ledgerStore.save(check.withDetails, pending: check.pendingLeft);
+      await ledgerStore.save(check.ledger, pending: check.pendingLeft);
     } catch (e, st) {
       // Not written (say, with the storage full), but kept in memory while
-      // the app stays open, so Delete checks them against the same details.
+      // the app stays open; and on disk, the pending record is still there
+      // for Delete to resolve again.
       logError("previewDelete, saving the ledger", e, st);
     }
   }
@@ -607,10 +582,9 @@ Future<DeletePreview> previewDelete(
 /// What Delete would find, for the status line: [DeletePreview.toDelete] is
 /// how many fakes are still in the address book, counting only those this
 /// app can confirm. Not counted, but in the skipped counts: entries that no
-/// longer match what was created, fakes merged into another contact (their
-/// details can't be checked, and the raw contact may not be a fake at all;
-/// see [planDelete]), and old name-only entries (no guessing from the
-/// settings here, so the count doesn't depend on what is being typed).
+/// longer match what was created, and fakes merged into another contact
+/// (their details can't be checked, and the raw contact may not be a fake
+/// at all; see [planDelete]).
 ///
 /// The fakes of a Create that was cut short are counted too (see
 /// [createdByPending]), but only recorded by the next Create or Delete.
@@ -623,7 +597,7 @@ Future<DeletePreview> countFakeContacts(
   if (loaded.ledger.isEmpty && loaded.pending == null) {
     return const DeletePreview(toDelete: 0, skippedMerged: 0, skippedChanged: 0);
   }
-  return _previewOf((await _planDelete(contacts, loaded, null)).plan);
+  return _previewOf((await _planDelete(contacts, loaded)).plan);
 }
 
 /// Deletes the fake contacts this app created and recorded in the ledger.
@@ -648,13 +622,13 @@ Future<DeletePreview> countFakeContacts(
 /// fails, that is logged: entries whose raw contacts are gone do no harm.
 /// An error before it starts deleting is thrown as it is.
 Future<DeleteResult?> deleteFakeContacts(
-    ContactsGateway contacts, LedgerStore ledgerStore, Settings settings,
+    ContactsGateway contacts, LedgerStore ledgerStore,
     {int? atMost,
     int chunkSize = kDeleteChunkSize,
     ProgressCallback? onProgress,
     bool Function()? stopRequested}) async {
-  final check = await _planDelete(
-      contacts, await ledgerStore.loadWithPending(), settings);
+  final check =
+      await _planDelete(contacts, await ledgerStore.loadWithPending());
   final plan = check.plan;
   final total = plan.rawContactsDeleted;
   if (atMost != null && total > atMost) {
@@ -704,7 +678,7 @@ Future<DeleteResult?> deleteFakeContacts(
       ...plan.remaining.entries,
       for (final contactId in ids.skip(deletedUpTo))
         for (final raw in check.book[contactId]!)
-          raw: check.withDetails.entries[raw]!,
+          raw: check.ledger.entries[raw]!,
     }), pending: check.pendingLeft);
   } catch (e, st) {
     logError("deleteFakeContacts, saving the ledger", e, st);

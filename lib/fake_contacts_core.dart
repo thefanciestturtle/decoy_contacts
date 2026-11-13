@@ -7,17 +7,13 @@ import 'dart:convert';
 /// These numbers are never assigned to real subscribers.
 const String kDefaultPhoneTemplate = '+447700900nnn';
 
-/// Default used up to v1.8. "+213..." is Algeria's country code, so these
-/// numbers could belong to real people. Migrated to [kDefaultPhoneTemplate].
-const String kLegacyDefaultPhoneTemplate = '+2134567nnnn';
-
 const String kDefaultEmailTemplate = 'FIRST.LAST@example.com';
 
 /// SharedPreferences key holding the ledger of raw contacts this app created.
 const String kLedgerPrefsKey = 'fakeRawContactLedgerV1';
 
 /// Where in the ledger's JSON a [PendingCreate] is kept. Not a number, so
-/// never a raw contact ID; older versions skip it (it has no name).
+/// never a raw contact ID.
 const String kPendingCreateKey = 'pendingCreate';
 
 /// Splits a comma-separated list of names, trimming whitespace and dropping
@@ -103,32 +99,27 @@ class LedgerEntry {
   final String name;
 
   /// The phone number and email address the contact was created with ('' if
-  /// none). Both are null for entries recorded before these were stored.
-  final String? phone;
-  final String? email;
+  /// none).
+  final String phone;
+  final String email;
 
   const LedgerEntry(this.name, this.phone, this.email);
 
-  /// An entry recorded by an older version, which stored only the name.
-  const LedgerEntry.nameOnly(this.name)
-      : phone = null,
-        email = null;
-
-  bool get hasDetails => phone != null && email != null;
-
-  /// Fingerprint the contact must still have to be deleted, or null if the
-  /// details weren't recorded.
-  String? get fingerprint =>
-      hasDetails ? contactFingerprint(name, phone!, email!) : null;
+  /// Fingerprint the contact must still have to be deleted.
+  String get fingerprint => contactFingerprint(name, phone, email);
 
   Object toJson() => {'name': name, 'phone': phone, 'email': email};
 
+  /// Null unless [json] has the name, phone and email, all as strings.
+  /// Anything else (say, an entry with only a name, as early test builds
+  /// stored them) can't be checked, so it is dropped (see [Ledger.decode]).
   static LedgerEntry? fromJson(Object? json) {
-    if (json is String) return LedgerEntry.nameOnly(json);
-    if (json is Map && json['name'] is String) {
-      final phone = json['phone'], email = json['email'];
-      return LedgerEntry(json['name'] as String, phone is String ? phone : null,
-          email is String ? email : null);
+    if (json case {
+          'name': final String name,
+          'phone': final String phone,
+          'email': final String email,
+        }) {
+      return LedgerEntry(name, phone, email);
     }
     return null;
   }
@@ -181,8 +172,11 @@ class Ledger {
         if (pending != null) kPendingCreateKey: pending.toJson(),
       });
 
-  /// Reads both the current format and the old one, which mapped each raw
-  /// contact ID straight to a name.
+  /// Reads a ledger written by [encode]. An entry it can't read (see
+  /// [LedgerEntry.fromJson]) is dropped, as unreadable JSON is, so Delete
+  /// never acts on it: its raw contact then isn't this app's, and a contact
+  /// that holds it is left alone (see [planDelete]). The next save leaves it
+  /// out.
   static Ledger decode(String? json) => decodeWithPending(json).ledger;
 
   /// [decode], and the [PendingCreate] saved with it, if any.
@@ -212,17 +206,6 @@ class Ledger {
   Ledger prunedTo(Set<String> presentRawIds) => Ledger({
         for (final e in entries.entries)
           if (presentRawIds.contains(e.key)) e.key: e.value,
-      });
-
-  /// A copy in which name-only entries from older versions get the phone and
-  /// email that [expected] says a fake with that name would have (from the
-  /// current settings), so Delete can check them. Entries it returns null for
-  /// stay name-only, and Delete leaves their contacts alone. A wrong guess
-  /// only means the contact is left alone too.
-  Ledger withDetailsForNameOnly(LedgerEntry? Function(String name) expected) =>
-      Ledger({
-        for (final e in entries.entries)
-          e.key: e.value.hasDetails ? e.value : (expected(e.value.name) ?? e.value),
       });
 }
 
@@ -322,10 +305,7 @@ Map<String, LedgerEntry> createdBeforeFailure({
   required AddressBook after,
   required Map<String, Set<String>> fingerprintsByContact,
 }) {
-  final byFingerprint = {
-    for (final e in planned)
-      if (e.fingerprint != null) e.fingerprint!: e,
-  };
+  final byFingerprint = {for (final e in planned) e.fingerprint: e};
   // Planned fingerprint -> the new contacts that have it, and new contact
   // -> its new raw contacts and the planned fingerprints it has.
   final matches = <String, List<String>>{};
@@ -379,17 +359,15 @@ class PendingCreate {
         'entries': [for (final e in entries) e.toJson()],
       };
 
-  /// Null if [json] isn't one (entries without details are dropped: they
-  /// couldn't be matched).
+  /// Null if [json] isn't one (entries it can't read are dropped: see
+  /// [LedgerEntry.fromJson]).
   static PendingCreate? fromJson(Object? json) {
     if (json is! Map || json['entries'] is! List) return null;
     final max = json['maxRawId'];
     return PendingCreate(
       maxRawId: max is int ? max : null,
       entries: [
-        for (final e in json['entries'] as List)
-          if (LedgerEntry.fromJson(e) case final entry? when entry.hasDetails)
-            entry,
+        for (final e in json['entries'] as List) ?LedgerEntry.fromJson(e),
       ],
     );
   }
@@ -442,9 +420,8 @@ class DeletePlan {
   final int skippedMerged;
 
   /// Tracked raw contacts left alone because their contact no longer matches
-  /// what was recorded: edited since, recorded by an older version that
-  /// stored only the name, or the raw contact ID now belongs to a different
-  /// contact (for example if the ledger came from another phone).
+  /// what was recorded: edited since, or the raw contact ID now belongs to a
+  /// different contact (for example if the ledger came from another phone).
   final int skippedChanged;
 
   /// Ledger after the deletion: only the skipped entries remain.
@@ -489,9 +466,7 @@ DeletePlan planDelete(Ledger ledger, AddressBook book,
     }
     final recorded = {for (final r in tracked) ledger.entries[r]!.fingerprint};
     final actual = fingerprintsByContact[contactId] ?? const <String>{};
-    if (recorded.contains(null) ||
-        recorded.length != actual.length ||
-        !actual.containsAll(recorded)) {
+    if (recorded.length != actual.length || !actual.containsAll(recorded)) {
       skippedChanged += tracked.length;
       keep();
       return;

@@ -617,14 +617,24 @@ void main() {
   testWidgets('S1: a ledger whose raw IDs point at real contacts deletes '
       'nothing', (tester) async {
     await startWithEmptyAddressBook(tester);
+    final (fakePhone, fakeEmail) = kFakes['Zoe Zen']!;
     final real = await seed([
       ...kRealContacts,
+      // Two of a fake's name: one with another number, one with exactly
+      // the fake's details.
       (first: 'Zoe', last: 'Zen', phone: '+15555550101', email: null),
+      (first: 'Zoe', last: 'Zen', phone: fakePhone, email: fakeEmail),
     ]);
-    String rawIdOf(String name) =>
-        rawIdsOf(real.values.firstWhere((c) => c.displayName == name)).single;
+    Contact seeded(String name, [String? phone]) =>
+        real.values.firstWhere((c) =>
+            c.displayName == name &&
+            (phone == null || c.phones.any((p) => p.number == phone)));
+    String rawIdOf(String name, [String? phone]) =>
+        rawIdsOf(seeded(name, phone)).single;
     // As if the ledger came from another phone, where these raw IDs were
-    // fakes. One entry is in the old name-only format.
+    // fakes. The last entry has only a name, as early test builds stored
+    // them: it can't be checked, so it is dropped when read, and that Zoe
+    // Zen is left alone although it has exactly a fake's details.
     final ledger = {
       rawIdOf('Alice Example'): {
         'name': 'Zoe Zen',
@@ -636,14 +646,20 @@ void main() {
         'phone': '+447700900010',
         'email': 'Zach.Zen@example.com',
       },
-      rawIdOf('Zoe Zen'): 'Zoe Zen',
+      rawIdOf('Zoe Zen', '+15555550101'): {
+        'name': 'Zoe Zen',
+        'phone': fakePhone,
+        'email': fakeEmail,
+      },
+      rawIdOf('Zoe Zen', fakePhone): 'Zoe Zen',
     };
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(kLedgerPrefsKey, jsonEncode(ledger));
     await launchApp(tester);
-    // None of them counts: their contacts no longer match the ledger.
+    // None of them counts: three contacts no longer match their entries,
+    // and the name-only entry isn't read at all.
     await expectStatus(tester, 'No fake contacts this app can delete.');
-    // Counting changed nothing, not even the name-only entry.
+    // Counting changed nothing.
     expect(await storedLedger(), ledger);
 
     // Nothing to delete, so no dialog.
@@ -653,16 +669,9 @@ void main() {
         "alone.");
 
     expect(describeAll(await readAddressBook()), describeAll(real));
-    // Skipped entries stay in the ledger, and the name-only one is saved
-    // with the details it was checked against.
-    expect(await storedLedger(), {
-      ...ledger,
-      rawIdOf('Zoe Zen'): {
-        'name': 'Zoe Zen',
-        'phone': '+447700900010',
-        'email': 'Zoe.Zen@example.com',
-      },
-    });
+    // Delete itself didn't run, and its preview had nothing to record, so
+    // nothing was saved.
+    expect(await storedLedger(), ledger);
   });
 }
 

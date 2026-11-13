@@ -765,13 +765,14 @@ class _MyHomePageState extends State<MyHomePage> with WidgetsBindingObserver {
         button: _deleteFocus,
         destructive: true,
         permissionSettings: permissionSettingsConfirmation("delete"),
-        preview: (settings) =>
-            previewDelete(widget.contacts, widget.ledgerStore, settings),
+        // The ledger and the address book decide what Delete does, never
+        // the settings.
+        preview: (_) => previewDelete(widget.contacts, widget.ledgerStore),
         nothingToDo: (_, preview) =>
             preview.toDelete == 0 ? nothingToDeleteMessage(preview) : null,
         confirmation: deleteConfirmation,
-        action: (settings, preview) => deleteFakeContacts(
-            widget.contacts, widget.ledgerStore, settings,
+        action: (_, preview) => deleteFakeContacts(
+            widget.contacts, widget.ledgerStore,
             atMost: preview.toDelete,
             chunkSize: widget.deleteChunkSize,
             onProgress: _showProgress(creating: false),

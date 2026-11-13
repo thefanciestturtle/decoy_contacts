@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:decoy_contacts/fake_contacts_core.dart';
@@ -8,7 +10,7 @@ LedgerEntry fake(String first, String last) =>
 
 /// Fingerprints of a contact holding exactly what [e] recorded.
 Set<String> fingerprintsMatching(LedgerEntry e) => fingerprintsOf(e.name,
-    [if (e.phone!.isNotEmpty) e.phone!], [if (e.email!.isNotEmpty) e.email!]).toSet();
+    [if (e.phone.isNotEmpty) e.phone], [if (e.email.isNotEmpty) e.email]).toSet();
 
 void main() {
   group('parseNames', () {
@@ -28,11 +30,6 @@ void main() {
       // 'Z' = 90, 'e' = 101, 'n' = 110 -> 0, 1, 0
       expect(generatePhoneNumber('+1nnnn', 'Zen'), '+10100');
       expect(generatePhoneNumber('+1nnnn', 'Zen'), '+10100');
-    });
-
-    test('legacy default was in a real country code', () {
-      expect(kLegacyDefaultPhoneTemplate.startsWith('+213'), isTrue);
-      expect(kDefaultPhoneTemplate, isNot(kLegacyDefaultPhoneTemplate));
     });
   });
 
@@ -75,14 +72,14 @@ void main() {
       expect(e.name, 'Zoe Zen');
       expect(e.phone, generatePhoneNumber(kDefaultPhoneTemplate, 'Zen'));
       expect(e.email, 'Zoe.Zen@example.com');
-      expect(e.fingerprint, contactFingerprint('Zoe Zen', e.phone!, e.email!));
+      expect(e.fingerprint, contactFingerprint('Zoe Zen', e.phone, e.email));
     });
 
     test('empty templates give no phone or email', () {
       final e = entryFor(const FakeName('Zoe', 'Zen'), '', '');
       expect(e.phone, '');
       expect(e.email, '');
-      expect(e.fingerprint, isNotNull);
+      expect(e.fingerprint, contactFingerprint('Zoe Zen', '', ''));
     });
   });
 
@@ -92,14 +89,26 @@ void main() {
       expect(Ledger.decode(l.encode()).entries, l.entries);
     });
 
-    test('reads the old format, which stored only names', () {
-      final l = Ledger.decode('{"10":"Zoe Zen","11":"Zach Zen"}');
-      expect(l.entries, {
-        '10': const LedgerEntry.nameOnly('Zoe Zen'),
-        '11': const LedgerEntry.nameOnly('Zach Zen'),
+    test("drops entries it can't read, such as name-only ones, and keeps "
+        'the rest', () {
+      final l = Ledger.decode(jsonEncode({
+        // Only a name, as early test builds stored them, in both forms.
+        '10': 'Zoe Zen',
+        '11': {'name': 'Zach Zen', 'phone': null, 'email': null},
+        // A detail missing, or not a string.
+        '12': {'name': 'Zoe Zima', 'phone': '+1'},
+        '13': {'name': 'Zach Zima', 'phone': 1, 'email': ''},
+        '14': {'phone': '+1', 'email': ''},
+        '15': fake('Zoe', 'Zen').toJson(),
+        // Extra fields are ignored.
+        '16': {...fake('Zach', 'Zen').toJson() as Map, 'note': 1},
+      }));
+      expect(l.entries, {'15': fake('Zoe', 'Zen'), '16': fake('Zach', 'Zen')});
+      // So the next save leaves them out.
+      expect(jsonDecode(l.encode()), {
+        '15': fake('Zoe', 'Zen').toJson(),
+        '16': fake('Zach', 'Zen').toJson(),
       });
-      expect(l.entries['10']!.hasDetails, isFalse);
-      expect(l.entries['10']!.fingerprint, isNull);
     });
 
     test('decodes missing or corrupt data as empty', () {
@@ -116,8 +125,7 @@ void main() {
           maxRawId: 10, entries: [fake('Zach', 'Zen'), fake('Zoe', 'Zima')]);
       final json = l.encode(pending: pending);
 
-      // Older versions read it as they did: an entry without a name is
-      // skipped.
+      // It isn't taken for a ledger entry.
       expect(Ledger.decode(json).entries, l.entries);
       final decoded = Ledger.decodeWithPending(json);
       expect(decoded.ledger.entries, l.entries);
@@ -136,11 +144,16 @@ void main() {
       expect(pending.maxRawId, isNull);
       expect(pending.entries, [fake('Zoe', 'Zen')]);
 
-      // Entries without details can't be matched, so they are dropped.
+      // Entries it can't read are dropped.
       expect(
           PendingCreate.fromJson({
             'maxRawId': 'x',
-            'entries': ['Zoe Zen', fake('Zach', 'Zen').toJson(), 5],
+            'entries': [
+              'Zoe Zen',
+              {'name': 'Zoe Zima', 'phone': null, 'email': null},
+              fake('Zach', 'Zen').toJson(),
+              5,
+            ],
           })!
               .entries,
           [fake('Zach', 'Zen')]);
@@ -151,20 +164,6 @@ void main() {
     test('prunes raw contacts that no longer exist', () {
       final l = Ledger({'10': fake('Zoe', 'Zen'), '11': fake('Zach', 'Zen')});
       expect(l.prunedTo({'11'}).entries, {'11': fake('Zach', 'Zen')});
-    });
-
-    test('fills in name-only entries it has details for', () {
-      final l = Ledger({
-        '10': const LedgerEntry.nameOnly('Zoe Zen'),
-        '11': const LedgerEntry.nameOnly('Someone Else'),
-        '12': fake('Zach', 'Zen'),
-      }).withDetailsForNameOnly(
-          (name) => name == 'Zoe Zen' ? fake('Zoe', 'Zen') : null);
-      expect(l.entries, {
-        '10': fake('Zoe', 'Zen'),
-        '11': const LedgerEntry.nameOnly('Someone Else'),
-        '12': fake('Zach', 'Zen'),
-      });
     });
   });
 
@@ -191,7 +190,7 @@ void main() {
       expect(namesToCreate(wanted, Ledger(), book), wanted);
     });
 
-    String fp(FakeName n) => fake(n.first, n.last).fingerprint!;
+    String fp(FakeName n) => fake(n.first, n.last).fingerprint;
 
     test('skips an untracked contact identical to the fake (lost ledger)', () {
       // Same name, number and email as the fake would get, but not in the
@@ -548,24 +547,24 @@ void main() {
 
       test('is not deleted if the name differs', () {
         expectLeftAlone(fingerprintsOf(
-            'Alice Example', [zoe.phone!], [zoe.email!]).toSet());
+            'Alice Example', [zoe.phone], [zoe.email]).toSet());
       });
 
       test('is not deleted if the phone number differs', () {
         expectLeftAlone(
-            fingerprintsOf('Zoe Zen', ['+15555550101'], [zoe.email!]).toSet());
+            fingerprintsOf('Zoe Zen', ['+15555550101'], [zoe.email]).toSet());
       });
 
       test('is not deleted if the email differs', () {
         expectLeftAlone(fingerprintsOf(
-            'Zoe Zen', [zoe.phone!], ['zoe@example.org']).toSet());
+            'Zoe Zen', [zoe.phone], ['zoe@example.org']).toSet());
       });
 
       test('is not deleted if it has extra numbers or addresses', () {
         expectLeftAlone(fingerprintsOf('Zoe Zen',
-            [zoe.phone!, '+15555550101'], [zoe.email!]).toSet());
-        expectLeftAlone(fingerprintsOf('Zoe Zen', [zoe.phone!],
-            [zoe.email!, 'zoe@example.org']).toSet());
+            [zoe.phone, '+15555550101'], [zoe.email]).toSet());
+        expectLeftAlone(fingerprintsOf('Zoe Zen', [zoe.phone],
+            [zoe.email, 'zoe@example.org']).toSet());
       });
 
       test('is not deleted if it has no phone or email', () {
@@ -600,7 +599,7 @@ void main() {
       // Android shows one name for the merged contact, so Zach's fingerprint
       // can't match and nothing is deleted.
       final fps = {
-        'c20': fingerprintsOf('Zoe Zen', [zoe.phone!], [zoe.email!, zach.email!])
+        'c20': fingerprintsOf('Zoe Zen', [zoe.phone], [zoe.email, zach.email])
             .toSet(),
       };
       final plan = planDelete(ledger, book, fps);
@@ -608,31 +607,26 @@ void main() {
       expect(plan.skippedChanged, 2);
     });
 
-    test('a name-only entry from an older version is never deleted as is', () {
-      final ledger = Ledger({'20': const LedgerEntry.nameOnly('Zoe Zen')});
-      final plan = planDelete(
-          ledger, {'c20': ['20']}, {'c20': fingerprintsMatching(zoe)});
-      expect(plan.contactIdsToDelete, isEmpty);
-      expect(plan.skippedChanged, 1);
-    });
-
-    test('a name-only entry is deleted once filled in, if it matches', () {
-      final legacy = Ledger({
-        '20': const LedgerEntry.nameOnly('Zoe Zen'),
-        '7': const LedgerEntry.nameOnly('Zoe Zen'),
-      });
-      final ledger = legacy.withDetailsForNameOnly(
-          (name) => name == 'Zoe Zen' ? zoe : null);
+    test("an entry it can't read deletes nothing, even with exactly a "
+        "fake's details", () {
+      // Only a name, as early test builds stored them: raw 20 on its own,
+      // and raw 22 linked with a recorded fake, raw 21.
+      final ledger = Ledger.decode(jsonEncode({
+        '20': 'Zoe Zen',
+        '21': zach.toJson(),
+        '22': {'name': 'Zach Zen', 'phone': null, 'email': null},
+      }));
       final plan = planDelete(ledger, {
         'c20': ['20'],
-        'c7': ['7'],
+        'c21': ['21', '22'],
       }, {
         'c20': fingerprintsMatching(zoe),
-        // A real Zoe Zen at a raw ID restored from another phone.
-        'c7': fingerprintsOf('Zoe Zen', ['+15555550101'], []).toSet(),
+        'c21': fingerprintsMatching(zach),
       });
-      expect(plan.contactIdsToDelete, ['c20']);
-      expect(plan.skippedChanged, 1);
+      expect(plan.contactIdsToDelete, isEmpty);
+      // Raw 20 isn't this app's; raw 21 is, but shares its contact.
+      expect((plan.skippedMerged, plan.skippedChanged), (1, 0));
+      expect(plan.remaining.entries, {'21': zach});
     });
   });
 }

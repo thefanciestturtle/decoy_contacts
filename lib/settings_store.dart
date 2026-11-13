@@ -35,13 +35,6 @@ class Settings {
   String get phoneTemplate => phoneTemplateText.trim();
   String get emailTemplate => emailTemplateText.trim();
 
-  Settings copyWith({String? phoneTemplateText}) => Settings(
-        lastNamesText: lastNamesText,
-        firstNamesText: firstNamesText,
-        phoneTemplateText: phoneTemplateText ?? this.phoneTemplateText,
-        emailTemplateText: emailTemplateText,
-      );
-
   @override
   bool operator ==(Object other) =>
       other is Settings &&
@@ -68,33 +61,22 @@ class SettingsStore {
 
   const SettingsStore();
 
-  /// Reads the settings, filling in [Settings.defaults] on first run and
-  /// replacing the old +213 default phone template. Saves the result if
-  /// either happened.
+  /// Reads the settings as they were saved. On first run, fills in
+  /// [Settings.defaults] and saves them.
   Future<Settings> load() async {
     log("SettingsStore.load: called");
     final prefs = await SharedPreferences.getInstance();
     final String? sStoredLastNames = prefs.getString(kLastNamesKey);
-    bool bNeedsSave = false;
-    Settings settings;
     if (sStoredLastNames == null) {
-      settings = Settings.defaults;
-      bNeedsSave = true;
-    } else {
-      settings = Settings(
-        lastNamesText: sStoredLastNames,
-        firstNamesText: prefs.getString(kFirstNamesKey) ?? "",
-        phoneTemplateText: prefs.getString(kPhoneTemplateKey) ?? "",
-        emailTemplateText: prefs.getString(kEmailTemplateKey) ?? "",
-      );
+      await save(Settings.defaults);
+      return Settings.defaults;
     }
-    if (settings.phoneTemplateText == kLegacyDefaultPhoneTemplate) {
-      // old default was in Algeria's real country code (+213)
-      settings = settings.copyWith(phoneTemplateText: kDefaultPhoneTemplate);
-      bNeedsSave = true;
-    }
-    if (bNeedsSave) await save(settings);
-    return settings;
+    return Settings(
+      lastNamesText: sStoredLastNames,
+      firstNamesText: prefs.getString(kFirstNamesKey) ?? "",
+      phoneTemplateText: prefs.getString(kPhoneTemplateKey) ?? "",
+      emailTemplateText: prefs.getString(kEmailTemplateKey) ?? "",
+    );
   }
 
   /// A failed write (Android reports it as false, e.g. with the storage
