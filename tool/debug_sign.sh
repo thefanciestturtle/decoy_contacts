@@ -37,5 +37,6 @@ esac
 if is_signed "$apk"; then
   fail "$apk is already signed"
 fi
+mkdir -p "$(dirname "$out")"
 debug_sign "$apk" "$out" || fail "couldn't sign $apk with the debug key"
 echo "== Signed with the debug key: $out"

@@ -80,7 +80,9 @@ source tool/emulator_lib.sh
 echo "== Installing the app and granting the contacts permission"
 flutter build apk --debug
 # -d: also over a release build installed for testing, which has a higher
-# versionCode (one per ABI, see tool/release_lib.sh).
+# versionCode (one per ABI, see tool/release_lib.sh). (Android allows that
+# on emulator images whose system is debuggable, such as google_apis, which
+# the release smoke test needs too; not on google_apis_playstore.)
 adb_ install -r -t -d "$APK"
 adb_ shell pm grant "$APP_ID" android.permission.READ_CONTACTS
 adb_ shell pm grant "$APP_ID" android.permission.WRITE_CONTACTS

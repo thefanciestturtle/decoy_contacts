@@ -132,6 +132,9 @@ for unsigned in "${apks[@]}"; do
     rm -f "${placed[@]}"
     fail "couldn't write $signed ($error); none of the APKs was written"
   fi
+  # (Not left as a second name of the placed APK, which a later apksigner
+  # run would write into.)
+  rm -f "$signed.partial"
   placed+=("$signed")
 done
 for signed in "${placed[@]}"; do

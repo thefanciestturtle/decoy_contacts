@@ -79,13 +79,8 @@ needs_signing=true
 if [[ $# -ge 1 ]]; then
   apk="$(absolute_path "$1" "$CALLER_DIR")"
   [[ -f "$apk" ]] || fail "no APK at $apk"
-  # One with native code must have it for the emulator's ABI, or it would
-  # test another ABI's build, or not install at all.
-  found="$(apk_check abis "$apk")" || fail "couldn't read $apk as an APK"
-  if [[ -n "$found" ]] && ! grep -qxF -- "$abi" <<<"$found"; then
-    fail "$apk has native code for $(paste -sd ' ' <<<"$found")," \
-         "not for the emulator's ABI, '${abi:-unknown}'"
-  fi
+  # One with native code must have it for the emulator's own ABI.
+  check_apk_abi "$apk" "$abi"
   if is_signed "$apk"; then needs_signing=false; fi
 fi
 if $needs_signing; then

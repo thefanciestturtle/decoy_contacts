@@ -317,6 +317,35 @@ pubspec 'version: 1.0/../x+5\n' "... say one that would make a path" "none"
 pubspec 'version: 2.0.0+5#x\n' "a # with no space before it isn't a comment" "none"
 pubspec 'version: "2.0.0+5 #x"\n' "... nor one inside quotes" "none"
 
+# --- release_lib.sh: the release ABIs, each with a code and a platform
+# (and no code or platform for another).
+# shellcheck disable=SC2016 # (the inner bash expands it)
+run "" bash -c 'source tool/check_lib.sh; source tool/release_lib.sh
+  for abi in "${RELEASE_ABIS[@]}"; do
+    [[ -n "${ABI_CODE[$abi]:-}" && -n "${ABI_PLATFORM[$abi]:-}" ]] || echo "missing: $abi"
+  done
+  for abi in "${!ABI_CODE[@]}" "${!ABI_PLATFORM[@]}"; do
+    is_release_abi "$abi" || echo "extra: $abi"
+  done
+  echo "codes: $(printf "%s\n" "${ABI_CODE[@]}" | sort -u | wc -l) of ${#RELEASE_ABIS[@]}"'
+expect_exact "the release ABIs each have their own code and a platform" 0 "codes: 3 of 3"
+
+# --- release_lib.sh: check_apk_abi
+check_abi() {
+  run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; check_apk_abi '$1' '$2' && echo fine"
+}
+check_abi "$tmp/clean.apk" x86_64
+expect "check_apk_abi: an APK with native code for the ABI passes" 0 fine
+check_abi "$tmp/clean.apk" arm64-v8a
+expect "check_apk_abi: one without fails" 1 \
+  "$tmp/clean.apk has native code for x86_64, not for arm64-v8a"
+check_abi "$tmp/fat.apk" arm64-v8a
+expect "check_apk_abi: a fat APK with it passes" 0 fine
+check_abi "$tmp/base.apk" arm64-v8a
+expect "check_apk_abi: an APK without native code passes" 0 fine
+check_abi "$tmp/clean.apk" ""
+expect "check_apk_abi: an unknown ABI fails" 1 "not for an unknown ABI"
+
 # --- release_lib.sh: check_release_apk, on APKs made with aapt2
 # release_apk OUT CODE NAME TEXT [ABI...] : an APK with versionCode CODE
 # and versionName NAME, holding TEXT in a native library for each ABI
@@ -419,6 +448,10 @@ check "... and writes nothing there" test ! -e "$repo/dist/debug-test-unsigned-d
 run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
   dist/debug-test-unsigned.apk "$tmp/debug-test.apk"
 expect "... but signs a copy elsewhere" 0 "Signed with the debug key: $tmp/debug-test.apk"
+run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
+  dist/debug-test-unsigned.apk "$tmp/new-folder/debug-test.apk"
+expect "... also into a folder that isn't there yet" 0 \
+  "Signed with the debug key: $tmp/new-folder/debug-test.apk"
 
 # --- release_lib.sh: check_home_paths, with this computer's home folder
 # (Not in a folder named "home", which fails anyway.)

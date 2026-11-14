@@ -30,6 +30,17 @@ declare -rA ABI_PLATFORM=(
   [armeabi-v7a]=android-arm [arm64-v8a]=android-arm64 [x86_64]=android-x64
 )
 
+# Stops the script (fail) if APK $1 has native code, but none for ABI $2
+# (so it would test another ABI's build, or not install at all).
+check_apk_abi() {
+  local found
+  found="$(apk_check abis "$1")" || fail "couldn't read $1 as an APK"
+  if [[ -n "$found" ]] && ! grep -qxF -- "$2" <<<"$found"; then
+    fail "$1 has native code for $(paste -sd ' ' <<<"$found"), not for" \
+         "${2:-an unknown ABI}"
+  fi
+}
+
 # Whether $1 is one of RELEASE_ABIS.
 is_release_abi() {
   local abi
