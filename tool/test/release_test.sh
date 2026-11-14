@@ -749,7 +749,10 @@ run "$PW\n" env ANDROID_HOME="$tmp/hook-sdk" \
   dist/app-7.0-x86_64-unsigned.apk
 expect "a signed APK that turns up meanwhile stops it" 1 \
   "couldn't write $repo/dist/app-7.0-x86_64.apk (ln: "
-expect "... saying why" 1 "File exists); none of the APKs was written"
+# (ln's own words for it differ between versions: "File exists" here,
+# "Already exists" on GitHub's runner.)
+expect "... saying why" 1 "app-7.0-x86_64.apk': "
+expect "... and that none was written" 1 "); none of the APKs was written"
 check "... and isn't written over" \
   test "$(cat "$repo/dist/app-7.0-x86_64.apk")" == meanwhile
 check "... and the other signed APK isn't kept" bash -c \
