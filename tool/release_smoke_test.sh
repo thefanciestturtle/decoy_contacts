@@ -73,10 +73,19 @@ become_root() {
 # cleanup below uninstalls the app): to sign an unsigned APK, or the one it
 # builds, with the debug key, apksigner and that key.
 need python3
+# (Only read: nothing on the emulator changes yet.)
+abi="$(adb_ shell getprop ro.product.cpu.abi | tr -d '\r')"
 needs_signing=true
 if [[ $# -ge 1 ]]; then
   apk="$(absolute_path "$1" "$CALLER_DIR")"
-  [[ -f "$apk" ]] || { echo "error: no APK at $apk" >&2; exit 1; }
+  [[ -f "$apk" ]] || fail "no APK at $apk"
+  # One with native code must have it for the emulator's ABI, or it would
+  # test another ABI's build, or not install at all.
+  found="$(apk_check abis "$apk")" || fail "couldn't read $apk as an APK"
+  if [[ -n "$found" ]] && ! grep -qxF -- "$abi" <<<"$found"; then
+    fail "$apk has native code for $(paste -sd ' ' <<<"$found")," \
+         "not for the emulator's ABI, '${abi:-unknown}'"
+  fi
   if is_signed "$apk"; then needs_signing=false; fi
 fi
 if $needs_signing; then
@@ -87,10 +96,8 @@ fi
 # Without an APK, the one to test is built here, also before anything on
 # the emulator is changed.
 if [[ $# -eq 0 ]]; then
-  abi="$(adb_ shell getprop ro.product.cpu.abi | tr -d '\r')"
-  if [[ -z "$abi" ]] || [[ -z "${ABI_PLATFORM[$abi]+set}" ]]; then
-    fail "releases have no APK for the emulator's ABI '$abi'"
-  fi
+  is_release_abi "$abi" ||
+    fail "releases have no APK for the emulator's ABI, '${abi:-unknown}'"
   echo "== Building the release APK for $abi"
   flutter build apk --release --split-per-abi \
     --target-platform "${ABI_PLATFORM[$abi]}"

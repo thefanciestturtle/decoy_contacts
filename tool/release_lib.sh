@@ -182,9 +182,8 @@ apk_version() {
   echo "$found"
 }
 
-# The versionName and build number in pubspec.yaml $1 (by default the one
-# in the folder this runs in), as "NAME BUILD": "version: 2.0.0+5" gives
-# "2.0.0 5". The name is numbers and dots (it goes into the APKs' file
+# The versionName and build number in pubspec.yaml file $1, as "NAME
+# BUILD": "version: 2.0.0+5" gives "2.0.0 5". The name is numbers and dots (it goes into the APKs' file
 # names). The APKs' versionCodes are made from the build number (see
 # RELEASE_ABIS), so it must be there, from 1 to 999 (with 1000 or more,
 # one ABI's code could be another's), written without a leading zero (as
@@ -193,7 +192,7 @@ apk_version() {
 # exactly one version line.
 pubspec_version() {
   local line value
-  line="$(grep '^version:' "${1:-pubspec.yaml}" 2>/dev/null)" || return 1
+  line="$(grep '^version:' "$1" 2>/dev/null)" || return 1
   [[ "$line" != *$'\n'* ]] || return 1
   local version='([0-9]+(\.[0-9]+)*)\+([1-9][0-9]{0,2})'
   local after='([[:space:]]+#.*)?[[:space:]]*$'

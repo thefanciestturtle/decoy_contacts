@@ -238,7 +238,8 @@ flutter build apk --release --split-per-abi --target-platform ${ABI_PLATFORM[$ab
   place_release "$apk" "$out"
   outs+=("$out")
   # Its clone (with its packages and build outputs) and /tmp: done with.
-  rm -rf "$src" "$tmp"
+  # (If that fails, the build still goes on: the exit trap cleans up.)
+  rm -rf "$src" "$tmp" || true
 }
 
 outs=()

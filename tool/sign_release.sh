@@ -39,10 +39,13 @@ need python3
 want="$(release_cert_sha256)" || exit 1
 apksigner_path >/dev/null || exit 1
 
-# Each APK to sign, and the signed APK it makes; all checked before any is
-# signed.
-unsigned_apks=()
-signed_apks=()
+# The APK that signing unsigned APK $1 makes, next to it.
+signed_of() {
+  echo "${1%-unsigned.apk}.apk"
+}
+
+# Each APK to sign; all checked before any is signed.
+apks=()
 declare -A seen=()
 for arg in "$@"; do
   unsigned="$(realpath -s -m "$(absolute_path "$arg" "$CALLER_DIR")")"
@@ -54,22 +57,23 @@ for arg in "$@"; do
   [[ -z "${seen[$file]+set}" ]] ||
     fail "$unsigned is given twice (as ${seen[$file]})"
   seen[$file]="$unsigned"
-  signed="${unsigned%-unsigned.apk}.apk"
+  signed="$(signed_of "$unsigned")"
   [[ ! -e "$signed" ]] || fail "$signed already exists; move it away first"
   if is_signed "$unsigned"; then
     fail "$unsigned is already signed"
   fi
   check_home_paths "$unsigned"
-  unsigned_apks+=("$unsigned")
-  signed_apks+=("$signed")
+  apks+=("$unsigned")
 done
 
-# They are signed into ….partial files first, and only moved into place
-# once all of them have passed the checks.
-partials=()
+# They are signed into ….partial files first, and only put into place once
+# all of them have passed the checks.
 remove_partials() {
-  local partial
-  for partial in "${partials[@]}"; do rm -f "$partial" "$partial.idsig"; done
+  local unsigned signed
+  for unsigned in "${apks[@]}"; do
+    signed="$(signed_of "$unsigned")"
+    rm -f "$signed.partial" "$signed.partial.idsig"
+  done
 }
 trap remove_partials EXIT
 
@@ -85,9 +89,13 @@ IFS= read -rs -p "Keystore password: " password || true
 sign_one() {
   local unsigned=$1 partial=$2 verified signers got blocks
   # (printf is part of bash: the password is never on a command line.)
+  # apksigner then still writes a password prompt of its own, without
+  # reading anything: one could take it for a real one and type the
+  # password where the screen shows it. It is the only thing it writes to
+  # its standard output; errors go to standard error.
   if ! printf '%s\n' "$password" |
        apksigner_ sign --ks "$keystore" --ks-pass stdin \
-         "${SIGNING_OPTIONS[@]}" --out "$partial" "$unsigned"; then
+         "${SIGNING_OPTIONS[@]}" --out "$partial" "$unsigned" >/dev/null; then
     fail "apksigner couldn't sign $unsigned"
   fi
 
@@ -113,13 +121,24 @@ sign_one() {
     fail "signing $unsigned changed more than the signature"
 }
 
-for i in "${!unsigned_apks[@]}"; do
-  partials+=("${signed_apks[$i]}.partial")
-  sign_one "${unsigned_apks[$i]}" "${partials[$i]}"
+for unsigned in "${apks[@]}"; do
+  sign_one "$unsigned" "$(signed_of "$unsigned").partial"
 done
 
-for i in "${!signed_apks[@]}"; do
-  mv "${partials[$i]}" "${signed_apks[$i]}"
-  echo "== Signed ${signed_apks[$i]}"
+# Each into place as a hard link, which, unlike mv, fails if something is
+# there by now (say from another run while this one asked for the
+# password); then none of them is kept.
+placed=()
+for unsigned in "${apks[@]}"; do
+  signed="$(signed_of "$unsigned")"
+  if ! ln "$signed.partial" "$signed" 2>/dev/null; then
+    rm -f "${placed[@]}"
+    fail "couldn't write $signed (is there one now?); none of the APKs" \
+         "was written"
+  fi
+  placed+=("$signed")
 done
-sha256sum "${signed_apks[@]}"
+for signed in "${placed[@]}"; do
+  echo "== Signed $signed"
+done
+sha256sum "${placed[@]}"

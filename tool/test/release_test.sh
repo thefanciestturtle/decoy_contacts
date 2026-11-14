@@ -234,13 +234,13 @@ run "" python3 -I tool/apk_check.py same "$tmp/clean.apk" "$tmp/blocks.apk"
 expect "APKs that differ only outside their files say so" 1 \
   "not in the files they hold"
 run "" python3 -I tool/apk_check.py abis "$tmp/clean.apk"
-expect "abis: the ABI an APK has native code for" 0 "x86_64"
+expect_exact "abis: the ABI an APK has native code for" 0 "x86_64"
 cp "$tmp/clean.apk" "$tmp/fat.apk"
 add_entry "$tmp/fat.apk" lib/arm64-v8a/libapp.so zlib "code"
 add_entry "$tmp/fat.apk" lib/arm64-v8a/libflutter.so zlib "code"
 add_entry "$tmp/fat.apk" lib/notes.txt zlib "not an ABI's folder"
 run "" python3 -I tool/apk_check.py abis "$tmp/fat.apk"
-expect "abis: each ABI of a fat APK, once" 0 $'arm64-v8a\nx86_64'
+expect_exact "abis: each ABI of a fat APK, once" 0 $'arm64-v8a\nx86_64'
 check "abis: an APK without native code has none" bash -c \
   "[[ -z \"\$(python3 -I tool/apk_check.py abis '$tmp/base.apk')\" ]]"
 
@@ -531,6 +531,16 @@ check "... and pins nothing" test ! -s "$RELEASE_CERT_FILE"
 run "$PW\n" tool/make_release_key.sh "$tmp/release.p12"
 expect "run again, it only reads the certificate" 0 "already exists: reading its certificate"
 check "... and pins it" test "$(cat "$repo/$RELEASE_CERT_FILE")" == "$pinned"
+# A password with spaces at its ends is taken as typed, as sign_release.sh
+# takes it.
+"$keytool" -genkeypair -keystore "$tmp/spaced-release.p12" -storetype PKCS12 \
+  -alias release -storepass ' sp pw 1 ' -keyalg RSA -keysize 2048 \
+  -validity 1 -dname 'CN=Decoy Contacts' >/dev/null 2>&1
+: >"$repo/$RELEASE_CERT_FILE"
+run " sp pw 1 \n" tool/make_release_key.sh "$tmp/spaced-release.p12"
+expect "a password with spaces at its ends is kept as typed" 0 \
+  "The release key is in"
+echo "$pinned" >"$repo/$RELEASE_CERT_FILE"
 unset TZ
 
 # --- tool/sign_release.sh
@@ -613,6 +623,9 @@ run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
   dist/app-4.0-arm64-v8a-unsigned.apk dist/app-4.0-x86_64-unsigned.apk
 expect "signs several APKs, with the password given once" 0 \
   "Signed $repo/dist/app-4.0-x86_64.apk"
+# shellcheck disable=SC2016 # (the inner bash expands $OUT)
+check "... without apksigner's own password prompts" env OUT="$out" \
+  bash -c '[[ "$OUT" != *"password for signer"* ]]'
 check "... each with only its signature added" bash -c \
   "for abi in arm64-v8a x86_64; do
      python3 -I tool/apk_check.py only-signature-added dist/app-4.0-\$abi.apk dist/app-4.0-\$abi-unsigned.apk || exit 1
@@ -638,6 +651,22 @@ expect "if one can't be signed, it fails" 1 \
   "apksigner couldn't sign $repo/dist/app-5.0-x86_64-unsigned.apk"
 check "... and writes none, not even the one signed before it" bash -c \
   '[[ ! -e dist/app-5.0-arm64-v8a.apk ]] && ! ls dist/*.partial*'
+# One that turns up at a signed APK's place while it asks for the password
+# (say from another run) isn't written over, and the other isn't kept.
+cp "$tmp/arm.apk" "$repo/dist/app-7.0-arm64-v8a-unsigned.apk"
+cp "$tmp/clean.apk" "$repo/dist/app-7.0-x86_64-unsigned.apk"
+status=0
+out="$(cd "$repo" &&
+  { sleep 3; echo meanwhile >dist/app-7.0-x86_64.apk; printf '%s\n' "$PW"; } |
+  setsid -w tool/sign_release.sh "$tmp/release.p12" \
+    dist/app-7.0-arm64-v8a-unsigned.apk dist/app-7.0-x86_64-unsigned.apk 2>&1)" ||
+  status=$?
+expect "a signed APK that turns up meanwhile stops it" 1 \
+  "couldn't write $repo/dist/app-7.0-x86_64.apk (is there one now?)"
+check "... and isn't written over" \
+  test "$(cat "$repo/dist/app-7.0-x86_64.apk")" == meanwhile
+check "... and the other signed APK isn't kept" bash -c \
+  '[[ ! -e dist/app-7.0-arm64-v8a.apk ]] && ! ls dist/*.partial*'
 cp "$repo/dist/app-4.0-x86_64.apk" "$repo/dist/app-6.0-x86_64.apk"
 run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
   dist/app-6.0-arm64-v8a-unsigned.apk dist/app-6.0-x86_64-unsigned.apk

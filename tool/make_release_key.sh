@@ -48,16 +48,17 @@ fi
 
 # The password goes to keytool in its environment, which only this user's
 # own processes can read (keytool asked itself would want it again for each
-# step).
+# step). It is read as typed (IFS= keeps spaces at its ends), as
+# tool/sign_release.sh reads it.
 password=""
 if [[ -e "$keystore" ]]; then
   echo "$keystore already exists: reading its certificate."
-  read -rs -p "Keystore password: " password || true
+  IFS= read -rs -p "Keystore password: " password || true
   echo
 else
-  read -rs -p "Password for the new keystore: " password || true
+  IFS= read -rs -p "Password for the new keystore: " password || true
   echo
-  read -rs -p "The password again: " again || true
+  IFS= read -rs -p "The password again: " again || true
   echo
   [[ "$password" == "$again" ]] || fail "the passwords differ"
   (
