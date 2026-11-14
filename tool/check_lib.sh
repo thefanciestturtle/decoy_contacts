@@ -23,26 +23,28 @@ need() {
 }
 
 # Prints the value of setting $1 (a plain name: letters, digits and _) in
-# .github/workflows/dart.yml, which must match the basic regular expression
-# $2: quoted or not, with or without a comment after it (after a space, as
-# YAML wants). Fails if there isn't exactly one such line.
+# the workflow file $3 (by default .github/workflows/dart.yml), which must
+# match the basic regular expression $2: quoted or not, with or without a
+# comment after it (after a space, as YAML wants). Fails if there isn't
+# exactly one such line.
 ci_env_value() {
   local found
   found="$(sed -n "s/^[[:space:]]*$1:[[:space:]]*[\"']\{0,1\}\($2\)[\"']\{0,1\}\([[:space:]]\{1,\}#.*\)\{0,1\}[[:space:]]*\$/\1/p" \
-    .github/workflows/dart.yml 2>/dev/null)" || return 1
+    "${3:-.github/workflows/dart.yml}" 2>/dev/null)" || return 1
   [[ -n "$found" && "$found" != *$'\n'* ]] || return 1
   echo "$found"
 }
 
 # Prints FLUTTER_VERSION, the Flutter CI builds with: an exact version
-# (e.g. 3.50.0).
+# (e.g. 3.50.0). $1: the workflow file, as for ci_env_value.
 ci_flutter_version() {
-  ci_env_value FLUTTER_VERSION '[0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}'
+  ci_env_value FLUTTER_VERSION '[0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}' "$@"
 }
 
 # Prints JAVA_VERSION, the major version of the JDK CI builds with (e.g. 25).
+# $1: the workflow file, as for ci_env_value.
 ci_java_version() {
-  ci_env_value JAVA_VERSION '[0-9]\{1,\}'
+  ci_env_value JAVA_VERSION '[0-9]\{1,\}' "$@"
 }
 
 # A release version with three parts: 9.5 -> 9.5.0.

@@ -44,6 +44,9 @@ commit() {
 }
 commit 9.97.0 "$java_major" older-flutter
 commit 9.99.0 "$((java_major + 1))" other-jdk
+echo 'version: 1.2.3' >"$repo/pubspec.yaml"
+commit 9.99.0 "$java_major" no-build-number
+echo 'version: 1.2.3+4' >"$repo/pubspec.yaml"
 commit 9.99.0 "$java_major"
 
 failures=0
@@ -69,6 +72,18 @@ expect() {
   else
     echo "FAIL: $1: exit $status (want $2), output (want '$3'):"
     while IFS= read -r line; do echo "    $line"; done <<<"$out"
+    failures=$((failures + 1))
+  fi
+}
+
+# expect_exact NAME STATUS TEXT : as expect, but the output must be TEXT
+# exactly.
+expect_exact() {
+  cases=$((cases + 1))
+  if [[ "$status" == "$2" && "$out" == "$3" ]]; then
+    echo "ok: $1"
+  else
+    echo "FAIL: $1: exit $status (want $2), output '$out' (want '$3')"
     failures=$((failures + 1))
   fi
 }
@@ -142,6 +157,7 @@ readonly CLEAN='file:///home/vagrant/build/org.example/.dart_tool/flutter_build/
 readonly LEAK='file:///home/someone/code/app/.dart_tool/flutter_build/dart_plugin_registrant.dart'
 make_apk "$tmp/clean.apk" "$CLEAN"
 make_apk "$tmp/leak.apk" "$LEAK"
+make_apk "$tmp/arm.apk" "$CLEAN for arm" # another clean one
 
 # --- tool/apk_check.py
 check "an unsigned APK has no signature" bash -c \
@@ -218,6 +234,16 @@ expect "APKs that differ inside list the files" 1 $'differ\n  lib/x86_64/libapp.
 run "" python3 -I tool/apk_check.py same "$tmp/clean.apk" "$tmp/blocks.apk"
 expect "APKs that differ only outside their files say so" 1 \
   "not in the files they hold"
+run "" python3 -I tool/apk_check.py abis "$tmp/clean.apk"
+expect_exact "abis: the ABI an APK has native code for" 0 "x86_64"
+cp "$tmp/clean.apk" "$tmp/fat.apk"
+add_entry "$tmp/fat.apk" lib/arm64-v8a/libapp.so zlib "code"
+add_entry "$tmp/fat.apk" lib/arm64-v8a/libflutter.so zlib "code"
+add_entry "$tmp/fat.apk" lib/notes.txt zlib "not an ABI's folder"
+run "" python3 -I tool/apk_check.py abis "$tmp/fat.apk"
+expect_exact "abis: each ABI of a fat APK, once" 0 $'arm64-v8a\nx86_64'
+check "abis: an APK without native code has none" bash -c \
+  "[[ -z \"\$(python3 -I tool/apk_check.py abis '$tmp/base.apk')\" ]]"
 
 # --- release_lib.sh: apksigner from the newest build-tools, 35 or newer.
 for v in 34.0.0 35.0.0 36.1.0 36.0.0; do
@@ -242,6 +268,127 @@ expect "apksigner older than 35 fails" 1 "build-tools 35 or newer"
 run "" env -u ANDROID_HOME -u ANDROID_SDK_ROOT bash -c \
   'source tool/check_lib.sh; source tool/release_lib.sh; apksigner_path'
 expect "no Android SDK fails" 1 "set ANDROID_HOME"
+
+# --- release_lib.sh: aapt2 from the newest build-tools release that has it
+for v in 36.0.0 37.0.0 38.0.0-rc1; do
+  mkdir -p "$tmp/sdk2/build-tools/$v"
+  touch "$tmp/sdk2/build-tools/$v/aapt2"
+  chmod +x "$tmp/sdk2/build-tools/$v/aapt2"
+done
+mkdir -p "$tmp/sdk2/build-tools/38.0.0" # no aapt2 in it
+run "" env ANDROID_HOME="$tmp/sdk2" bash -c \
+  'source tool/check_lib.sh; source tool/release_lib.sh; aapt2_path'
+expect "aapt2 from the newest build-tools release that has one" 0 \
+  "$tmp/sdk2/build-tools/37.0.0/aapt2"
+run "" env ANDROID_HOME="$tmp/sdk" bash -c \
+  'source tool/check_lib.sh; source tool/release_lib.sh; aapt2_path'
+expect "no aapt2 fails" 1 "this needs aapt2"
+
+# --- release_lib.sh: apk_version
+"$build_tools/aapt2" link -o "$tmp/versioned.apk" \
+  --manifest "$tmp/AndroidManifest.xml" -I "$platform/android.jar" \
+  --version-code 2004 --version-name 1.2.3
+run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; apk_version '$tmp/versioned.apk'"
+expect "apk_version: the versionCode and versionName" 0 "2004 1.2.3"
+run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; apk_version '$tmp/base.apk' || echo none"
+expect "apk_version: an APK without a versionCode fails" 0 "none"
+
+# --- release_lib.sh: pubspec_version
+# pubspec CONTENTS NAME WANT : wants pubspec_version of a pubspec.yaml
+# holding CONTENTS to print WANT (or fail: "none").
+pubspec() {
+  printf '%b' "$1" >"$tmp/pubspec.yaml"
+  run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; pubspec_version '$tmp/pubspec.yaml' || echo none"
+  expect_exact "pubspec_version: $2" 0 "$3"
+}
+pubspec 'name: app\nversion: 2.0.0+5\n' "the name and the build number" "2.0.0 5"
+pubspec "version: '2.0.0+15' # the release\n" "quoted, with a comment" "2.0.0 15"
+pubspec 'version: 2.0.0\n' "without a build number it fails" "none"
+pubspec 'version: 2.0.0+5\nversion: 2.0.1+6\n' "two versions fail" "none"
+pubspec 'name: app\n' "no version fails" "none"
+pubspec 'version: 2.0.0+999\n' "build number 999" "2.0.0 999"
+pubspec 'version: 2.0.0+1000\n' "build number 1000 fails (codes would clash)" "none"
+pubspec 'version: 2.0.0+0\n' "build number 0 fails" "none"
+pubspec 'version: 2.0.0+08\n' "a leading zero fails" "none"
+pubspec 'version: "2.0.0+5"\n' "double quotes" "2.0.0 5"
+pubspec 'version: 2.0.0+5\r\n' "a Windows line end" "2.0.0 5"
+pubspec 'version: 2.0.0-rc.1+5\n' "a name with more than numbers and dots fails" "none"
+pubspec 'version: 1.0/../x+5\n' "... say one that would make a path" "none"
+pubspec 'version: 2.0.0+5#x\n' "a # with no space before it isn't a comment" "none"
+pubspec 'version: "2.0.0+5 #x"\n' "... nor one inside quotes" "none"
+
+# --- release_lib.sh: the release ABIs, each with a code and a platform
+# (and no code or platform for another).
+# shellcheck disable=SC2016 # (the inner bash expands it)
+run "" bash -c 'source tool/check_lib.sh; source tool/release_lib.sh
+  for abi in "${RELEASE_ABIS[@]}"; do
+    [[ -n "${ABI_CODE[$abi]:-}" && -n "${ABI_PLATFORM[$abi]:-}" ]] || echo "missing: $abi"
+  done
+  for abi in "${!ABI_CODE[@]}" "${!ABI_PLATFORM[@]}"; do
+    is_release_abi "$abi" || echo "extra: $abi"
+  done
+  echo "codes: $(printf "%s\n" "${ABI_CODE[@]}" | sort -u | wc -l) of ${#RELEASE_ABIS[@]}"'
+expect_exact "the release ABIs each have their own code and a platform" 0 "codes: 3 of 3"
+
+# --- release_lib.sh: check_apk_abi
+check_abi() {
+  run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; check_apk_abi '$1' '$2' && echo fine"
+}
+check_abi "$tmp/clean.apk" x86_64
+expect "check_apk_abi: an APK with native code for the ABI passes" 0 fine
+check_abi "$tmp/clean.apk" arm64-v8a
+expect "check_apk_abi: one without fails" 1 \
+  "$tmp/clean.apk has native code for x86_64, not for arm64-v8a"
+check_abi "$tmp/fat.apk" arm64-v8a
+expect "check_apk_abi: a fat APK with it passes" 0 fine
+check_abi "$tmp/base.apk" arm64-v8a
+expect "check_apk_abi: an APK without native code passes" 0 fine
+check_abi "$tmp/clean.apk" ""
+expect "check_apk_abi: an unknown ABI fails" 1 "not for an unknown ABI"
+
+# --- release_lib.sh: check_release_apk, on APKs made with aapt2
+# release_apk OUT CODE NAME TEXT [ABI...] : an APK with versionCode CODE
+# and versionName NAME, holding TEXT in a native library for each ABI
+# (x86_64 by default).
+release_apk() {
+  local out=$1 code=$2 name=$3 text=$4
+  shift 4
+  "$build_tools/aapt2" link -o "$out" --manifest "$tmp/AndroidManifest.xml" \
+    -I "$platform/android.jar" --version-code "$code" --version-name "$name"
+  python3 -I - "$out" "$text" "${@:-x86_64}" <<'EOF'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'a', zipfile.ZIP_STORED) as apk:
+    for abi in sys.argv[3:]:
+        apk.writestr('lib/%s/libapp.so' % abi, sys.argv[2].encode())
+EOF
+}
+# check_apk NAME STATUS TEXT APK ABI VERSION BUILD
+check_apk() {
+  run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; check_release_apk '$4' '$5' '$6' '$7' && echo fine"
+  expect "check_release_apk: $1" "$2" "$3"
+}
+release_apk "$tmp/split.apk" 4004 1.2.3 "$CLEAN"
+check_apk "the right APK passes" 0 fine "$tmp/split.apk" x86_64 1.2.3 4
+check_apk "another ABI's APK fails" 1 \
+  "the arm64-v8a APK has native code for: x86_64" "$tmp/split.apk" arm64-v8a 1.2.3 4
+check_apk "another build number fails" 1 \
+  "has versionCode and versionName '4004 1.2.3', not '4005 1.2.3' (4 * 1000 + 5)" \
+  "$tmp/split.apk" x86_64 1.2.3 5
+check_apk "another versionName fails" 1 "not '4004 1.2.4'" \
+  "$tmp/split.apk" x86_64 1.2.4 4
+release_apk "$tmp/fat-split.apk" 4004 1.2.3 "$CLEAN" arm64-v8a x86_64
+check_apk "an APK with other ABIs too fails" 1 \
+  "has native code for: arm64-v8a x86_64" "$tmp/fat-split.apk" x86_64 1.2.3 4
+"$build_tools/aapt2" link -o "$tmp/no-code.apk" --manifest "$tmp/AndroidManifest.xml" \
+  -I "$platform/android.jar" --version-code 4004 --version-name 1.2.3
+check_apk "an APK without native code fails" 1 "has native code for: none" \
+  "$tmp/no-code.apk" x86_64 1.2.3 4
+release_apk "$tmp/leak-split.apk" 4004 1.2.3 "$LEAK"
+check_apk "an APK naming a home folder fails" 1 "names a home folder" \
+  "$tmp/leak-split.apk" x86_64 1.2.3 4
+add_block "$tmp/split.apk" 7109871a
+check_apk "a signed APK fails" 1 "the x86_64 APK is signed" \
+  "$tmp/split.apk" x86_64 1.2.3 4
 
 # --- release_lib.sh: debug_sign
 mkdir -p "$tmp/android-empty" "$tmp/android"
@@ -292,6 +439,19 @@ check "... which is left as it was" \
 run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
   "$tmp/app-release.apk"
 expect "debug_sign.sh won't replace an earlier copy" 1 "already exists"
+cp "$tmp/clean.apk" "$repo/dist/debug-test-unsigned.apk"
+run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
+  dist/debug-test-unsigned.apk
+expect "debug_sign.sh won't write into dist/, with the release APKs" 1 \
+  "would be in dist/, with the release APKs"
+check "... and writes nothing there" test ! -e "$repo/dist/debug-test-unsigned-debug-signed.apk"
+run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
+  dist/debug-test-unsigned.apk "$tmp/debug-test.apk"
+expect "... but signs a copy elsewhere" 0 "Signed with the debug key: $tmp/debug-test.apk"
+run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
+  dist/debug-test-unsigned.apk "$tmp/new-folder/debug-test.apk"
+expect "... also into a folder that isn't there yet" 0 \
+  "Signed with the debug key: $tmp/new-folder/debug-test.apk"
 
 # --- release_lib.sh: check_home_paths, with this computer's home folder
 # (Not in a folder named "home", which fails anyway.)
@@ -308,27 +468,59 @@ for apk in my-home near-home; do
   fi
 done
 
-# --- release_lib.sh: place_release
+# --- release_lib.sh: place_releases
 mkdir -p "$tmp/place"
+# place APK OUT [APK OUT]... : place_releases into $tmp/place/OUT.
 place() {
-  run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; place_release '$1' '$tmp/place/app-1.0-unsigned.apk'"
+  local args=()
+  while (($# >= 2)); do
+    args+=("$1" "$tmp/place/$2")
+    shift 2
+  done
+  run "" bash -c 'source tool/check_lib.sh; source tool/release_lib.sh; place_releases "$@"' \
+    place "${args[@]}"
 }
-place "$tmp/clean.apk"
-expect "place_release: a new build goes in" 0 "Built $tmp/place/app-1.0-unsigned.apk"
+place "$tmp/clean.apk" app-1.0-unsigned.apk
+expect "place_releases: a new build goes in" 0 "Built $tmp/place/app-1.0-unsigned.apk"
 check "... as the same file" cmp "$tmp/clean.apk" "$tmp/place/app-1.0-unsigned.apk"
-place "$tmp/clean.apk"
-expect "place_release: the same build again is kept" 0 "The same file as"
-place "$tmp/leak.apk"
-expect "place_release: another build stops" 1 "isn't the same file as"
+place "$tmp/clean.apk" app-1.0-unsigned.apk
+expect "place_releases: the same build again is kept" 0 "The same file as"
+place "$tmp/leak.apk" app-1.0-unsigned.apk
+expect "place_releases: another build stops" 1 "isn't the same file as"
 check "... leaving the first one" cmp "$tmp/clean.apk" "$tmp/place/app-1.0-unsigned.apk"
 cp "$tmp/app-release-debug-signed.apk" "$tmp/place/app-1.0.apk"
-place "$tmp/clean.apk"
-expect "place_release: a signed APK of this build is fine" 0 "The same file as"
+place "$tmp/clean.apk" app-1.0-unsigned.apk
+expect "place_releases: a signed APK of this build is fine" 0 "The same file as"
 rm "$tmp/place/app-1.0-unsigned.apk"
-place "$tmp/leak.apk"
-expect "place_release: a signed APK of another build stops" 1 \
+place "$tmp/leak.apk" app-1.0-unsigned.apk
+expect "place_releases: a signed APK of another build stops" 1 \
   "isn't this build signed"
 check "... and nothing goes in" test ! -e "$tmp/place/app-1.0-unsigned.apk"
+# Several: all of them or none.
+place "$tmp/clean.apk" app-2.0-x86_64-unsigned.apk \
+  "$tmp/arm.apk" app-2.0-arm64-v8a-unsigned.apk
+expect "place_releases: several go in" 0 "Built $tmp/place/app-2.0-arm64-v8a-unsigned.apk"
+check "... each as its build" bash -c \
+  "cmp '$tmp/clean.apk' '$tmp/place/app-2.0-x86_64-unsigned.apk' &&
+   cmp '$tmp/arm.apk' '$tmp/place/app-2.0-arm64-v8a-unsigned.apk'"
+cp "$tmp/leak.apk" "$tmp/place/app-3.0-x86_64-unsigned.apk"
+place "$tmp/arm.apk" app-3.0-arm64-v8a-unsigned.apk \
+  "$tmp/clean.apk" app-3.0-x86_64-unsigned.apk
+expect "place_releases: if a later one can't go in, it stops" 1 \
+  "isn't the same file as the $tmp/place/app-3.0-x86_64-unsigned.apk"
+check "... before putting in any, not even an earlier one" \
+  test ! -e "$tmp/place/app-3.0-arm64-v8a-unsigned.apk"
+mkdir -p "$tmp/place/locked"
+chmod a-w "$tmp/place/locked"
+place "$tmp/arm.apk" app-4.0-arm64-v8a-unsigned.apk \
+  "$tmp/clean.apk" locked/app-4.0-x86_64-unsigned.apk
+chmod u+w "$tmp/place/locked"
+expect "place_releases: if copying one fails, it stops" 1 \
+  "couldn't copy the build to $tmp/place/locked/app-4.0-x86_64-unsigned.apk.partial"
+check "... leaving none, nor a partial file" bash -c \
+  "[[ ! -e '$tmp/place/app-4.0-arm64-v8a-unsigned.apk' &&
+     ! -e '$tmp/place/app-4.0-arm64-v8a-unsigned.apk.partial' ]] &&
+   ! ls -A '$tmp/place/locked' | grep -q ."
 
 # --- release_lib.sh: apksigner_ allows native access only on Java 17 and
 # newer. A stand-in java says it is $SPEC and rejects that option.
@@ -414,6 +606,16 @@ check "... and pins nothing" test ! -s "$RELEASE_CERT_FILE"
 run "$PW\n" tool/make_release_key.sh "$tmp/release.p12"
 expect "run again, it only reads the certificate" 0 "already exists: reading its certificate"
 check "... and pins it" test "$(cat "$repo/$RELEASE_CERT_FILE")" == "$pinned"
+# A password with spaces at its ends is taken as typed, as sign_release.sh
+# takes it.
+"$keytool" -genkeypair -keystore "$tmp/spaced-release.p12" -storetype PKCS12 \
+  -alias release -storepass ' sp pw 1 ' -keyalg RSA -keysize 2048 \
+  -validity 1 -dname 'CN=Decoy Contacts' >/dev/null 2>&1
+: >"$repo/$RELEASE_CERT_FILE"
+run " sp pw 1 \n" tool/make_release_key.sh "$tmp/spaced-release.p12"
+expect "a password with spaces at its ends is kept as typed" 0 \
+  "The release key is in"
+echo "$pinned" >"$repo/$RELEASE_CERT_FILE"
 unset TZ
 
 # --- tool/sign_release.sh
@@ -467,6 +669,14 @@ run "other-pw\n" tool/sign_release.sh "$tmp/other.p12" dist/app-3.0-unsigned.apk
 expect "another key with the same name fails" 1 "isn't the release key"
 check "... and writes nothing" bash -c '! ls dist/app-3.0.apk*'
 
+# A password with spaces at its ends reaches apksigner as typed (it signs;
+# then the key isn't the release key).
+"$keytool" -genkeypair -keystore "$tmp/spaced.p12" -storetype PKCS12 \
+  -alias spaced -storepass ' spaced pw ' -keyalg RSA -keysize 2048 \
+  -validity 1 -dname 'CN=Decoy Contacts' >/dev/null 2>&1
+run " spaced pw \n" tool/sign_release.sh "$tmp/spaced.p12" dist/app-3.0-unsigned.apk
+expect "a password with spaces at its ends is kept as typed" 1 "isn't the release key"
+
 run "$PW\n" tool/sign_release.sh "$tmp/missing.p12" dist/app-3.0-unsigned.apk
 expect "a missing keystore fails" 1 "no keystore at $tmp/missing.p12"
 
@@ -475,11 +685,120 @@ run "$PW\n" tool/sign_release.sh "$tmp/release.p12" dist/app-3.0-unsigned.apk
 expect "without a pinned fingerprint it fails" 1 "no release certificate fingerprint"
 echo "$pinned" >"$repo/$RELEASE_CERT_FILE"
 
+run "" tool/sign_release.sh "$tmp/release.p12"
+expect "without an APK it fails" 2 "usage:"
+
+# Several at once, one APK per ABI, with the password asked once.
+for v in 4.0 5.0 6.0; do
+  cp "$tmp/arm.apk" "$repo/dist/app-$v-arm64-v8a-unsigned.apk"
+  cp "$tmp/clean.apk" "$repo/dist/app-$v-x86_64-unsigned.apk"
+done
+run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
+  dist/app-4.0-arm64-v8a-unsigned.apk dist/app-4.0-x86_64-unsigned.apk
+expect "signs several APKs, with the password given once" 0 \
+  "Signed $repo/dist/app-4.0-x86_64.apk"
+# shellcheck disable=SC2016 # (the inner bash expands $OUT)
+check "... without apksigner's own password prompts" env OUT="$out" \
+  bash -c '[[ "$OUT" != *"password for signer"* ]]'
+check "... each with only its signature added" bash -c \
+  "for abi in arm64-v8a x86_64; do
+     python3 -I tool/apk_check.py only-signature-added dist/app-4.0-\$abi.apk dist/app-4.0-\$abi-unsigned.apk || exit 1
+   done"
+run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
+  dist/app-5.0-x86_64-unsigned.apk ./dist/../dist/app-5.0-x86_64-unsigned.apk
+expect "the same APK twice fails" 1 \
+  "is given twice (as $repo/dist/app-5.0-x86_64-unsigned.apk)"
+ln -s app-5.0-x86_64-unsigned.apk "$repo/dist/link-5.0-x86_64-unsigned.apk"
+run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
+  dist/app-5.0-x86_64-unsigned.apk dist/link-5.0-x86_64-unsigned.apk
+expect "... also through a link" 1 "link-5.0-x86_64-unsigned.apk is given twice"
+rm "$repo/dist/link-5.0-x86_64-unsigned.apk"
+# One that apksigner can't sign (no manifest), after one it can.
+python3 -I - "$repo/dist/app-5.0-x86_64-unsigned.apk" <<'EOF'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'w') as apk:
+    apk.writestr('lib/x86_64/libapp.so', bytes(100))
+EOF
+run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
+  dist/app-5.0-arm64-v8a-unsigned.apk dist/app-5.0-x86_64-unsigned.apk
+expect "if one can't be signed, it fails" 1 \
+  "apksigner couldn't sign $repo/dist/app-5.0-x86_64-unsigned.apk"
+check "... and writes none, not even the one signed before it" bash -c \
+  '[[ ! -e dist/app-5.0-arm64-v8a.apk ]] && ! ls dist/*.partial*'
+# One that turns up at a signed APK's place after the checks (say from
+# another run) isn't written over, and the other isn't kept. A stand-in
+# apksigner, in an SDK of its own, makes $APPEAR turn up as it signs.
+mkdir -p "$tmp/hook-sdk/build-tools/99.0.0"
+cat >"$tmp/hook-sdk/build-tools/99.0.0/apksigner" <<EOF
+#!/usr/bin/env bash
+if [[ " \$* " == *" sign "* && -n "\${APPEAR:-}" && ! -e "\$APPEAR" ]]; then
+  if [[ "\${APPEAR_AS:-file}" == folder ]]; then
+    mkdir "\$APPEAR"
+  else
+    echo meanwhile >"\$APPEAR"
+  fi
+fi
+exec "$build_tools/apksigner" "\$@"
+EOF
+chmod +x "$tmp/hook-sdk/build-tools/99.0.0/apksigner"
+cp "$tmp/arm.apk" "$repo/dist/app-7.0-arm64-v8a-unsigned.apk"
+cp "$tmp/clean.apk" "$repo/dist/app-7.0-x86_64-unsigned.apk"
+run "$PW\n" env ANDROID_HOME="$tmp/hook-sdk" \
+  APPEAR="$repo/dist/app-7.0-x86_64.apk" tool/sign_release.sh \
+  "$tmp/release.p12" dist/app-7.0-arm64-v8a-unsigned.apk \
+  dist/app-7.0-x86_64-unsigned.apk
+expect "a signed APK that turns up meanwhile stops it" 1 \
+  "couldn't write $repo/dist/app-7.0-x86_64.apk (ln: "
+# (ln's own words for it differ between versions: "File exists" here,
+# "Already exists" on GitHub's runner.)
+expect "... saying why" 1 "app-7.0-x86_64.apk': "
+expect "... and that none was written" 1 "); none of the APKs was written"
+check "... and isn't written over" \
+  test "$(cat "$repo/dist/app-7.0-x86_64.apk")" == meanwhile
+check "... and the other signed APK isn't kept" bash -c \
+  '[[ ! -e dist/app-7.0-arm64-v8a.apk ]] && ! ls dist/*.partial*'
+# The same with a folder, which ln would otherwise put the APK in.
+run "$PW\n" env ANDROID_HOME="$tmp/hook-sdk" \
+  APPEAR="$repo/dist/app-7.0-arm64-v8a.apk" APPEAR_AS=folder \
+  tool/sign_release.sh "$tmp/release.p12" dist/app-7.0-arm64-v8a-unsigned.apk
+expect "a folder that turns up meanwhile stops it too" 1 \
+  "couldn't write $repo/dist/app-7.0-arm64-v8a.apk (ln: "
+check "... and stays empty" bash -c '! ls -A dist/app-7.0-arm64-v8a.apk | grep -q .'
+
+# The APK named through a link to a folder and "..": the one the system
+# opens is signed, next to it.
+mkdir -p "$repo/other/sub" "$repo/other/dist"
+cp "$tmp/arm.apk" "$repo/other/dist/app-8.0-x86_64-unsigned.apk"
+cp "$tmp/clean.apk" "$repo/dist/app-8.0-x86_64-unsigned.apk"
+ln -s other/sub "$repo/link"
+run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
+  link/../dist/app-8.0-x86_64-unsigned.apk
+expect "a path through a link to a folder signs the file it names" 0 "Signed"
+check "... next to it" python3 -I tool/apk_check.py only-signature-added \
+  other/dist/app-8.0-x86_64.apk other/dist/app-8.0-x86_64-unsigned.apk
+check "... and not the one the path looks like" test ! -e dist/app-8.0-x86_64.apk
+cp "$repo/dist/app-4.0-x86_64.apk" "$repo/dist/app-6.0-x86_64.apk"
+run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
+  dist/app-6.0-arm64-v8a-unsigned.apk dist/app-6.0-x86_64-unsigned.apk
+expect "if one is signed already, it fails" 1 "app-6.0-x86_64.apk already exists"
+check "... before signing any" test ! -e "$repo/dist/app-6.0-arm64-v8a.apk"
+
 # --- tool/build_release.sh, up to the build
 run "" tool/build_release.sh --bogus
 expect "build: an unknown option fails" 2 "usage:"
 run "" tool/build_release.sh HEAD HEAD
 expect "build: two commits fail" 2 "usage:"
+run "" tool/build_release.sh --abi mips
+expect "build: an unknown ABI fails, listing the ABIs" 2 \
+  "ABIs: armeabi-v7a arm64-v8a x86_64"
+run "" tool/build_release.sh --abi
+expect "build: --abi without an ABI fails" 2 "usage:"
+run "" tool/build_release.sh --abi ""
+expect "build: --abi with an empty ABI fails" 2 "usage:"
+run "" tool/build_release.sh --abi "arm64-v8a x86_64"
+expect "build: --abi with two ABIs at once fails" 2 "usage:"
+run "" env JAVA_HOME="$java_home" ANDROID_HOME="$tmp/sdk" tool/build_release.sh
+expect "build: without aapt2 it fails" 1 "this needs aapt2"
 # A stand-in for Flutter's repository.
 mkdir -p "$tmp/flutter/sub" "$tmp/not-git"
 echo flutter >"$tmp/flutter/README.md"
@@ -490,6 +809,12 @@ git -C "$tmp/flutter" -c user.name=test -c user.email=test@example.invalid \
 run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/not-git"
 expect "build: a Flutter that isn't a git checkout fails" 1 \
   "$tmp/not-git isn't a git checkout of Flutter"
+expect "build: ... and it would have built every ABI" 1 \
+  " for armeabi-v7a arm64-v8a x86_64"$'\n'
+run "" env JAVA_HOME="$java_home" tool/build_release.sh --abi x86_64 \
+  --abi armeabi-v7a --abi x86_64 --flutter-sdk "$tmp/not-git"
+expect "build: --abi chooses ABIs, each once, in the usual order" 1 \
+  " for armeabi-v7a x86_64"$'\n'
 run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/flutter/sub"
 expect "build: a folder within a checkout fails" 1 \
   "$tmp/flutter/sub isn't a git checkout of Flutter"
@@ -512,6 +837,10 @@ RUN_IN="$tmp" run "" env JAVA_HOME="$java_home" \
 expect "build: the Flutter version is the commit's" 1 \
   "Flutter in $tmp/flutter is '9.98.0', not 9.97.0"
 git -C "$tmp/flutter" tag 9.99.0
+run "" env JAVA_HOME="$java_home" \
+  tool/build_release.sh --flutter-sdk "$tmp/flutter" no-build-number
+expect "build: a version without a build number fails" 1 \
+  "pubspec.yaml must look like 2.0.0+5: numbers and dots, then + and a build number from 1 to 999"
 run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/flutter"
 expect "build: a Flutter that isn't on a branch named stable fails" 1 \
   "is on 'main', not on a branch named stable"

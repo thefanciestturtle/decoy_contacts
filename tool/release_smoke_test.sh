@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Smoke-tests a release build of the app on an Android emulator.
 #
-#   tool/release_smoke_test.sh [path/to/app-release.apk]
+#   tool/release_smoke_test.sh [APK]
 #
-# Without an APK, it builds a release APK for the emulator's ABI first.
+# e.g. dist/decoy_contacts-<version>-x86_64-unsigned.apk (the emulator's
+# ABI).
+#
+# Without an APK, it first builds the release APK for the emulator's ABI,
+# as releases are built (one APK per ABI, flutter build apk --split-per-abi).
 # Release builds are unsigned (the release key signs them by hand, see
 # tool/sign_release.sh), so it installs a copy signed with the debug key, as
 # tool/debug_sign.sh makes; an APK that is already signed is installed as
@@ -69,15 +73,31 @@ become_root() {
 # cleanup below uninstalls the app): to sign an unsigned APK, or the one it
 # builds, with the debug key, apksigner and that key.
 need python3
+# (Only read: nothing on the emulator changes yet.)
+abi="$(adb_ shell getprop ro.product.cpu.abi | tr -d '\r')"
 needs_signing=true
 if [[ $# -ge 1 ]]; then
   apk="$(absolute_path "$1" "$CALLER_DIR")"
-  [[ -f "$apk" ]] || { echo "error: no APK at $apk" >&2; exit 1; }
+  [[ -f "$apk" ]] || fail "no APK at $apk"
+  # One with native code must have it for the emulator's own ABI.
+  check_apk_abi "$apk" "$abi"
   if is_signed "$apk"; then needs_signing=false; fi
 fi
 if $needs_signing; then
   apksigner_path >/dev/null || exit 1
   debug_keystore >/dev/null || exit 1
+fi
+
+# Without an APK, the one to test is built here, also before anything on
+# the emulator is changed.
+if [[ $# -eq 0 ]]; then
+  is_release_abi "$abi" ||
+    fail "releases have no APK for the emulator's ABI, '${abi:-unknown}'"
+  echo "== Building the release APK for $abi"
+  flutter build apk --release --split-per-abi \
+    --target-platform "${ABI_PLATFORM[$abi]}"
+  apk="build/app/outputs/flutter-apk/app-$abi-release.apk"
+  [[ -f "$apk" ]] || fail "the build made no APK at $apk"
 fi
 
 tmp="$(mktemp -d)"
@@ -195,19 +215,6 @@ check_app_ok() {
     fail "the app is no longer running"
 }
 
-if [[ $# -eq 0 ]]; then
-  abi="$(adb_ shell getprop ro.product.cpu.abi | tr -d '\r')"
-  case "$abi" in
-    x86_64) platform=android-x64 ;;
-    arm64-v8a) platform=android-arm64 ;;
-    armeabi-v7a) platform=android-arm ;;
-    *) fail "no Flutter target platform for ABI '$abi'" ;;
-  esac
-  echo "== Building a release APK for $abi"
-  flutter build apk --release --target-platform "$platform"
-  apk=build/app/outputs/flutter-apk/app-release.apk
-fi
-[[ -f "$apk" ]] || fail "no APK at $apk"
 if $needs_signing; then
   echo "== Signing a copy with the debug key"
   debug_sign "$apk" "$tmp/debug-signed.apk" ||

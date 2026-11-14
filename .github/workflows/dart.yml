@@ -106,15 +106,16 @@ jobs:
         if: ${{ !cancelled() }}
         run: tool/test/check_flutter_release_test.sh
 
-  # The release APK, built by tool/build_release.sh as it is built for a
-  # release and as F-Droid will build it: twice, from fresh clones, and the
-  # two must be the same file. F-Droid publishes the signed APK only if its
-  # own build of the same commit is that APK too. Also the tests of the
-  # release scripts.
+  # The release APKs, one per ABI, built by tool/build_release.sh as they
+  # are built for a release and as F-Droid will build them: twice, from
+  # fresh clones, and each must be the same file both times. F-Droid
+  # publishes a signed APK only if its own build of the same commit is that
+  # APK too. Also the tests of the release scripts.
   release-build:
     name: Release build is reproducible
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Six builds: 12 minutes in all on GitHub's runner (2026-11-14).
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -152,15 +153,24 @@ jobs:
 
       # With this job's Flutter (an unpacked release archive, which is on
       # the stable branch; the version is checked) and Gradle cache. The
-      # second build finds the first one's APK in dist/, and stops unless it
-      # is the same file; the APK there must not change either.
-      - name: Build the release APK twice
+      # second build finds the first one's APKs in dist/, and stops unless
+      # each is the same file; the APKs there must not change either.
+      - name: Build the release APKs twice
         run: |
           flutter_sdk="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
           tool/build_release.sh --flutter-sdk "$flutter_sdk" --gradle-home ~/.gradle
           first="$(sha256sum dist/*-unsigned.apk)"
+          abis="$(source tool/check_lib.sh && source tool/release_lib.sh && echo "${#RELEASE_ABIS[@]}")"
+          if [ "$(wc -l <<<"$first")" != "$abis" ]; then
+            echo "::error::Expected $abis release APKs in dist/, one per ABI; found:"$'\n'"$first"
+            exit 1
+          fi
           tool/build_release.sh --flutter-sdk "$flutter_sdk" --gradle-home ~/.gradle
-          [ "$(sha256sum dist/*-unsigned.apk)" = "$first" ]
+          second="$(sha256sum dist/*-unsigned.apk)"
+          if [ "$second" != "$first" ]; then
+            echo "::error::The APKs in dist/ changed:"$'\n'"$first"$'\n'"now:"$'\n'"$second"
+            exit 1
+          fi
 
   # Create and Delete against the real Android contacts provider, on an
   # emulator: API 36, the app's target SDK; and Android 17 (API 37.0), which
@@ -209,12 +219,13 @@ jobs:
         run: flutter build apk --debug
 
       # For the release smoke test, built before the emulator starts like the
-      # debug APK (the test's own build is then up to date). Only for the
-      # emulator's ABI: R8, which is what can break release builds, runs the
-      # same way for every ABI. (Unsigned, as release builds are; the smoke
-      # test signs a copy with the debug key, which the debug build made.)
+      # debug APK (the test's own build is then up to date). The emulator's
+      # ABI's APK, as releases are built: one per ABI. (R8, which is what can
+      # break release builds, runs the same way for every ABI. Unsigned, as
+      # release builds are; the smoke test signs a copy with the debug key,
+      # which the debug build made.)
       - name: Build release APK (x86_64)
-        run: flutter build apk --release --target-platform android-x64
+        run: flutter build apk --release --split-per-abi --target-platform android-x64
 
       # On master only (see "Restore Gradle cache"), save the Gradle cache
       # once this job's debug and release builds have worked, before the
