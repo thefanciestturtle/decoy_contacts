@@ -81,6 +81,20 @@ if $needs_signing; then
   debug_keystore >/dev/null || exit 1
 fi
 
+# Without an APK, the one to test is built here, also before anything on
+# the emulator is changed.
+if [[ $# -eq 0 ]]; then
+  abi="$(adb_ shell getprop ro.product.cpu.abi | tr -d '\r')"
+  if [[ -z "$abi" ]] || [[ -z "${ABI_PLATFORM[$abi]+set}" ]]; then
+    fail "releases have no APK for the emulator's ABI '$abi'"
+  fi
+  echo "== Building the release APK for $abi"
+  flutter build apk --release --split-per-abi \
+    --target-platform "${ABI_PLATFORM[$abi]}"
+  apk="build/app/outputs/flutter-apk/app-$abi-release.apk"
+fi
+[[ -f "$apk" ]] || fail "no APK at $apk"
+
 tmp="$(mktemp -d)"
 was_root=false
 cleanup() {
@@ -196,17 +210,6 @@ check_app_ok() {
     fail "the app is no longer running"
 }
 
-if [[ $# -eq 0 ]]; then
-  abi="$(adb_ shell getprop ro.product.cpu.abi | tr -d '\r')"
-  if [[ -z "$abi" ]] || [[ -z "${ABI_PLATFORM[$abi]+set}" ]]; then
-    fail "releases have no APK for the emulator's ABI '$abi'"
-  fi
-  echo "== Building the release APK for $abi"
-  flutter build apk --release --split-per-abi \
-    --target-platform "${ABI_PLATFORM[$abi]}"
-  apk="build/app/outputs/flutter-apk/app-$abi-release.apk"
-fi
-[[ -f "$apk" ]] || fail "no APK at $apk"
 if $needs_signing; then
   echo "== Signing a copy with the debug key"
   debug_sign "$apk" "$tmp/debug-signed.apk" ||

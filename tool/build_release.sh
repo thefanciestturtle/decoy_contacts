@@ -134,22 +134,28 @@ checkout() {
   git -C "$1" checkout --quiet --detach "$commit"
 }
 
-echo "== Building $(git describe --always --tags "$commit") ($commit)"
-# For the versions; each ABI is then built in a clone of its own.
-checkout "$work/src"
+echo "== Building $(git describe --always --tags "$commit") ($commit)" \
+     "for ${abis[*]}"
+# The commit's pubspec.yaml and CI settings, for the versions. (Each ABI is
+# then built in a clone of its own.)
+mkdir -p "$work/meta/.github/workflows"
+git show "$commit:.github/workflows/dart.yml" \
+  >"$work/meta/.github/workflows/dart.yml" 2>/dev/null || true
+git show "$commit:pubspec.yaml" >"$work/meta/pubspec.yaml" 2>/dev/null || true
 
 # The versions that commit's CI builds with.
-flutter_version="$(cd "$work/src" && ci_flutter_version)" ||
+flutter_version="$(cd "$work/meta" && ci_flutter_version)" ||
   fail "couldn't read FLUTTER_VERSION from the commit's .github/workflows/dart.yml"
-java_wanted="$(cd "$work/src" && ci_java_version)" ||
+java_wanted="$(cd "$work/meta" && ci_java_version)" ||
   fail "couldn't read JAVA_VERSION from the commit's .github/workflows/dart.yml"
 java_found="$(java_version "$JAVA_HOME/bin/java")" ||
   fail "couldn't run $JAVA_HOME/bin/java"
 [[ "$java_found" == "$java_wanted" ]] ||
   fail "JAVA_HOME is Java ${java_found:-unknown}; this commit is built with" \
        "Java $java_wanted (JAVA_VERSION in .github/workflows/dart.yml)"
-read -r version build_number < <(pubspec_version "$work/src/pubspec.yaml") ||
-  fail "no version with a build number (e.g. 2.0.0+5) in the commit's pubspec.yaml"
+read -r version build_number < <(pubspec_version "$work/meta/pubspec.yaml") ||
+  fail "no version with a build number from 1 to 999 (e.g. 2.0.0+5) in the" \
+       "commit's pubspec.yaml"
 
 if [[ -z "$flutter_sdk" ]]; then
   flutter_sdk="$cache/flutter-$flutter_version"
@@ -185,17 +191,17 @@ printf 'root:x:0:0:root:/root:/bin/sh\nvagrant:x:%s:%s:vagrant:/home/vagrant:/bi
   "$(id -u)" "$(id -g)" >"$work/passwd"
 printf 'root:x:0:\nvagrant:x:%s:\n' "$(id -g)" >"$work/group"
 echo buildserver >"$work/hostname"
-mkdir "$work/tmp" # the sandbox's /tmp, on disk
 
-# Builds the APK for ABI $1 from a fresh clone, in the sandbox, in UTC
-# whatever this computer uses; then checks it and puts it into dist. No
-# Gradle daemon, and the Kotlin compiler in Gradle's process: a daemon
-# could outlive the sandbox or be one from outside it.
+# Builds the APK for ABI $1 from a fresh clone, in the sandbox, with a /tmp
+# of its own (on disk), in UTC whatever this computer uses; then checks it
+# and puts it into dist. No Gradle daemon, and the Kotlin compiler in
+# Gradle's process: a daemon could outlive the sandbox or be one from
+# outside it.
 build_abi() {
-  local abi=$1 src="$work/build-$1" apk out found
-  local code=$((ABI_CODE[$1] * 1000 + build_number))
+  local abi=$1 src="$work/build-$1" tmp="$work/tmp-$1" apk out
   echo "== Building the $abi APK"
   checkout "$src"
+  mkdir "$tmp"
   local inner="set -euo pipefail
 flutter config --no-analytics >/dev/null
 flutter --version
@@ -212,7 +218,7 @@ flutter build apk --release --split-per-abi --target-platform ${ABI_PLATFORM[$ab
     ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy=in-process \
     bwrap \
       --dev-bind / / \
-      --tmpfs /home --tmpfs /opt --bind "$work/tmp" /tmp \
+      --tmpfs /home --tmpfs /opt --bind "$tmp" /tmp \
       --ro-bind "$work/passwd" /etc/passwd \
       --ro-bind "$work/group" /etc/group \
       --ro-bind "$work/hostname" /etc/hostname \
@@ -229,22 +235,12 @@ flutter build apk --release --split-per-abi --target-platform ${ABI_PLATFORM[$ab
 
   apk="$src/build/app/outputs/flutter-apk/app-$abi-release.apk"
   [[ -f "$apk" ]] || fail "the $abi build made no APK at ${apk#"$src/"}"
-  if is_signed "$apk"; then
-    fail "the $abi APK is signed: release builds must be unsigned" \
-         "(android/app/build.gradle.kts)"
-  fi
-  found="$(apk_check abis "$apk")" || fail "couldn't read the $abi APK"
-  [[ "$found" == "$abi" ]] ||
-    fail "the $abi APK has native code for: $(paste -sd ' ' <<<"${found:-none}")"
-  found="$(apk_version "$apk")" || fail "couldn't read the $abi APK's version"
-  [[ "$found" == "$code $version" ]] ||
-    fail "the $abi APK has versionCode and versionName '$found'," \
-         "not '$code $version' (${ABI_CODE[$abi]} * 1000 + $build_number)"
-  check_home_paths "$apk"
+  check_release_apk "$apk" "$abi" "$version" "$build_number"
   out="$DIST_DIR/decoy_contacts-$version-$abi-unsigned.apk"
   place_release "$apk" "$out"
   outs+=("$out")
-  rm -rf "$src" # its packages and build outputs: not needed any more
+  # Its clone (with its packages and build outputs) and /tmp: done with.
+  rm -rf "$src" "$tmp"
 }
 
 outs=()

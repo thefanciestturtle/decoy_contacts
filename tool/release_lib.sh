@@ -157,27 +157,55 @@ aapt2_path() {
   echo "$sdk/build-tools/$newest/aapt2"
 }
 
-# The versionCode and versionName of APK $1, as "CODE NAME"; fails if aapt2
-# can't read them.
+# The versionCode and versionName of APK $1, as "CODE NAME"; fails, with
+# aapt2's error, if it can't read them.
 apk_version() {
-  local aapt2 found
+  local aapt2 badging found
   aapt2="$(aapt2_path)" || return 1
-  found="$("$aapt2" dump badging "$1" 2>/dev/null | sed -n \
-    "s/^package: .* versionCode='\([0-9]\{1,\}\)' versionName='\([^']*\)'.*/\1 \2/p")"
+  if ! badging="$("$aapt2" dump badging "$1" 2>&1)"; then
+    echo "$badging" >&2
+    return 1
+  fi
+  found="$(sed -n \
+    "s/^package: .* versionCode='\([0-9]\{1,\}\)' versionName='\([^']*\)'.*/\1 \2/p" \
+    <<<"$badging")"
   [[ -n "$found" ]] || return 1
   echo "$found"
 }
 
 # The versionName and build number in pubspec.yaml $1 (by default the one
 # in the folder this runs in), as "NAME BUILD": "version: 2.0.0+5" gives
-# "2.0.0 5". Fails without a build number, which the APKs' versionCodes are
-# made from.
+# "2.0.0 5". The APKs' versionCodes are made from the build number (see
+# RELEASE_ABIS), so it must be there, from 1 to 999 (with 1000 or more,
+# one ABI's code could be another's), written without a leading zero (as
+# Flutter reads it). Fails otherwise.
 pubspec_version() {
   local found
-  found="$(sed -n "s/^version:[[:space:]]*[\"']\{0,1\}\([0-9][0-9.]*\)+\([0-9]\{1,\}\)[\"']\{0,1\}[[:space:]]*\(#.*\)\{0,1\}$/\1 \2/p" \
+  found="$(sed -n "s/^version:[[:space:]]*[\"']\{0,1\}\([^+\"'[:space:]]\{1,\}\)+\([1-9][0-9]\{0,2\}\)[\"']\{0,1\}[[:space:]]*\(#.*\)\{0,1\}$/\1 \2/p" \
     "${1:-pubspec.yaml}" 2>/dev/null)"
   [[ -n "$found" && "$found" != *$'\n'* ]] || return 1
   echo "$found"
+}
+
+# Stops the script (fail) unless APK $1 is the release APK for ABI $2 of
+# version $3 with build number $4: unsigned, with native code for that ABI
+# only, with the versionCode ABI_CODE * 1000 + $4 and the versionName $3,
+# and naming no home folder but the build sandbox's.
+check_release_apk() {
+  local apk=$1 abi=$2 version=$3 build=$4 found
+  local code=$((ABI_CODE[$abi] * 1000 + build))
+  if is_signed "$apk"; then
+    fail "the $abi APK is signed: release builds must be unsigned" \
+         "(android/app/build.gradle.kts)"
+  fi
+  found="$(apk_check abis "$apk")" || fail "couldn't read the $abi APK"
+  [[ "$found" == "$abi" ]] ||
+    fail "the $abi APK has native code for: $(paste -sd ' ' <<<"${found:-none}")"
+  found="$(apk_version "$apk")" || fail "couldn't read the $abi APK's version"
+  [[ "$found" == "$code $version" ]] ||
+    fail "the $abi APK has versionCode and versionName '$found'," \
+         "not '$code $version' (${ABI_CODE[$abi]} * 1000 + $build)"
+  check_home_paths "$apk"
 }
 
 # Runs apksigner with "$@", with the JDK in JAVA_HOME if that is set (the

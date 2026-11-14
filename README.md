@@ -63,7 +63,7 @@ Release APKs are signed with this app's own key. The SHA-256 fingerprint of its 
 
 Android installs an update only if it is signed with the same key. To check an APK you downloaded, `apksigner verify --print-certs` (from the Android SDK's build-tools) shows the fingerprint after "certificate SHA-256 digest".
 
-Each release has one APK for each type of processor: `arm64-v8a` for most phones, `armeabi-v7a` for phones with a 32-bit processor, and `x86_64` for Chromebooks and emulators.  If Android says the `arm64-v8a` one isn't compatible with your phone, take the `armeabi-v7a` one.
+Each release has one APK for each type of processor: `arm64-v8a` for most phones, `armeabi-v7a` for phones with a 32-bit processor, and `x86_64` for Chromebooks with an Intel or AMD processor and for emulators.  If Android says the `arm64-v8a` one isn't compatible with your phone, take the `armeabi-v7a` one.
 
 Each release is built so that a build of the same source gives the same files, apart from the signature (see "Release builds" below).
 
@@ -106,7 +106,7 @@ Added Spanish description to Fastlane per https://github.com/BillDietrich/fake_c
 * `tool/build_release.sh [TAG]` builds the release APKs of a commit, unsigned, into `dist/`: one per ABI (`armeabi-v7a`, `arm64-v8a`, `x86_64`; `--abi` builds only one). Each is built on its own with `flutter build apk --split-per-abi`, as F-Droid builds them, and has Flutter's versionCode for its ABI: 1000, 2000 or 4000 plus the build number (the number after the "+" in `pubspec.yaml`'s version). It builds in a sandbox (bubblewrap) where the project, its packages, Flutter and the Android SDK are at the paths F-Droid's build server uses, so that F-Droid's builds of the same commit are the same files. (Flutter compiles these paths into the app, so a build in your own folder would also name your home folder.) It keeps a copy of the Flutter that CI uses, and Gradle's downloads, in `~/.cache/decoy_contacts`.
 * `tool/sign_release.sh KEYSTORE dist/decoy_contacts-<version>-*-unsigned.apk` signs them with the release key (it asks for the password once) and checks each signed APK: the key's fingerprint, and that only the signature was added.
 * `tool/make_release_key.sh` made the release key, once.
-* Release builds are unsigned, so `flutter run --release` can't install them. `tool/debug_sign.sh build/app/outputs/flutter-apk/app-release.apk` makes a copy signed with the debug key, for `adb install`.
+* Release builds are unsigned, so `flutter run --release` can't install them. `tool/debug_sign.sh APK` makes a copy signed with the debug key, for `adb install`: say of `dist/decoy_contacts-<version>-x86_64-unsigned.apk`, or of `build/app/outputs/flutter-apk/app-x86_64-release.apk` after `flutter build apk --release --split-per-abi --target-platform android-x64`.
 * CI builds the release APKs twice and checks that each is the same file both times. `tool/test/release_test.sh` tests the release scripts with throwaway keys.
 
 ### Development Environment

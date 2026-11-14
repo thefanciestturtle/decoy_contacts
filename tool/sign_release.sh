@@ -45,12 +45,15 @@ unsigned_apks=()
 signed_apks=()
 declare -A seen=()
 for arg in "$@"; do
-  unsigned="$(absolute_path "$arg" "$CALLER_DIR")"
+  unsigned="$(realpath -s -m "$(absolute_path "$arg" "$CALLER_DIR")")"
   [[ -f "$unsigned" ]] || fail "no APK at $unsigned"
   [[ "$unsigned" == *-unsigned.apk ]] ||
     fail "$unsigned isn't named like an unsigned release (…-unsigned.apk)"
-  [[ -z "${seen[$unsigned]+set}" ]] || fail "$unsigned is given twice"
-  seen[$unsigned]=1
+  # The same file, however it is named (another path, a link to it).
+  file="$(stat -L -c '%d:%i' "$unsigned")"
+  [[ -z "${seen[$file]+set}" ]] ||
+    fail "$unsigned is given twice (as ${seen[$file]})"
+  seen[$file]="$unsigned"
   signed="${unsigned%-unsigned.apk}.apk"
   [[ ! -e "$signed" ]] || fail "$signed already exists; move it away first"
   if is_signed "$unsigned"; then
@@ -72,8 +75,9 @@ trap remove_partials EXIT
 
 # Read here, not by apksigner, so it is asked once; apksigner gets it in
 # its environment, which only this user's own processes can read.
+# (As typed: IFS= keeps spaces at its ends.)
 password=""
-read -rs -p "Keystore password: " password || true
+IFS= read -rs -p "Keystore password: " password || true
 [[ ! -t 0 ]] || echo >&2
 
 # Signs $1 into $2 and checks the result.

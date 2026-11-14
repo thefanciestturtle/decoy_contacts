@@ -300,6 +300,55 @@ pubspec "version: '2.0.0+15' # the release\n" "quoted, with a comment" "2.0.0 15
 pubspec 'version: 2.0.0\n' "without a build number it fails" "none"
 pubspec 'version: 2.0.0+5\nversion: 2.0.1+6\n' "two versions fail" "none"
 pubspec 'name: app\n' "no version fails" "none"
+pubspec 'version: 2.0.0+999\n' "build number 999" "2.0.0 999"
+pubspec 'version: 2.0.0+1000\n' "build number 1000 fails (codes would clash)" "none"
+pubspec 'version: 2.0.0+0\n' "build number 0 fails" "none"
+pubspec 'version: 2.0.0+08\n' "a leading zero fails" "none"
+pubspec 'version: 2.0.0-rc.1+5\n' "a pre-release name" "2.0.0-rc.1 5"
+
+# --- release_lib.sh: check_release_apk, on APKs made with aapt2
+# release_apk OUT CODE NAME TEXT [ABI...] : an APK with versionCode CODE
+# and versionName NAME, holding TEXT in a native library for each ABI
+# (x86_64 by default).
+release_apk() {
+  local out=$1 code=$2 name=$3 text=$4
+  shift 4
+  "$build_tools/aapt2" link -o "$out" --manifest "$tmp/AndroidManifest.xml" \
+    -I "$platform/android.jar" --version-code "$code" --version-name "$name"
+  python3 -I - "$out" "$text" "${@:-x86_64}" <<'EOF'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'a', zipfile.ZIP_STORED) as apk:
+    for abi in sys.argv[3:]:
+        apk.writestr('lib/%s/libapp.so' % abi, sys.argv[2].encode())
+EOF
+}
+# check_apk NAME STATUS TEXT APK ABI VERSION BUILD
+check_apk() {
+  run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; check_release_apk '$4' '$5' '$6' '$7' && echo fine"
+  expect "check_release_apk: $1" "$2" "$3"
+}
+release_apk "$tmp/split.apk" 4004 1.2.3 "$CLEAN"
+check_apk "the right APK passes" 0 fine "$tmp/split.apk" x86_64 1.2.3 4
+check_apk "another ABI's APK fails" 1 \
+  "the arm64-v8a APK has native code for: x86_64" "$tmp/split.apk" arm64-v8a 1.2.3 4
+check_apk "another build number fails" 1 \
+  "has versionCode and versionName '4004 1.2.3', not '4005 1.2.3' (4 * 1000 + 5)" \
+  "$tmp/split.apk" x86_64 1.2.3 5
+check_apk "another versionName fails" 1 "not '4004 1.2.4'" \
+  "$tmp/split.apk" x86_64 1.2.4 4
+release_apk "$tmp/fat-split.apk" 4004 1.2.3 "$CLEAN" arm64-v8a x86_64
+check_apk "an APK with other ABIs too fails" 1 \
+  "has native code for: arm64-v8a x86_64" "$tmp/fat-split.apk" x86_64 1.2.3 4
+"$build_tools/aapt2" link -o "$tmp/no-code.apk" --manifest "$tmp/AndroidManifest.xml" \
+  -I "$platform/android.jar" --version-code 4004 --version-name 1.2.3
+check_apk "an APK without native code fails" 1 "has native code for: none" \
+  "$tmp/no-code.apk" x86_64 1.2.3 4
+release_apk "$tmp/leak-split.apk" 4004 1.2.3 "$LEAK"
+check_apk "an APK naming a home folder fails" 1 "names a home folder" \
+  "$tmp/leak-split.apk" x86_64 1.2.3 4
+add_block "$tmp/split.apk" 7109871a
+check_apk "a signed APK fails" 1 "the x86_64 APK is signed" \
+  "$tmp/split.apk" x86_64 1.2.3 4
 
 # --- release_lib.sh: debug_sign
 mkdir -p "$tmp/android-empty" "$tmp/android"
@@ -525,6 +574,14 @@ run "other-pw\n" tool/sign_release.sh "$tmp/other.p12" dist/app-3.0-unsigned.apk
 expect "another key with the same name fails" 1 "isn't the release key"
 check "... and writes nothing" bash -c '! ls dist/app-3.0.apk*'
 
+# A password with spaces at its ends reaches apksigner as typed (it signs;
+# then the key isn't the release key).
+"$keytool" -genkeypair -keystore "$tmp/spaced.p12" -storetype PKCS12 \
+  -alias spaced -storepass ' spaced pw ' -keyalg RSA -keysize 2048 \
+  -validity 1 -dname 'CN=Decoy Contacts' >/dev/null 2>&1
+run " spaced pw \n" tool/sign_release.sh "$tmp/spaced.p12" dist/app-3.0-unsigned.apk
+expect "a password with spaces at its ends is kept as typed" 1 "isn't the release key"
+
 run "$PW\n" tool/sign_release.sh "$tmp/missing.p12" dist/app-3.0-unsigned.apk
 expect "a missing keystore fails" 1 "no keystore at $tmp/missing.p12"
 
@@ -551,8 +608,14 @@ check "... each with only its signature added" bash -c \
      python3 -I tool/apk_check.py only-signature-added dist/app-4.0-\$abi.apk dist/app-4.0-\$abi-unsigned.apk || exit 1
    done"
 run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
-  dist/app-5.0-x86_64-unsigned.apk "$repo/dist/app-5.0-x86_64-unsigned.apk"
-expect "the same APK twice fails" 1 "is given twice"
+  dist/app-5.0-x86_64-unsigned.apk ./dist/../dist/app-5.0-x86_64-unsigned.apk
+expect "the same APK twice fails" 1 \
+  "$repo/dist/app-5.0-x86_64-unsigned.apk is given twice"
+ln -s app-5.0-x86_64-unsigned.apk "$repo/dist/link-5.0-x86_64-unsigned.apk"
+run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
+  dist/app-5.0-x86_64-unsigned.apk dist/link-5.0-x86_64-unsigned.apk
+expect "... also through a link" 1 "link-5.0-x86_64-unsigned.apk is given twice"
+rm "$repo/dist/link-5.0-x86_64-unsigned.apk"
 # One that apksigner can't sign (no manifest), after one it can.
 python3 -I - "$repo/dist/app-5.0-x86_64-unsigned.apk" <<'EOF'
 import sys, zipfile
@@ -595,6 +658,12 @@ git -C "$tmp/flutter" -c user.name=test -c user.email=test@example.invalid \
 run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/not-git"
 expect "build: a Flutter that isn't a git checkout fails" 1 \
   "$tmp/not-git isn't a git checkout of Flutter"
+expect "build: ... and it would have built every ABI" 1 \
+  " for armeabi-v7a arm64-v8a x86_64"$'\n'
+run "" env JAVA_HOME="$java_home" tool/build_release.sh --abi x86_64 \
+  --abi armeabi-v7a --abi x86_64 --flutter-sdk "$tmp/not-git"
+expect "build: --abi chooses ABIs, each once, in the usual order" 1 \
+  " for armeabi-v7a x86_64"$'\n'
 run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/flutter/sub"
 expect "build: a folder within a checkout fails" 1 \
   "$tmp/flutter/sub isn't a git checkout of Flutter"
@@ -620,7 +689,7 @@ git -C "$tmp/flutter" tag 9.99.0
 run "" env JAVA_HOME="$java_home" \
   tool/build_release.sh --flutter-sdk "$tmp/flutter" no-build-number
 expect "build: a version without a build number fails" 1 \
-  "no version with a build number (e.g. 2.0.0+5)"
+  "no version with a build number from 1 to 999 (e.g. 2.0.0+5)"
 run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/flutter"
 expect "build: a Flutter that isn't on a branch named stable fails" 1 \
   "is on 'main', not on a branch named stable"

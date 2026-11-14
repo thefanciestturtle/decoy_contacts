@@ -7,7 +7,7 @@
 #   tool/debug_sign.sh APK [OUT]
 #
 # OUT is by default APK with "-debug-signed" before ".apk", e.g.
-# build/app/outputs/flutter-apk/app-release-debug-signed.apk. Then:
+# build/app/outputs/flutter-apk/app-x86_64-release-debug-signed.apk. Then:
 # adb install OUT. Gradle makes the debug key with the first debug build.
 set -euo pipefail
 

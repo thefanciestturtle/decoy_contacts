@@ -114,7 +114,8 @@ jobs:
   release-build:
     name: Release build is reproducible
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Six builds of about 3 minutes each.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -159,7 +160,8 @@ jobs:
           flutter_sdk="$(dirname "$(dirname "$(readlink -f "$(command -v flutter)")")")"
           tool/build_release.sh --flutter-sdk "$flutter_sdk" --gradle-home ~/.gradle
           first="$(sha256sum dist/*-unsigned.apk)"
-          [ "$(wc -l <<<"$first")" = 3 ]
+          abis="$(source tool/check_lib.sh && source tool/release_lib.sh && echo "${#RELEASE_ABIS[@]}")"
+          [ "$(wc -l <<<"$first")" = "$abis" ]
           tool/build_release.sh --flutter-sdk "$flutter_sdk" --gradle-home ~/.gradle
           [ "$(sha256sum dist/*-unsigned.apk)" = "$first" ]
 
