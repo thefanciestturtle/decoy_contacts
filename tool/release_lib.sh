@@ -98,19 +98,35 @@ check_placement() {
   fi
 }
 
-# Puts release build $1 into dist as $2, after check_placement; if $2 is
-# already there, it is kept.
-place_release() {
-  local apk=$1 out=$2
-  check_placement "$apk" "$out"
-  if [[ -e "$out" ]]; then
-    echo "== The same file as the $out already there"
-  else
-    mkdir -p "$(dirname "$out")"
-    cp "$apk" "$out.partial"
-    mv "$out.partial" "$out"
-    echo "== Built $out"
-  fi
+# Puts release builds into dist, all of them or none: $1 as $2, $3 as $4,
+# and so on. Each must pass check_placement, or none goes there; one that
+# is already there (the same file) is kept. The others are copied in as
+# ….partial files first, and renamed only once all are copied, so a
+# failure partway (say with the disk full) leaves none of them either.
+place_releases() {
+  local args=("$@") i apk out staged=() new=()
+  for ((i = 0; i < ${#args[@]}; i += 2)); do
+    check_placement "${args[i]}" "${args[i + 1]}"
+  done
+  for ((i = 0; i < ${#args[@]}; i += 2)); do
+    apk=${args[i]} out=${args[i + 1]}
+    [[ ! -e "$out" ]] || continue
+    if ! mkdir -p "$(dirname "$out")" || ! cp "$apk" "$out.partial"; then
+      rm -f "$out.partial" "${staged[@]}"
+      fail "couldn't copy the build to $out.partial; none was put there"
+    fi
+    staged+=("$out.partial")
+    new[i]=1
+  done
+  for ((i = 0; i < ${#args[@]}; i += 2)); do
+    out=${args[i + 1]}
+    if [[ -n "${new[i]:-}" ]]; then
+      mv "$out.partial" "$out"
+      echo "== Built $out"
+    else
+      echo "== The same file as the $out already there"
+    fi
+  done
 }
 
 # Whether APK $1 is signed; stops the script (fail) if it can't be read.
@@ -199,13 +215,13 @@ apk_version() {
 }
 
 # The versionName and build number in pubspec.yaml file $1, as "NAME
-# BUILD": "version: 2.0.0+5" gives "2.0.0 5". The name is numbers and dots (it goes into the APKs' file
-# names). The APKs' versionCodes are made from the build number (see
-# RELEASE_ABIS), so it must be there, from 1 to 999 (with 1000 or more,
-# one ABI's code could be another's), written without a leading zero (as
-# Flutter reads it). Quoted or not, with or without a comment after it
-# (after a space, as YAML wants). Fails otherwise, or if there isn't
-# exactly one version line.
+# BUILD": "version: 2.0.0+5" gives "2.0.0 5". The name is numbers and dots
+# (it goes into the APKs' file names). The APKs' versionCodes are made from
+# the build number (see RELEASE_ABIS), so it must be there, from 1 to 999
+# (with 1000 or more, one ABI's code could be another's), written without a
+# leading zero (as Flutter reads it). Quoted or not, with or without a
+# comment after it (after a space, as YAML wants). Fails otherwise, or if
+# there isn't exactly one version line.
 pubspec_version() {
   local line value
   line="$(grep '^version:' "$1" 2>/dev/null)" || return 1

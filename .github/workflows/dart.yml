@@ -161,9 +161,16 @@ jobs:
           tool/build_release.sh --flutter-sdk "$flutter_sdk" --gradle-home ~/.gradle
           first="$(sha256sum dist/*-unsigned.apk)"
           abis="$(source tool/check_lib.sh && source tool/release_lib.sh && echo "${#RELEASE_ABIS[@]}")"
-          [ "$(wc -l <<<"$first")" = "$abis" ]
+          if [ "$(wc -l <<<"$first")" != "$abis" ]; then
+            echo "::error::Expected $abis release APKs in dist/, one per ABI; found:"$'\n'"$first"
+            exit 1
+          fi
           tool/build_release.sh --flutter-sdk "$flutter_sdk" --gradle-home ~/.gradle
-          [ "$(sha256sum dist/*-unsigned.apk)" = "$first" ]
+          second="$(sha256sum dist/*-unsigned.apk)"
+          if [ "$second" != "$first" ]; then
+            echo "::error::The APKs in dist/ changed:"$'\n'"$first"$'\n'"now:"$'\n'"$second"
+            exit 1
+          fi
 
   # Create and Delete against the real Android contacts provider, on an
   # emulator: API 36, the app's target SDK; and Android 17 (API 37.0), which

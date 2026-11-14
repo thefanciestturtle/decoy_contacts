@@ -157,6 +157,7 @@ readonly CLEAN='file:///home/vagrant/build/org.example/.dart_tool/flutter_build/
 readonly LEAK='file:///home/someone/code/app/.dart_tool/flutter_build/dart_plugin_registrant.dart'
 make_apk "$tmp/clean.apk" "$CLEAN"
 make_apk "$tmp/leak.apk" "$LEAK"
+make_apk "$tmp/arm.apk" "$CLEAN for arm" # another clean one
 
 # --- tool/apk_check.py
 check "an unsigned APK has no signature" bash -c \
@@ -434,27 +435,59 @@ for apk in my-home near-home; do
   fi
 done
 
-# --- release_lib.sh: place_release
+# --- release_lib.sh: place_releases
 mkdir -p "$tmp/place"
+# place APK OUT [APK OUT]... : place_releases into $tmp/place/OUT.
 place() {
-  run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; place_release '$1' '$tmp/place/app-1.0-unsigned.apk'"
+  local args=()
+  while (($# >= 2)); do
+    args+=("$1" "$tmp/place/$2")
+    shift 2
+  done
+  run "" bash -c 'source tool/check_lib.sh; source tool/release_lib.sh; place_releases "$@"' \
+    place "${args[@]}"
 }
-place "$tmp/clean.apk"
-expect "place_release: a new build goes in" 0 "Built $tmp/place/app-1.0-unsigned.apk"
+place "$tmp/clean.apk" app-1.0-unsigned.apk
+expect "place_releases: a new build goes in" 0 "Built $tmp/place/app-1.0-unsigned.apk"
 check "... as the same file" cmp "$tmp/clean.apk" "$tmp/place/app-1.0-unsigned.apk"
-place "$tmp/clean.apk"
-expect "place_release: the same build again is kept" 0 "The same file as"
-place "$tmp/leak.apk"
-expect "place_release: another build stops" 1 "isn't the same file as"
+place "$tmp/clean.apk" app-1.0-unsigned.apk
+expect "place_releases: the same build again is kept" 0 "The same file as"
+place "$tmp/leak.apk" app-1.0-unsigned.apk
+expect "place_releases: another build stops" 1 "isn't the same file as"
 check "... leaving the first one" cmp "$tmp/clean.apk" "$tmp/place/app-1.0-unsigned.apk"
 cp "$tmp/app-release-debug-signed.apk" "$tmp/place/app-1.0.apk"
-place "$tmp/clean.apk"
-expect "place_release: a signed APK of this build is fine" 0 "The same file as"
+place "$tmp/clean.apk" app-1.0-unsigned.apk
+expect "place_releases: a signed APK of this build is fine" 0 "The same file as"
 rm "$tmp/place/app-1.0-unsigned.apk"
-place "$tmp/leak.apk"
-expect "place_release: a signed APK of another build stops" 1 \
+place "$tmp/leak.apk" app-1.0-unsigned.apk
+expect "place_releases: a signed APK of another build stops" 1 \
   "isn't this build signed"
 check "... and nothing goes in" test ! -e "$tmp/place/app-1.0-unsigned.apk"
+# Several: all of them or none.
+place "$tmp/clean.apk" app-2.0-x86_64-unsigned.apk \
+  "$tmp/arm.apk" app-2.0-arm64-v8a-unsigned.apk
+expect "place_releases: several go in" 0 "Built $tmp/place/app-2.0-arm64-v8a-unsigned.apk"
+check "... each as its build" bash -c \
+  "cmp '$tmp/clean.apk' '$tmp/place/app-2.0-x86_64-unsigned.apk' &&
+   cmp '$tmp/arm.apk' '$tmp/place/app-2.0-arm64-v8a-unsigned.apk'"
+cp "$tmp/leak.apk" "$tmp/place/app-3.0-x86_64-unsigned.apk"
+place "$tmp/arm.apk" app-3.0-arm64-v8a-unsigned.apk \
+  "$tmp/clean.apk" app-3.0-x86_64-unsigned.apk
+expect "place_releases: if a later one can't go in, it stops" 1 \
+  "isn't the same file as the $tmp/place/app-3.0-x86_64-unsigned.apk"
+check "... before putting in any, not even an earlier one" \
+  test ! -e "$tmp/place/app-3.0-arm64-v8a-unsigned.apk"
+mkdir -p "$tmp/place/locked"
+chmod a-w "$tmp/place/locked"
+place "$tmp/arm.apk" app-4.0-arm64-v8a-unsigned.apk \
+  "$tmp/clean.apk" locked/app-4.0-x86_64-unsigned.apk
+chmod u+w "$tmp/place/locked"
+expect "place_releases: if copying one fails, it stops" 1 \
+  "couldn't copy the build to $tmp/place/locked/app-4.0-x86_64-unsigned.apk.partial"
+check "... leaving none, nor a partial file" bash -c \
+  "[[ ! -e '$tmp/place/app-4.0-arm64-v8a-unsigned.apk' &&
+     ! -e '$tmp/place/app-4.0-arm64-v8a-unsigned.apk.partial' ]] &&
+   ! ls -A '$tmp/place/locked' | grep -q ."
 
 # --- release_lib.sh: apksigner_ allows native access only on Java 17 and
 # newer. A stand-in java says it is $SPEC and rejects that option.
@@ -623,7 +656,6 @@ run "" tool/sign_release.sh "$tmp/release.p12"
 expect "without an APK it fails" 2 "usage:"
 
 # Several at once, one APK per ABI, with the password asked once.
-make_apk "$tmp/arm.apk" "$CLEAN for arm"
 for v in 4.0 5.0 6.0; do
   cp "$tmp/arm.apk" "$repo/dist/app-$v-arm64-v8a-unsigned.apk"
   cp "$tmp/clean.apk" "$repo/dist/app-$v-x86_64-unsigned.apk"
@@ -660,16 +692,28 @@ expect "if one can't be signed, it fails" 1 \
   "apksigner couldn't sign $repo/dist/app-5.0-x86_64-unsigned.apk"
 check "... and writes none, not even the one signed before it" bash -c \
   '[[ ! -e dist/app-5.0-arm64-v8a.apk ]] && ! ls dist/*.partial*'
-# One that turns up at a signed APK's place while it asks for the password
-# (say from another run) isn't written over, and the other isn't kept.
+# One that turns up at a signed APK's place after the checks (say from
+# another run) isn't written over, and the other isn't kept. A stand-in
+# apksigner, in an SDK of its own, makes $APPEAR turn up as it signs.
+mkdir -p "$tmp/hook-sdk/build-tools/99.0.0"
+cat >"$tmp/hook-sdk/build-tools/99.0.0/apksigner" <<EOF
+#!/usr/bin/env bash
+if [[ " \$* " == *" sign "* && -n "\${APPEAR:-}" && ! -e "\$APPEAR" ]]; then
+  if [[ "\${APPEAR_AS:-file}" == folder ]]; then
+    mkdir "\$APPEAR"
+  else
+    echo meanwhile >"\$APPEAR"
+  fi
+fi
+exec "$build_tools/apksigner" "\$@"
+EOF
+chmod +x "$tmp/hook-sdk/build-tools/99.0.0/apksigner"
 cp "$tmp/arm.apk" "$repo/dist/app-7.0-arm64-v8a-unsigned.apk"
 cp "$tmp/clean.apk" "$repo/dist/app-7.0-x86_64-unsigned.apk"
-status=0
-out="$(cd "$repo" &&
-  { sleep 3; echo meanwhile >dist/app-7.0-x86_64.apk; printf '%s\n' "$PW"; } |
-  setsid -w tool/sign_release.sh "$tmp/release.p12" \
-    dist/app-7.0-arm64-v8a-unsigned.apk dist/app-7.0-x86_64-unsigned.apk 2>&1)" ||
-  status=$?
+run "$PW\n" env ANDROID_HOME="$tmp/hook-sdk" \
+  APPEAR="$repo/dist/app-7.0-x86_64.apk" tool/sign_release.sh \
+  "$tmp/release.p12" dist/app-7.0-arm64-v8a-unsigned.apk \
+  dist/app-7.0-x86_64-unsigned.apk
 expect "a signed APK that turns up meanwhile stops it" 1 \
   "couldn't write $repo/dist/app-7.0-x86_64.apk (ln: "
 expect "... saying why" 1 "File exists); none of the APKs was written"
@@ -678,12 +722,9 @@ check "... and isn't written over" \
 check "... and the other signed APK isn't kept" bash -c \
   '[[ ! -e dist/app-7.0-arm64-v8a.apk ]] && ! ls dist/*.partial*'
 # The same with a folder, which ln would otherwise put the APK in.
-status=0
-out="$(cd "$repo" &&
-  { sleep 3; mkdir dist/app-7.0-arm64-v8a.apk; printf '%s\n' "$PW"; } |
-  setsid -w tool/sign_release.sh "$tmp/release.p12" \
-    dist/app-7.0-arm64-v8a-unsigned.apk 2>&1)" ||
-  status=$?
+run "$PW\n" env ANDROID_HOME="$tmp/hook-sdk" \
+  APPEAR="$repo/dist/app-7.0-arm64-v8a.apk" APPEAR_AS=folder \
+  tool/sign_release.sh "$tmp/release.p12" dist/app-7.0-arm64-v8a-unsigned.apk
 expect "a folder that turns up meanwhile stops it too" 1 \
   "couldn't write $repo/dist/app-7.0-arm64-v8a.apk (ln: "
 check "... and stays empty" bash -c '! ls -A dist/app-7.0-arm64-v8a.apk | grep -q .'

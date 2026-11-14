@@ -23,8 +23,9 @@
 # the same file (it is then kept), and if the signed
 # dist/decoy_contacts-<version>-<abi>.apk is there, it must be this build
 # signed; otherwise the script stops before putting any of them there, so a
-# signed APK can't end up next to a different build, nor builds of two
-# commits side by side.
+# signed APK can't end up next to a different build. (With --abi, though,
+# APKs of different commits can end up side by side, one ABI from each:
+# build a release in full.)
 #
 # Flutter compiles absolute paths into the app: the project's path into
 # libapp.so, and the paths of the project, its packages and the Android NDK
@@ -246,15 +247,14 @@ for abi in "${abis[@]}"; do
   build_abi "$abi"
 done
 
-# Into dist only once all of them are built, and each can go there (see
-# check_placement): a failure leaves dist as it was, never with some ABIs
-# of this build next to others of another.
+# Into dist only once all of them are built, and all of them or none (see
+# place_releases): a failure leaves dist as it was, never with some ABIs of
+# this build next to others of another.
 outs=()
+pairs=()
 for abi in "${abis[@]}"; do
   outs+=("$DIST_DIR/decoy_contacts-$version-$abi-unsigned.apk")
-  check_placement "$work/$abi.apk" "${outs[-1]}"
+  pairs+=("$work/$abi.apk" "${outs[-1]}")
 done
-for i in "${!abis[@]}"; do
-  place_release "$work/${abis[$i]}.apk" "${outs[$i]}"
-done
+place_releases "${pairs[@]}"
 sha256sum "${outs[@]}"
