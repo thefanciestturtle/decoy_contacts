@@ -30,6 +30,15 @@ declare -rA ABI_PLATFORM=(
   [armeabi-v7a]=android-arm [arm64-v8a]=android-arm64 [x86_64]=android-x64
 )
 
+# Whether $1 is one of RELEASE_ABIS.
+is_release_abi() {
+  local abi
+  for abi in "${RELEASE_ABIS[@]}"; do
+    [[ "$abi" == "$1" ]] && return 0
+  done
+  return 1
+}
+
 fail() {
   echo "error: $*" >&2
   exit 1
@@ -175,16 +184,27 @@ apk_version() {
 
 # The versionName and build number in pubspec.yaml $1 (by default the one
 # in the folder this runs in), as "NAME BUILD": "version: 2.0.0+5" gives
-# "2.0.0 5". The APKs' versionCodes are made from the build number (see
+# "2.0.0 5". The name is numbers and dots (it goes into the APKs' file
+# names). The APKs' versionCodes are made from the build number (see
 # RELEASE_ABIS), so it must be there, from 1 to 999 (with 1000 or more,
 # one ABI's code could be another's), written without a leading zero (as
-# Flutter reads it). Fails otherwise.
+# Flutter reads it). Quoted or not, with or without a comment after it
+# (after a space, as YAML wants). Fails otherwise, or if there isn't
+# exactly one version line.
 pubspec_version() {
-  local found
-  found="$(sed -n "s/^version:[[:space:]]*[\"']\{0,1\}\([^+\"'[:space:]]\{1,\}\)+\([1-9][0-9]\{0,2\}\)[\"']\{0,1\}[[:space:]]*\(#.*\)\{0,1\}$/\1 \2/p" \
-    "${1:-pubspec.yaml}" 2>/dev/null)"
-  [[ -n "$found" && "$found" != *$'\n'* ]] || return 1
-  echo "$found"
+  local line value
+  line="$(grep '^version:' "${1:-pubspec.yaml}" 2>/dev/null)" || return 1
+  [[ "$line" != *$'\n'* ]] || return 1
+  local version='([0-9]+(\.[0-9]+)*)\+([1-9][0-9]{0,2})'
+  local after='([[:space:]]+#.*)?[[:space:]]*$'
+  value="${line#version:}"
+  if [[ "$value" =~ ^[[:space:]]*$version$after ||
+        "$value" =~ ^[[:space:]]*\"$version\"$after ||
+        "$value" =~ ^[[:space:]]*\'$version\'$after ]]; then
+    echo "${BASH_REMATCH[1]} ${BASH_REMATCH[3]}"
+  else
+    return 1
+  fi
 }
 
 # Stops the script (fail) unless APK $1 is the release APK for ABI $2 of

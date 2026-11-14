@@ -97,7 +97,7 @@ while (($#)); do
       gradle_home="$(absolute_path "$2" "$CALLER_DIR")"
       shift 2 ;;
     --abi)
-      (($# >= 2)) && [[ -n "$2" && -n "${ABI_CODE[$2]+set}" ]] || usage
+      if (($# < 2)) || ! is_release_abi "$2"; then usage; fi
       chosen[$2]=1
       shift 2 ;;
     -*) usage ;;
@@ -136,26 +136,24 @@ checkout() {
 
 echo "== Building $(git describe --always --tags "$commit") ($commit)" \
      "for ${abis[*]}"
-# The commit's pubspec.yaml and CI settings, for the versions. (Each ABI is
+# The commit's CI settings and pubspec.yaml, for the versions. (Each ABI is
 # then built in a clone of its own.)
-mkdir -p "$work/meta/.github/workflows"
-git show "$commit:.github/workflows/dart.yml" \
-  >"$work/meta/.github/workflows/dart.yml" 2>/dev/null || true
-git show "$commit:pubspec.yaml" >"$work/meta/pubspec.yaml" 2>/dev/null || true
+git show "$commit:.github/workflows/dart.yml" >"$work/dart.yml" 2>/dev/null || true
+git show "$commit:pubspec.yaml" >"$work/pubspec.yaml" 2>/dev/null || true
 
 # The versions that commit's CI builds with.
-flutter_version="$(cd "$work/meta" && ci_flutter_version)" ||
+flutter_version="$(ci_flutter_version "$work/dart.yml")" ||
   fail "couldn't read FLUTTER_VERSION from the commit's .github/workflows/dart.yml"
-java_wanted="$(cd "$work/meta" && ci_java_version)" ||
+java_wanted="$(ci_java_version "$work/dart.yml")" ||
   fail "couldn't read JAVA_VERSION from the commit's .github/workflows/dart.yml"
 java_found="$(java_version "$JAVA_HOME/bin/java")" ||
   fail "couldn't run $JAVA_HOME/bin/java"
 [[ "$java_found" == "$java_wanted" ]] ||
   fail "JAVA_HOME is Java ${java_found:-unknown}; this commit is built with" \
        "Java $java_wanted (JAVA_VERSION in .github/workflows/dart.yml)"
-read -r version build_number < <(pubspec_version "$work/meta/pubspec.yaml") ||
-  fail "no version with a build number from 1 to 999 (e.g. 2.0.0+5) in the" \
-       "commit's pubspec.yaml"
+read -r version build_number < <(pubspec_version "$work/pubspec.yaml") ||
+  fail "the version in the commit's pubspec.yaml must look like 2.0.0+5:" \
+       "numbers and dots, then + and a build number from 1 to 999"
 
 if [[ -z "$flutter_sdk" ]]; then
   flutter_sdk="$cache/flutter-$flutter_version"

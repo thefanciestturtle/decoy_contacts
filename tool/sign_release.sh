@@ -73,8 +73,9 @@ remove_partials() {
 }
 trap remove_partials EXIT
 
-# Read here, not by apksigner, so it is asked once; apksigner gets it in
-# its environment, which only this user's own processes can read.
+# Read here, not by apksigner, so it is asked once; apksigner reads it from
+# a pipe (not from its command line or its environment, which other
+# programs could see).
 # (As typed: IFS= keeps spaces at its ends.)
 password=""
 IFS= read -rs -p "Keystore password: " password || true
@@ -83,9 +84,10 @@ IFS= read -rs -p "Keystore password: " password || true
 # Signs $1 into $2 and checks the result.
 sign_one() {
   local unsigned=$1 partial=$2 verified signers got blocks
-  if ! SIGN_RELEASE_PASSWORD="$password" apksigner_ sign --ks "$keystore" \
-         --ks-pass env:SIGN_RELEASE_PASSWORD "${SIGNING_OPTIONS[@]}" \
-         --out "$partial" "$unsigned"; then
+  # (printf is part of bash: the password is never on a command line.)
+  if ! printf '%s\n' "$password" |
+       apksigner_ sign --ks "$keystore" --ks-pass stdin \
+         "${SIGNING_OPTIONS[@]}" --out "$partial" "$unsigned"; then
     fail "apksigner couldn't sign $unsigned"
   fi
 

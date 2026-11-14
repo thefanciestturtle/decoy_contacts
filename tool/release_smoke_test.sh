@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Smoke-tests a release build of the app on an Android emulator.
 #
-#   tool/release_smoke_test.sh [path/to/app-release.apk]
+#   tool/release_smoke_test.sh [APK]
+#
+# e.g. dist/decoy_contacts-<version>-x86_64-unsigned.apk (the emulator's
+# ABI).
 #
 # Without an APK, it first builds the release APK for the emulator's ABI,
 # as releases are built (one APK per ABI, flutter build apk --split-per-abi).
@@ -92,8 +95,8 @@ if [[ $# -eq 0 ]]; then
   flutter build apk --release --split-per-abi \
     --target-platform "${ABI_PLATFORM[$abi]}"
   apk="build/app/outputs/flutter-apk/app-$abi-release.apk"
+  [[ -f "$apk" ]] || fail "the build made no APK at $apk"
 fi
-[[ -f "$apk" ]] || fail "no APK at $apk"
 
 tmp="$(mktemp -d)"
 was_root=false

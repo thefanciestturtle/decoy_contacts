@@ -76,6 +76,18 @@ expect() {
   fi
 }
 
+# expect_exact NAME STATUS TEXT : as expect, but the output must be TEXT
+# exactly.
+expect_exact() {
+  cases=$((cases + 1))
+  if [[ "$status" == "$2" && "$out" == "$3" ]]; then
+    echo "ok: $1"
+  else
+    echo "FAIL: $1: exit $status (want $2), output '$out' (want '$3')"
+    failures=$((failures + 1))
+  fi
+}
+
 # check NAME COMMAND... : wants COMMAND to succeed.
 check() {
   cases=$((cases + 1))
@@ -286,14 +298,7 @@ expect "apk_version: an APK without a versionCode fails" 0 "none"
 pubspec() {
   printf '%b' "$1" >"$tmp/pubspec.yaml"
   run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; pubspec_version '$tmp/pubspec.yaml' || echo none"
-  out="${out%$'\n'}"
-  cases=$((cases + 1))
-  if [[ "$status" == 0 && "$out" == "$3" ]]; then
-    echo "ok: pubspec_version: $2"
-  else
-    echo "FAIL: pubspec_version: $2: got '$out', want '$3'"
-    failures=$((failures + 1))
-  fi
+  expect_exact "pubspec_version: $2" 0 "$3"
 }
 pubspec 'name: app\nversion: 2.0.0+5\n' "the name and the build number" "2.0.0 5"
 pubspec "version: '2.0.0+15' # the release\n" "quoted, with a comment" "2.0.0 15"
@@ -304,7 +309,12 @@ pubspec 'version: 2.0.0+999\n' "build number 999" "2.0.0 999"
 pubspec 'version: 2.0.0+1000\n' "build number 1000 fails (codes would clash)" "none"
 pubspec 'version: 2.0.0+0\n' "build number 0 fails" "none"
 pubspec 'version: 2.0.0+08\n' "a leading zero fails" "none"
-pubspec 'version: 2.0.0-rc.1+5\n' "a pre-release name" "2.0.0-rc.1 5"
+pubspec 'version: "2.0.0+5"\n' "double quotes" "2.0.0 5"
+pubspec 'version: 2.0.0+5\r\n' "a Windows line end" "2.0.0 5"
+pubspec 'version: 2.0.0-rc.1+5\n' "a name with more than numbers and dots fails" "none"
+pubspec 'version: 1.0/../x+5\n' "... say one that would make a path" "none"
+pubspec 'version: 2.0.0+5#x\n' "a # with no space before it isn't a comment" "none"
+pubspec 'version: "2.0.0+5 #x"\n' "... nor one inside quotes" "none"
 
 # --- release_lib.sh: check_release_apk, on APKs made with aapt2
 # release_apk OUT CODE NAME TEXT [ABI...] : an APK with versionCode CODE
@@ -646,6 +656,8 @@ run "" tool/build_release.sh --abi
 expect "build: --abi without an ABI fails" 2 "usage:"
 run "" tool/build_release.sh --abi ""
 expect "build: --abi with an empty ABI fails" 2 "usage:"
+run "" tool/build_release.sh --abi "arm64-v8a x86_64"
+expect "build: --abi with two ABIs at once fails" 2 "usage:"
 run "" env JAVA_HOME="$java_home" ANDROID_HOME="$tmp/sdk" tool/build_release.sh
 expect "build: without aapt2 it fails" 1 "this needs aapt2"
 # A stand-in for Flutter's repository.
@@ -689,7 +701,7 @@ git -C "$tmp/flutter" tag 9.99.0
 run "" env JAVA_HOME="$java_home" \
   tool/build_release.sh --flutter-sdk "$tmp/flutter" no-build-number
 expect "build: a version without a build number fails" 1 \
-  "no version with a build number from 1 to 999 (e.g. 2.0.0+5)"
+  "pubspec.yaml must look like 2.0.0+5: numbers and dots, then + and a build number from 1 to 999"
 run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/flutter"
 expect "build: a Flutter that isn't on a branch named stable fails" 1 \
   "is on 'main', not on a branch named stable"
