@@ -1,0 +1,7 @@
+Version 2.0.0: Decoy Contacts is now its own app, next to Fake Contacts 1.8.
+- Delete removes only contacts this app created, never real ones with the same name.
+- Create no longer makes duplicates.
+- Asks first, with the exact count; big batches show progress and a Stop button.
+- Plain error messages, a status line, a live preview, Reset to defaults and an About screen.
+- Dark mode, and better TalkBack and keyboard support.
+- Phone numbers now come from the UK range reserved for TV and film.
