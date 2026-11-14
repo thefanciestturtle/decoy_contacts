@@ -114,7 +114,7 @@ jobs:
   release-build:
     name: Release build is reproducible
     runs-on: ubuntu-latest
-    # Six builds of about 3 minutes each.
+    # Six builds: 12 minutes in all on GitHub's runner (2026-11-14).
     timeout-minutes: 45
 
     steps:
