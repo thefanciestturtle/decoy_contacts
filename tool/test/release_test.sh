@@ -44,6 +44,9 @@ commit() {
 }
 commit 9.97.0 "$java_major" older-flutter
 commit 9.99.0 "$((java_major + 1))" other-jdk
+echo 'version: 1.2.3' >"$repo/pubspec.yaml"
+commit 9.99.0 "$java_major" no-build-number
+echo 'version: 1.2.3+4' >"$repo/pubspec.yaml"
 commit 9.99.0 "$java_major"
 
 failures=0
@@ -218,6 +221,16 @@ expect "APKs that differ inside list the files" 1 $'differ\n  lib/x86_64/libapp.
 run "" python3 -I tool/apk_check.py same "$tmp/clean.apk" "$tmp/blocks.apk"
 expect "APKs that differ only outside their files say so" 1 \
   "not in the files they hold"
+run "" python3 -I tool/apk_check.py abis "$tmp/clean.apk"
+expect "abis: the ABI an APK has native code for" 0 "x86_64"
+cp "$tmp/clean.apk" "$tmp/fat.apk"
+add_entry "$tmp/fat.apk" lib/arm64-v8a/libapp.so zlib "code"
+add_entry "$tmp/fat.apk" lib/arm64-v8a/libflutter.so zlib "code"
+add_entry "$tmp/fat.apk" lib/notes.txt zlib "not an ABI's folder"
+run "" python3 -I tool/apk_check.py abis "$tmp/fat.apk"
+expect "abis: each ABI of a fat APK, once" 0 $'arm64-v8a\nx86_64'
+check "abis: an APK without native code has none" bash -c \
+  "[[ -z \"\$(python3 -I tool/apk_check.py abis '$tmp/base.apk')\" ]]"
 
 # --- release_lib.sh: apksigner from the newest build-tools, 35 or newer.
 for v in 34.0.0 35.0.0 36.1.0 36.0.0; do
@@ -242,6 +255,51 @@ expect "apksigner older than 35 fails" 1 "build-tools 35 or newer"
 run "" env -u ANDROID_HOME -u ANDROID_SDK_ROOT bash -c \
   'source tool/check_lib.sh; source tool/release_lib.sh; apksigner_path'
 expect "no Android SDK fails" 1 "set ANDROID_HOME"
+
+# --- release_lib.sh: aapt2 from the newest build-tools release that has it
+for v in 36.0.0 37.0.0 38.0.0-rc1; do
+  mkdir -p "$tmp/sdk2/build-tools/$v"
+  touch "$tmp/sdk2/build-tools/$v/aapt2"
+  chmod +x "$tmp/sdk2/build-tools/$v/aapt2"
+done
+mkdir -p "$tmp/sdk2/build-tools/38.0.0" # no aapt2 in it
+run "" env ANDROID_HOME="$tmp/sdk2" bash -c \
+  'source tool/check_lib.sh; source tool/release_lib.sh; aapt2_path'
+expect "aapt2 from the newest build-tools release that has one" 0 \
+  "$tmp/sdk2/build-tools/37.0.0/aapt2"
+run "" env ANDROID_HOME="$tmp/sdk" bash -c \
+  'source tool/check_lib.sh; source tool/release_lib.sh; aapt2_path'
+expect "no aapt2 fails" 1 "this needs aapt2"
+
+# --- release_lib.sh: apk_version
+"$build_tools/aapt2" link -o "$tmp/versioned.apk" \
+  --manifest "$tmp/AndroidManifest.xml" -I "$platform/android.jar" \
+  --version-code 2004 --version-name 1.2.3
+run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; apk_version '$tmp/versioned.apk'"
+expect "apk_version: the versionCode and versionName" 0 "2004 1.2.3"
+run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; apk_version '$tmp/base.apk' || echo none"
+expect "apk_version: an APK without a versionCode fails" 0 "none"
+
+# --- release_lib.sh: pubspec_version
+# pubspec CONTENTS NAME WANT : wants pubspec_version of a pubspec.yaml
+# holding CONTENTS to print WANT (or fail: "none").
+pubspec() {
+  printf '%b' "$1" >"$tmp/pubspec.yaml"
+  run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; pubspec_version '$tmp/pubspec.yaml' || echo none"
+  out="${out%$'\n'}"
+  cases=$((cases + 1))
+  if [[ "$status" == 0 && "$out" == "$3" ]]; then
+    echo "ok: pubspec_version: $2"
+  else
+    echo "FAIL: pubspec_version: $2: got '$out', want '$3'"
+    failures=$((failures + 1))
+  fi
+}
+pubspec 'name: app\nversion: 2.0.0+5\n' "the name and the build number" "2.0.0 5"
+pubspec "version: '2.0.0+15' # the release\n" "quoted, with a comment" "2.0.0 15"
+pubspec 'version: 2.0.0\n' "without a build number it fails" "none"
+pubspec 'version: 2.0.0+5\nversion: 2.0.1+6\n' "two versions fail" "none"
+pubspec 'name: app\n' "no version fails" "none"
 
 # --- release_lib.sh: debug_sign
 mkdir -p "$tmp/android-empty" "$tmp/android"
@@ -475,11 +533,58 @@ run "$PW\n" tool/sign_release.sh "$tmp/release.p12" dist/app-3.0-unsigned.apk
 expect "without a pinned fingerprint it fails" 1 "no release certificate fingerprint"
 echo "$pinned" >"$repo/$RELEASE_CERT_FILE"
 
+run "" tool/sign_release.sh "$tmp/release.p12"
+expect "without an APK it fails" 2 "usage:"
+
+# Several at once, one APK per ABI, with the password asked once.
+make_apk "$tmp/arm.apk" "$CLEAN for arm"
+for v in 4.0 5.0 6.0; do
+  cp "$tmp/arm.apk" "$repo/dist/app-$v-arm64-v8a-unsigned.apk"
+  cp "$tmp/clean.apk" "$repo/dist/app-$v-x86_64-unsigned.apk"
+done
+run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
+  dist/app-4.0-arm64-v8a-unsigned.apk dist/app-4.0-x86_64-unsigned.apk
+expect "signs several APKs, with the password given once" 0 \
+  "Signed $repo/dist/app-4.0-x86_64.apk"
+check "... each with only its signature added" bash -c \
+  "for abi in arm64-v8a x86_64; do
+     python3 -I tool/apk_check.py only-signature-added dist/app-4.0-\$abi.apk dist/app-4.0-\$abi-unsigned.apk || exit 1
+   done"
+run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
+  dist/app-5.0-x86_64-unsigned.apk "$repo/dist/app-5.0-x86_64-unsigned.apk"
+expect "the same APK twice fails" 1 "is given twice"
+# One that apksigner can't sign (no manifest), after one it can.
+python3 -I - "$repo/dist/app-5.0-x86_64-unsigned.apk" <<'EOF'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'w') as apk:
+    apk.writestr('lib/x86_64/libapp.so', bytes(100))
+EOF
+run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
+  dist/app-5.0-arm64-v8a-unsigned.apk dist/app-5.0-x86_64-unsigned.apk
+expect "if one can't be signed, it fails" 1 \
+  "apksigner couldn't sign $repo/dist/app-5.0-x86_64-unsigned.apk"
+check "... and writes none, not even the one signed before it" bash -c \
+  '[[ ! -e dist/app-5.0-arm64-v8a.apk ]] && ! ls dist/*.partial*'
+cp "$repo/dist/app-4.0-x86_64.apk" "$repo/dist/app-6.0-x86_64.apk"
+run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
+  dist/app-6.0-arm64-v8a-unsigned.apk dist/app-6.0-x86_64-unsigned.apk
+expect "if one is signed already, it fails" 1 "app-6.0-x86_64.apk already exists"
+check "... before signing any" test ! -e "$repo/dist/app-6.0-arm64-v8a.apk"
+
 # --- tool/build_release.sh, up to the build
 run "" tool/build_release.sh --bogus
 expect "build: an unknown option fails" 2 "usage:"
 run "" tool/build_release.sh HEAD HEAD
 expect "build: two commits fail" 2 "usage:"
+run "" tool/build_release.sh --abi mips
+expect "build: an unknown ABI fails, listing the ABIs" 2 \
+  "ABIs: armeabi-v7a arm64-v8a x86_64"
+run "" tool/build_release.sh --abi
+expect "build: --abi without an ABI fails" 2 "usage:"
+run "" tool/build_release.sh --abi ""
+expect "build: --abi with an empty ABI fails" 2 "usage:"
+run "" env JAVA_HOME="$java_home" ANDROID_HOME="$tmp/sdk" tool/build_release.sh
+expect "build: without aapt2 it fails" 1 "this needs aapt2"
 # A stand-in for Flutter's repository.
 mkdir -p "$tmp/flutter/sub" "$tmp/not-git"
 echo flutter >"$tmp/flutter/README.md"
@@ -512,6 +617,10 @@ RUN_IN="$tmp" run "" env JAVA_HOME="$java_home" \
 expect "build: the Flutter version is the commit's" 1 \
   "Flutter in $tmp/flutter is '9.98.0', not 9.97.0"
 git -C "$tmp/flutter" tag 9.99.0
+run "" env JAVA_HOME="$java_home" \
+  tool/build_release.sh --flutter-sdk "$tmp/flutter" no-build-number
+expect "build: a version without a build number fails" 1 \
+  "no version with a build number (e.g. 2.0.0+5)"
 run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/flutter"
 expect "build: a Flutter that isn't on a branch named stable fails" 1 \
   "is on 'main', not on a branch named stable"

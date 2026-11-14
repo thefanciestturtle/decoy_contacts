@@ -3,7 +3,8 @@
 #
 #   tool/release_smoke_test.sh [path/to/app-release.apk]
 #
-# Without an APK, it builds a release APK for the emulator's ABI first.
+# Without an APK, it first builds the release APK for the emulator's ABI,
+# as releases are built (one APK per ABI, flutter build apk --split-per-abi).
 # Release builds are unsigned (the release key signs them by hand, see
 # tool/sign_release.sh), so it installs a copy signed with the debug key, as
 # tool/debug_sign.sh makes; an APK that is already signed is installed as
@@ -197,15 +198,13 @@ check_app_ok() {
 
 if [[ $# -eq 0 ]]; then
   abi="$(adb_ shell getprop ro.product.cpu.abi | tr -d '\r')"
-  case "$abi" in
-    x86_64) platform=android-x64 ;;
-    arm64-v8a) platform=android-arm64 ;;
-    armeabi-v7a) platform=android-arm ;;
-    *) fail "no Flutter target platform for ABI '$abi'" ;;
-  esac
-  echo "== Building a release APK for $abi"
-  flutter build apk --release --target-platform "$platform"
-  apk=build/app/outputs/flutter-apk/app-release.apk
+  if [[ -z "$abi" ]] || [[ -z "${ABI_PLATFORM[$abi]+set}" ]]; then
+    fail "releases have no APK for the emulator's ABI '$abi'"
+  fi
+  echo "== Building the release APK for $abi"
+  flutter build apk --release --split-per-abi \
+    --target-platform "${ABI_PLATFORM[$abi]}"
+  apk="build/app/outputs/flutter-apk/app-$abi-release.apk"
 fi
 [[ -f "$apk" ]] || fail "no APK at $apk"
 if $needs_signing; then

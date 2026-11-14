@@ -15,6 +15,21 @@ readonly RELEASE_CERT_FILE=tool/release_certificate.sha256
 # The release builds and the signed APKs go here (not tracked by git).
 readonly DIST_DIR=dist
 
+# The ABIs (processor types) a release has an APK for, one each, built with
+# `flutter build apk --split-per-abi`: 32-bit ARM phones, 64-bit ARM phones,
+# and x86_64 (Chromebooks, emulators). Flutter gives each one's APK the
+# versionCode ABI_CODE * 1000 + the build number (the number after the + in
+# pubspec.yaml's version), so app stores offer a 64-bit phone the arm64-v8a
+# APK, the highest code it can run. These are Flutter's own codes
+# (ABI_VERSION in its Gradle plugin); tool/build_release.sh checks every
+# APK's.
+readonly RELEASE_ABIS=(armeabi-v7a arm64-v8a x86_64)
+declare -rA ABI_CODE=([armeabi-v7a]=1 [arm64-v8a]=2 [x86_64]=4)
+# The name Flutter's --target-platform knows each one by.
+declare -rA ABI_PLATFORM=(
+  [armeabi-v7a]=android-arm [arm64-v8a]=android-arm64 [x86_64]=android-x64
+)
+
 fail() {
   echo "error: $*" >&2
   exit 1
@@ -98,28 +113,71 @@ android_sdk() {
   echo "$sdk"
 }
 
-# apksigner from the newest build-tools release in the Android SDK (not a
-# preview such as 36.0.0-rc1), 35 or newer: since 35 apksigner moves files
-# within the APK as it signs, unless told --alignment-preserved, which older
-# ones don't know. (F-Droid can't copy a signature made that way onto its
-# own build: fdroiddata issue 3299.)
-apksigner_path() {
-  local sdk dir newest=""
-  sdk="$(android_sdk)" || return 1
-  for dir in "$sdk"/build-tools/*/; do
-    [[ -x "${dir}apksigner" ]] || continue
+# The newest build-tools release in the Android SDK $1 (not a preview such
+# as 36.0.0-rc1) that has the tool $2, e.g. 36.1.0; nothing if none has it.
+newest_build_tools() {
+  local dir newest=""
+  for dir in "$1"/build-tools/*/; do
+    [[ -x "$dir$2" ]] || continue
     dir="$(basename "$dir")"
     [[ "$dir" =~ ^[0-9]+(\.[0-9]+)*$ ]] || continue
     if [[ -z "$newest" ]] || version_older "$newest" "$dir"; then
       newest="$dir"
     fi
   done
+  echo "$newest"
+}
+
+# apksigner from the newest build-tools release in the Android SDK, 35 or
+# newer: since 35 apksigner moves files within the APK as it signs, unless
+# told --alignment-preserved, which older ones don't know. (F-Droid can't
+# copy a signature made that way onto its own build: fdroiddata issue 3299.)
+apksigner_path() {
+  local sdk newest
+  sdk="$(android_sdk)" || return 1
+  newest="$(newest_build_tools "$sdk" apksigner)"
   if [[ -z "$newest" ]] || version_older "$newest" 35; then
     echo "error: this needs apksigner from Android build-tools 35 or newer" \
          "in $sdk/build-tools (has: ${newest:-none})" >&2
     return 1
   fi
   echo "$sdk/build-tools/$newest/apksigner"
+}
+
+# aapt2 from the newest build-tools release in the Android SDK.
+aapt2_path() {
+  local sdk newest
+  sdk="$(android_sdk)" || return 1
+  newest="$(newest_build_tools "$sdk" aapt2)"
+  if [[ -z "$newest" ]]; then
+    echo "error: this needs aapt2 from Android build-tools in" \
+         "$sdk/build-tools" >&2
+    return 1
+  fi
+  echo "$sdk/build-tools/$newest/aapt2"
+}
+
+# The versionCode and versionName of APK $1, as "CODE NAME"; fails if aapt2
+# can't read them.
+apk_version() {
+  local aapt2 found
+  aapt2="$(aapt2_path)" || return 1
+  found="$("$aapt2" dump badging "$1" 2>/dev/null | sed -n \
+    "s/^package: .* versionCode='\([0-9]\{1,\}\)' versionName='\([^']*\)'.*/\1 \2/p")"
+  [[ -n "$found" ]] || return 1
+  echo "$found"
+}
+
+# The versionName and build number in pubspec.yaml $1 (by default the one
+# in the folder this runs in), as "NAME BUILD": "version: 2.0.0+5" gives
+# "2.0.0 5". Fails without a build number, which the APKs' versionCodes are
+# made from.
+pubspec_version() {
+  local found
+  found="$(sed -n "s/^version:[[:space:]]*[\"']\{0,1\}\([0-9][0-9.]*\)+\([0-9]\{1,\}\)[\"']\{0,1\}[[:space:]]*\(#.*\)\{0,1\}$/\1 \2/p" \
+    "${1:-pubspec.yaml}" 2>/dev/null)"
+  [[ -n "$found" && "$found" != *$'\n'* ]] || return 1
+  echo "$found"
 }
 
 # Runs apksigner with "$@", with the JDK in JAVA_HOME if that is set (the

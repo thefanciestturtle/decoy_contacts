@@ -13,6 +13,10 @@
       more (say this computer's home folder): as ASCII or UTF-16 text, and
       also inside zlib-compressed assets (.Z).
 
+  apk_check.py abis APK
+      Prints the ABIs the APK has native libraries for (the folders in
+      lib/), one per line; nothing if it has none.
+
   apk_check.py same APK1 APK2
       Fails unless the two are the same file; lists the files inside that
       differ.
@@ -145,6 +149,15 @@ def home_paths(path, *texts):
     return 0
 
 
+def abis(path):
+    with zipfile.ZipFile(path) as apk:
+        found = {name.split('/')[1] for name in apk.namelist()
+                 if name.startswith('lib/') and name.count('/') >= 2}
+    for abi in sorted(found):
+        print(abi)
+    return 0
+
+
 def same(path1, path2):
     if open(path1, 'rb').read() == open(path2, 'rb').read():
         return 0
@@ -197,6 +210,7 @@ def main(argv):
     commands = {
         'signature': (signature, 1, 1),
         'home-paths': (home_paths, 1, None),
+        'abis': (abis, 1, 1),
         'same': (same, 2, 2),
         'only-signature-added': (only_signature_added, 2, 2),
     }
