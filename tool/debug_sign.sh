@@ -9,6 +9,9 @@
 # OUT is by default APK with "-debug-signed" before ".apk", e.g.
 # build/app/outputs/flutter-apk/app-x86_64-release-debug-signed.apk. Then:
 # adb install OUT. Gradle makes the debug key with the first debug build.
+# OUT can't be in dist/, where the release APKs are, so a debug-signed one
+# can't be taken for one of them: for a release build in dist/, give an OUT
+# elsewhere.
 set -euo pipefail
 
 readonly CALLER_DIR="$PWD"
@@ -26,6 +29,11 @@ out="$(absolute_path "${2:-${1%.apk}-debug-signed.apk}" "$CALLER_DIR")"
 need python3
 [[ -f "$apk" ]] || fail "no APK at $apk"
 [[ ! -e "$out" ]] || fail "$out already exists; move it away first"
+case "$(realpath -m "$out")" in
+  "$(realpath -m "$DIST_DIR")"/*)
+    fail "$out would be in $DIST_DIR/, with the release APKs; give an OUT" \
+         "elsewhere, say build/${out##*/}" ;;
+esac
 if is_signed "$apk"; then
   fail "$apk is already signed"
 fi

@@ -409,6 +409,15 @@ check "... which is left as it was" \
 run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
   "$tmp/app-release.apk"
 expect "debug_sign.sh won't replace an earlier copy" 1 "already exists"
+cp "$tmp/clean.apk" "$repo/dist/debug-test-unsigned.apk"
+run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
+  dist/debug-test-unsigned.apk
+expect "debug_sign.sh won't write into dist/, with the release APKs" 1 \
+  "would be in dist/, with the release APKs"
+check "... and writes nothing there" test ! -e "$repo/dist/debug-test-unsigned-debug-signed.apk"
+run "" env ANDROID_USER_HOME="$tmp/android" tool/debug_sign.sh \
+  dist/debug-test-unsigned.apk "$tmp/debug-test.apk"
+expect "... but signs a copy elsewhere" 0 "Signed with the debug key: $tmp/debug-test.apk"
 
 # --- release_lib.sh: check_home_paths, with this computer's home folder
 # (Not in a folder named "home", which fails anyway.)
@@ -633,7 +642,7 @@ check "... each with only its signature added" bash -c \
 run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
   dist/app-5.0-x86_64-unsigned.apk ./dist/../dist/app-5.0-x86_64-unsigned.apk
 expect "the same APK twice fails" 1 \
-  "$repo/dist/app-5.0-x86_64-unsigned.apk is given twice"
+  "is given twice (as $repo/dist/app-5.0-x86_64-unsigned.apk)"
 ln -s app-5.0-x86_64-unsigned.apk "$repo/dist/link-5.0-x86_64-unsigned.apk"
 run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
   dist/app-5.0-x86_64-unsigned.apk dist/link-5.0-x86_64-unsigned.apk
@@ -662,11 +671,35 @@ out="$(cd "$repo" &&
     dist/app-7.0-arm64-v8a-unsigned.apk dist/app-7.0-x86_64-unsigned.apk 2>&1)" ||
   status=$?
 expect "a signed APK that turns up meanwhile stops it" 1 \
-  "couldn't write $repo/dist/app-7.0-x86_64.apk (is there one now?)"
+  "couldn't write $repo/dist/app-7.0-x86_64.apk (ln: "
+expect "... saying why" 1 "File exists); none of the APKs was written"
 check "... and isn't written over" \
   test "$(cat "$repo/dist/app-7.0-x86_64.apk")" == meanwhile
 check "... and the other signed APK isn't kept" bash -c \
   '[[ ! -e dist/app-7.0-arm64-v8a.apk ]] && ! ls dist/*.partial*'
+# The same with a folder, which ln would otherwise put the APK in.
+status=0
+out="$(cd "$repo" &&
+  { sleep 3; mkdir dist/app-7.0-arm64-v8a.apk; printf '%s\n' "$PW"; } |
+  setsid -w tool/sign_release.sh "$tmp/release.p12" \
+    dist/app-7.0-arm64-v8a-unsigned.apk 2>&1)" ||
+  status=$?
+expect "a folder that turns up meanwhile stops it too" 1 \
+  "couldn't write $repo/dist/app-7.0-arm64-v8a.apk (ln: "
+check "... and stays empty" bash -c '! ls -A dist/app-7.0-arm64-v8a.apk | grep -q .'
+
+# The APK named through a link to a folder and "..": the one the system
+# opens is signed, next to it.
+mkdir -p "$repo/other/sub" "$repo/other/dist"
+cp "$tmp/arm.apk" "$repo/other/dist/app-8.0-x86_64-unsigned.apk"
+cp "$tmp/clean.apk" "$repo/dist/app-8.0-x86_64-unsigned.apk"
+ln -s other/sub "$repo/link"
+run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
+  link/../dist/app-8.0-x86_64-unsigned.apk
+expect "a path through a link to a folder signs the file it names" 0 "Signed"
+check "... next to it" python3 -I tool/apk_check.py only-signature-added \
+  other/dist/app-8.0-x86_64.apk other/dist/app-8.0-x86_64-unsigned.apk
+check "... and not the one the path looks like" test ! -e dist/app-8.0-x86_64.apk
 cp "$repo/dist/app-4.0-x86_64.apk" "$repo/dist/app-6.0-x86_64.apk"
 run "$PW\n" tool/sign_release.sh "$tmp/release.p12" \
   dist/app-6.0-arm64-v8a-unsigned.apk dist/app-6.0-x86_64-unsigned.apk

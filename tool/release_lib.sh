@@ -74,20 +74,36 @@ check_home_paths() {
   esac
 }
 
-# Puts release build $1 into dist as $2 (…-unsigned.apk). If $2 is already
-# there, the build must be the same file (it is then kept); if the signed
-# APK (….apk) is there, it must be this build signed. Otherwise it stops, so
-# a signed APK can't end up next to a different build.
-place_release() {
-  local apk=$1 out=$2 signed="${2%-unsigned.apk}.apk"
+# The name of the signed APK that signing unsigned APK $1 makes, next to
+# it: dist/decoy_contacts-2.0.0-x86_64-unsigned.apk gives
+# dist/decoy_contacts-2.0.0-x86_64.apk.
+signed_name() {
+  echo "${1%-unsigned.apk}.apk"
+}
+
+# Stops the script (fail) unless release build $1 can go into dist as $2
+# (…-unsigned.apk): if $2 is already there, the build must be the same
+# file; if the signed APK (see signed_name) is there, it must be this build
+# signed. So a signed APK can't end up next to a different build.
+check_placement() {
+  local apk=$1 out=$2 signed
+  signed="$(signed_name "$2")"
   if [[ -e "$signed" ]] && ! apk_check only-signature-added "$signed" "$apk"; then
     fail "$signed, already there, isn't this build signed;" \
          "move it and $out away first"
   fi
+  if [[ -e "$out" ]] && ! apk_check same "$out" "$apk"; then
+    fail "this build isn't the same file as the $out already there;" \
+         "move that away first"
+  fi
+}
+
+# Puts release build $1 into dist as $2, after check_placement; if $2 is
+# already there, it is kept.
+place_release() {
+  local apk=$1 out=$2
+  check_placement "$apk" "$out"
   if [[ -e "$out" ]]; then
-    apk_check same "$out" "$apk" ||
-      fail "this build isn't the same file as the $out already there;" \
-           "move that away first"
     echo "== The same file as the $out already there"
   else
     mkdir -p "$(dirname "$out")"

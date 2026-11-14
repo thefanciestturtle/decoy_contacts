@@ -18,11 +18,13 @@
 # only, and have the versionCode ABI_CODE * 1000 + the build number in
 # pubspec.yaml (Flutter's numbering; see tool/release_lib.sh).
 #
-# They go to dist/decoy_contacts-<version>-<abi>-unsigned.apk. If such a
-# file is already there, the new build must be the same file (it is then
-# kept), and if the signed dist/decoy_contacts-<version>-<abi>.apk is
-# there, it must be this build signed; otherwise the script stops, so a
-# signed APK can't end up next to a different build.
+# They go to dist/decoy_contacts-<version>-<abi>-unsigned.apk, once all of
+# them are built. If such a file is already there, the new build must be
+# the same file (it is then kept), and if the signed
+# dist/decoy_contacts-<version>-<abi>.apk is there, it must be this build
+# signed; otherwise the script stops before putting any of them there, so a
+# signed APK can't end up next to a different build, nor builds of two
+# commits side by side.
 #
 # Flutter compiles absolute paths into the app: the project's path into
 # libapp.so, and the paths of the project, its packages and the Android NDK
@@ -192,11 +194,11 @@ echo buildserver >"$work/hostname"
 
 # Builds the APK for ABI $1 from a fresh clone, in the sandbox, with a /tmp
 # of its own (on disk), in UTC whatever this computer uses; then checks it
-# and puts it into dist. No Gradle daemon, and the Kotlin compiler in
+# and keeps it as $work/$1.apk. No Gradle daemon, and the Kotlin compiler in
 # Gradle's process: a daemon could outlive the sandbox or be one from
 # outside it.
 build_abi() {
-  local abi=$1 src="$work/build-$1" tmp="$work/tmp-$1" apk out
+  local abi=$1 src="$work/build-$1" tmp="$work/tmp-$1" apk
   echo "== Building the $abi APK"
   checkout "$src"
   mkdir "$tmp"
@@ -234,16 +236,25 @@ flutter build apk --release --split-per-abi --target-platform ${ABI_PLATFORM[$ab
   apk="$src/build/app/outputs/flutter-apk/app-$abi-release.apk"
   [[ -f "$apk" ]] || fail "the $abi build made no APK at ${apk#"$src/"}"
   check_release_apk "$apk" "$abi" "$version" "$build_number"
-  out="$DIST_DIR/decoy_contacts-$version-$abi-unsigned.apk"
-  place_release "$apk" "$out"
-  outs+=("$out")
+  cp "$apk" "$work/$abi.apk"
   # Its clone (with its packages and build outputs) and /tmp: done with.
   # (If that fails, the build still goes on: the exit trap cleans up.)
   rm -rf "$src" "$tmp" || true
 }
 
-outs=()
 for abi in "${abis[@]}"; do
   build_abi "$abi"
+done
+
+# Into dist only once all of them are built, and each can go there (see
+# check_placement): a failure leaves dist as it was, never with some ABIs
+# of this build next to others of another.
+outs=()
+for abi in "${abis[@]}"; do
+  outs+=("$DIST_DIR/decoy_contacts-$version-$abi-unsigned.apk")
+  check_placement "$work/$abi.apk" "${outs[-1]}"
+done
+for i in "${!abis[@]}"; do
+  place_release "$work/${abis[$i]}.apk" "${outs[$i]}"
 done
 sha256sum "${outs[@]}"

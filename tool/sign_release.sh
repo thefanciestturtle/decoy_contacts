@@ -39,16 +39,11 @@ need python3
 want="$(release_cert_sha256)" || exit 1
 apksigner_path >/dev/null || exit 1
 
-# The APK that signing unsigned APK $1 makes, next to it.
-signed_of() {
-  echo "${1%-unsigned.apk}.apk"
-}
-
 # Each APK to sign; all checked before any is signed.
 apks=()
 declare -A seen=()
 for arg in "$@"; do
-  unsigned="$(realpath -s -m "$(absolute_path "$arg" "$CALLER_DIR")")"
+  unsigned="$(absolute_path "$arg" "$CALLER_DIR")"
   [[ -f "$unsigned" ]] || fail "no APK at $unsigned"
   [[ "$unsigned" == *-unsigned.apk ]] ||
     fail "$unsigned isn't named like an unsigned release (…-unsigned.apk)"
@@ -57,7 +52,7 @@ for arg in "$@"; do
   [[ -z "${seen[$file]+set}" ]] ||
     fail "$unsigned is given twice (as ${seen[$file]})"
   seen[$file]="$unsigned"
-  signed="$(signed_of "$unsigned")"
+  signed="$(signed_name "$unsigned")"
   [[ ! -e "$signed" ]] || fail "$signed already exists; move it away first"
   if is_signed "$unsigned"; then
     fail "$unsigned is already signed"
@@ -71,15 +66,15 @@ done
 remove_partials() {
   local unsigned signed
   for unsigned in "${apks[@]}"; do
-    signed="$(signed_of "$unsigned")"
+    signed="$(signed_name "$unsigned")"
     rm -f "$signed.partial" "$signed.partial.idsig"
   done
 }
 trap remove_partials EXIT
 
 # Read here, not by apksigner, so it is asked once; apksigner reads it from
-# a pipe (not from its command line or its environment, which other
-# programs could see).
+# a pipe of its own (not from its command line or its environment, which
+# other programs could see, nor from its standard input).
 # (As typed: IFS= keeps spaces at its ends.)
 password=""
 IFS= read -rs -p "Keystore password: " password || true
@@ -88,14 +83,16 @@ IFS= read -rs -p "Keystore password: " password || true
 # Signs $1 into $2 and checks the result.
 sign_one() {
   local unsigned=$1 partial=$2 verified signers got blocks
-  # (printf is part of bash: the password is never on a command line.)
-  # apksigner then still writes a password prompt of its own, without
-  # reading anything: one could take it for a real one and type the
-  # password where the screen shows it. It is the only thing it writes to
-  # its standard output; errors go to standard error.
-  if ! printf '%s\n' "$password" |
-       apksigner_ sign --ks "$keystore" --ks-pass stdin \
-         "${SIGNING_OPTIONS[@]}" --out "$partial" "$unsigned" >/dev/null; then
+  # (printf is part of bash: the password is never on a command line.
+  # Given on its standard input instead, apksigner also printed a password
+  # prompt of its own, without reading anything: one could take it for a
+  # real one and type the password where the screen shows it. Its
+  # standard output is dropped in case it still does; errors go to
+  # standard error.)
+  if ! apksigner_ sign --ks "$keystore" \
+         --ks-pass "file:"<(printf '%s\n' "$password") \
+         "${SIGNING_OPTIONS[@]}" --out "$partial" "$unsigned" \
+         </dev/null >/dev/null; then
     fail "apksigner couldn't sign $unsigned"
   fi
 
@@ -122,19 +119,18 @@ sign_one() {
 }
 
 for unsigned in "${apks[@]}"; do
-  sign_one "$unsigned" "$(signed_of "$unsigned").partial"
+  sign_one "$unsigned" "$(signed_name "$unsigned").partial"
 done
 
 # Each into place as a hard link, which, unlike mv, fails if something is
 # there by now (say from another run while this one asked for the
-# password); then none of them is kept.
+# password; -T: also a folder); then none of them is kept.
 placed=()
 for unsigned in "${apks[@]}"; do
-  signed="$(signed_of "$unsigned")"
-  if ! ln "$signed.partial" "$signed" 2>/dev/null; then
+  signed="$(signed_name "$unsigned")"
+  if ! error="$(ln -T "$signed.partial" "$signed" 2>&1)"; then
     rm -f "${placed[@]}"
-    fail "couldn't write $signed (is there one now?); none of the APKs" \
-         "was written"
+    fail "couldn't write $signed ($error); none of the APKs was written"
   fi
   placed+=("$signed")
 done
