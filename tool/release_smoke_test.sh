@@ -29,9 +29,6 @@
 #
 # It also checks that the app asks for no internet access: its privacy policy
 # says it has none. (Debug and profile builds do ask, for Flutter's tools.)
-# Nor for any other permission but access to contacts, as the store listing
-# says: plugins can add permissions to the build, which the tests of the
-# app's own manifest don't see.
 #
 # Release builds can't be inspected with `run-as`, so this needs an emulator
 # image where `adb root` works (google_apis, not google_apis_playstore). The
@@ -233,7 +230,7 @@ echo "== Installing $apk"
 adb_ uninstall "$APP_ID" >/dev/null 2>&1 || true
 adb_ install "$apk" >/dev/null || fail "couldn't install $apk"
 
-echo "== The app should ask for no internet access, and only for contacts"
+echo "== The app should ask for no internet access"
 # Only the lines of that list: it ends at the next heading (a line ending
 # in a colon).
 requested="$(adb_ shell dumpsys package "$APP_ID" | tr -d '\r' |
@@ -243,17 +240,6 @@ requested="$(adb_ shell dumpsys package "$APP_ID" | tr -d '\r' |
 if [[ "$requested" == *android.permission.INTERNET* ]]; then
   fail "the app asks for internet access (android.permission.INTERNET)"
 fi
-# The app's own permission (androidx.core declares it, so only the app's own
-# code can send it some broadcasts) is never asked of anyone.
-while read -r permission _; do
-  permission="${permission%:}"
-  case "$permission" in
-    "" | android.permission.READ_CONTACTS | android.permission.WRITE_CONTACTS |\
-      "$APP_ID.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION") ;;
-    *) fail "the app asks for $permission: the store listing says it asks" \
-         "only for access to contacts" ;;
-  esac
-done <<<"$requested"
 
 echo "== First start: the app should save its default settings"
 start_app

@@ -8,11 +8,14 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:decoy_contacts/about_page.dart' show kAboutSections;
+import 'package:decoy_contacts/contact_actions.dart';
 import 'package:decoy_contacts/fake_contacts_core.dart';
 import 'package:decoy_contacts/main.dart';
+import 'package:decoy_contacts/result_messages.dart';
 import 'package:decoy_contacts/settings_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -152,6 +155,7 @@ Png _readPng(File file) {
     if (type == 'IEND') break;
   }
   expect(at, bytes.length, reason: '$where: nothing after IEND');
+  expect(chunks, isNotEmpty, reason: '$where has chunks');
   expect(chunks.first, 'IHDR', reason: '$where starts with IHDR');
   expect(chunks.where((c) => c == 'IHDR'), hasLength(1), reason: where);
   expect(chunks.last, 'IEND', reason: '$where ends with IEND');
@@ -162,7 +166,8 @@ Png _readPng(File file) {
     chunks.where((c) => c == 'IDAT').length,
     reason: '$where: the IDAT chunks come one after another',
   );
-  final ihdr = ByteData.sublistView(header!);
+  expect(header!.length, 13, reason: '$where: IHDR is 13 bytes');
+  final ihdr = ByteData.sublistView(header);
   final png = (
     width: ihdr.getUint32(0),
     height: ihdr.getUint32(4),
@@ -170,7 +175,6 @@ Png _readPng(File file) {
     colourType: ihdr.getUint8(9),
     chunks: chunks,
   );
-  expect(header.length, 13, reason: '$where: IHDR is 13 bytes');
   expect(ihdr.getUint8(10), 0, reason: '$where: compression method 0');
   expect(ihdr.getUint8(11), 0, reason: '$where: filter method 0');
   expect(ihdr.getUint8(12), 0, reason: '$where: not interlaced');
@@ -359,7 +363,7 @@ void main() {
       expect(
         find.ancestor(
           of: find.text(label),
-          matching: find.byWidgetPredicate((w) => w is ButtonStyleButton),
+          matching: find.bySubtype<ButtonStyleButton>(),
         ),
         findsOneWidget,
         reason: 'a button labelled "$label"',
@@ -370,7 +374,7 @@ void main() {
   test('the descriptions say what the app asks for and keeps', () {
     // "No internet access", "The only permission it asks for is access to
     // your contacts" and "isn't backed up". (Plugins can add permissions
-    // to the build: tool/release_smoke_test.sh checks the release build's.)
+    // to the build: tool/release_lib.sh checks each release APK's.)
     String withoutComments(String xml) =>
         xml.replaceAll(RegExp('<!--.*?-->', dotAll: true), '');
     String? attribute(String tag, String name) =>
@@ -449,14 +453,23 @@ void main() {
 
   test('the About text screenshot 4 shows is still the app\'s', () {
     // en-US/images/phoneScreenshots/4.png shows About from the top: the
-    // name, the version, then these, down to the next heading. If they
-    // change, retake it. (Not the version: it shows the one it was taken
-    // with.)
+    // name, the version, then these, down to the next heading and the start
+    // of its text. If they change, retake it. (Not the version: it shows
+    // the one it was taken with.)
+    const shownOfNext =
+        'None of this is backed up or moved to a new phone. '
+        'After a move to a new phone, clearing the';
     expect(
       [
         for (final (heading, paragraphs) in kAboutSections.take(3))
           [heading, ...paragraphs],
-        [kAboutSections[3].$1],
+        [
+          kAboutSections[3].$1,
+          kAboutSections[3].$2.first.substring(
+            0,
+            min(shownOfNext.length, kAboutSections[3].$2.first.length),
+          ),
+        ],
       ],
       [
         [
@@ -482,10 +495,94 @@ void main() {
               "created, so Delete can find them. They stay in the app's own "
               'storage on this phone.',
         ],
-        ['New phone or backup'],
+        ['New phone or backup', shownOfNext],
       ],
       reason: 'screenshot 4 shows this text: retake it',
     );
+  });
+
+  testWidgets("the text screenshots 1, 2, 3 and 5 show is still the app's", (
+    tester,
+  ) async {
+    // 1.png and 5.png: the home screen with the default settings after
+    // creating all 756 fake contacts (5.png without the result); 2.png and
+    // 3.png: the dialogs before Create and Delete, over it. If any of this
+    // changes, retake them.
+    expect(
+      kDefaultLastNames,
+      'Zen,Zaragoza,Zabinski,Zimmermann,Zapata,Zona,Zidane,Zeiss,Zimmer,Zaal,'
+      'Zaman,Zambrano,Zanetti,Zangari,Zappa,Zavala,Zawisza,Zeegers,Zelenka,'
+      'Zellweger,Zeni,Zhang,Zhao,Zheng,Zhou,Ziegler,Zima',
+    );
+    expect(
+      kDefaultFirstNames,
+      'Zoe,Zach,Zbigniew,Zaire,Zero,Zakai,Zamir,Zan,Zanna,Zareen,Zeb,Zeki,'
+      'Zelda,Zella,Zeno,Zephyr,Zhen,Zhi,Zhong,Zhu,Ziba,Ziggy,Zion,Zola,'
+      'Zolyan,Zora,Zsazsa,Zuzana',
+    );
+    expect(kDefaultPhoneTemplate, '+447700900nnn');
+    expect(kDefaultEmailTemplate, 'FIRST.LAST@example.com');
+    expect(
+      settingsPreviewText(previewSettings(Settings.defaults)).text,
+      [
+        '27 last names × 28 first names = 756 fake contacts.',
+        'For example: Zoe Zen · +447700900010 · Zoe.Zen@example.com',
+      ].join('\n'),
+    );
+    const all = DeletePreview(
+      toDelete: 756,
+      skippedMerged: 0,
+      skippedChanged: 0,
+    );
+    expect(statusMessage(all), '756 fake contacts on this phone.');
+    expect(
+      createdMessage(
+        const CreateResult(created: 756, alreadyExisted: 0, untracked: 0),
+      ),
+      const ResultMessage('Created 756 fake contacts.'),
+    );
+    expect(
+      createConfirmation(const CreatePreview(toCreate: 756, alreadyExisted: 0)),
+      (
+        title: 'Create 756 fake contacts?',
+        body: 'They are added to the contacts on this phone.',
+        action: 'Create',
+      ),
+    );
+    expect(deleteConfirmation(all), (
+      title: 'Delete 756 fake contacts?',
+      body: 'Only contacts this app created are deleted.',
+      action: 'Delete',
+    ));
+
+    // The labels, as the app shows them; and a dialog's Cancel.
+    SharedPreferences.setMockInitialValues({});
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    });
+    await tester.pumpWidget(MyApp(contacts: InMemoryContactsGateway()));
+    await tester.pumpAndSettle();
+    for (final label in [
+      'Decoy Contacts',
+      'Last names',
+      'First names',
+      'Phone number template',
+      'Email address template',
+      'Create Fake Contacts',
+      'Delete Fake Contacts',
+    ]) {
+      expect(find.text(label), findsOneWidget, reason: label);
+    }
+    await tester.ensureVisible(find.text('Create Fake Contacts'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create Fake Contacts'));
+    await tester.pumpAndSettle();
+    expect(find.text('Create 756 fake contacts?'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Cancel'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Create'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
   });
 
   group('the images', () {

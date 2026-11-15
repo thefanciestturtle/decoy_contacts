@@ -225,6 +225,34 @@ apk_version() {
   echo "$found"
 }
 
+# The permissions APK $1 asks for (uses-permission, uses-permission-sdk-23),
+# one per line, after its package name on the first line; fails, with
+# aapt2's error, if it can't read them.
+apk_permissions() {
+  local aapt2 dump package
+  aapt2="$(aapt2_path)" || return 1
+  if ! dump="$("$aapt2" dump permissions "$1" 2>&1)"; then
+    echo "$dump" >&2
+    return 1
+  fi
+  package="$(sed -n "s/^package: \(.*\)$/\1/p" <<<"$dump")"
+  [[ -n "$package" ]] || return 1
+  echo "$package"
+  sed -n "s/^uses-permission[-a-z0-9]*: name='\([^']*\)'.*/\1/p" <<<"$dump"
+}
+
+# The only permissions a release may ask for: access to contacts, as the
+# store listing says ("The only permission it asks for is access to your
+# contacts"), and no internet access, as the privacy policy says. Plugins
+# can add permissions to the build. (The app's own
+# <package>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION, which androidx.core
+# declares so that only the app itself can send it some broadcasts, is
+# never asked of anyone, and is allowed too.)
+readonly RELEASE_PERMISSIONS=(
+  android.permission.READ_CONTACTS
+  android.permission.WRITE_CONTACTS
+)
+
 # The versionName and build number in pubspec.yaml file $1, as "NAME
 # BUILD": "version: 2.0.0+5" gives "2.0.0 5". The name is numbers and dots
 # (it goes into the APKs' file names). The APKs' versionCodes are made from
@@ -252,7 +280,8 @@ pubspec_version() {
 # Stops the script (fail) unless APK $1 is the release APK for ABI $2 of
 # version $3 with build number $4: unsigned, with native code for that ABI
 # only, with the versionCode ABI_CODE * 1000 + $4 and the versionName $3,
-# and naming no home folder but the build sandbox's.
+# asking for no permission but RELEASE_PERMISSIONS, and naming no home
+# folder but the build sandbox's.
 check_release_apk() {
   local apk=$1 abi=$2 version=$3 build=$4 found
   local code=$((ABI_CODE[$abi] * 1000 + build))
@@ -267,7 +296,26 @@ check_release_apk() {
   [[ "$found" == "$code $version" ]] ||
     fail "the $abi APK has versionCode and versionName '$found'," \
          "not '$code $version' (${ABI_CODE[$abi]} * 1000 + $build)"
+  check_permissions "$apk" "$abi"
   check_home_paths "$apk"
+}
+
+# Fails if APK $1 (for ABI $2) asks for a permission that isn't in
+# RELEASE_PERMISSIONS (or the app's own, see there).
+check_permissions() {
+  local apk=$1 abi=$2 found package permission
+  found="$(apk_permissions "$apk")" ||
+    fail "couldn't read the $abi APK's permissions"
+  package="$(head -n 1 <<<"$found")"
+  while read -r permission; do
+    if [[ -n "$permission" &&
+          " ${RELEASE_PERMISSIONS[*]} " != *" $permission "* &&
+          "$permission" != "$package.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" ]]
+    then
+      fail "the $abi APK asks for $permission: a release may ask only for" \
+           "${RELEASE_PERMISSIONS[*]}"
+    fi
+  done < <(tail -n +2 <<<"$found")
 }
 
 # Runs apksigner with "$@", with the JDK in JAVA_HOME if that is set (the

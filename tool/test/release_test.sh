@@ -390,6 +390,59 @@ add_block "$tmp/split.apk" 7109871a
 check_apk "a signed APK fails" 1 "the x86_64 APK is signed" \
   "$tmp/split.apk" x86_64 1.2.3 4
 
+# permissions_apk OUT TAG... : a release APK for x86_64 (4004, 1.2.3) whose
+# manifest has these tags too.
+permissions_apk() {
+  local out=$1
+  shift
+  {
+    echo '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+    echo '    package="org.example.release_test">'
+    echo '  <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36" />'
+    printf '  %s\n' "$@"
+    echo '  <application />'
+    echo '</manifest>'
+  } >"$tmp/permissions-manifest.xml"
+  "$build_tools/aapt2" link -o "$out" \
+    --manifest "$tmp/permissions-manifest.xml" -I "$platform/android.jar" \
+    --version-code 4004 --version-name 1.2.3
+  python3 -I - "$out" "$CLEAN" <<'EOF'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'a', zipfile.ZIP_STORED) as apk:
+    apk.writestr('lib/x86_64/libapp.so', sys.argv[2].encode())
+EOF
+}
+uses() { echo "<uses-permission $* />"; }
+readonly OWN=org.example.release_test.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+permissions_apk "$tmp/contacts.apk" \
+  "$(uses 'android:name="android.permission.READ_CONTACTS"')" \
+  "$(uses 'android:name="android.permission.WRITE_CONTACTS"')" \
+  "<permission android:name=\"$OWN\" android:protectionLevel=\"signature\" />" \
+  "$(uses "android:name=\"$OWN\"")"
+check_apk "one asking only for contacts and its own permission passes" 0 \
+  fine "$tmp/contacts.apk" x86_64 1.2.3 4
+permissions_apk "$tmp/internet.apk" \
+  "$(uses 'android:name="android.permission.READ_CONTACTS"')" \
+  "$(uses 'android:name="android.permission.INTERNET"')"
+check_apk "one asking for internet access fails" 1 \
+  "the x86_64 APK asks for android.permission.INTERNET" \
+  "$tmp/internet.apk" x86_64 1.2.3 4
+permissions_apk "$tmp/sdk23.apk" \
+  '<uses-permission-sdk-23 android:name="android.permission.CAMERA" />'
+check_apk "one asking for more from Android 6 on fails" 1 \
+  "the x86_64 APK asks for android.permission.CAMERA" \
+  "$tmp/sdk23.apk" x86_64 1.2.3 4
+permissions_apk "$tmp/max-sdk.apk" \
+  "$(uses 'android:maxSdkVersion="32" android:name="android.permission.READ_PHONE_STATE"')"
+check_apk "one asking for more up to some Android version fails" 1 \
+  "the x86_64 APK asks for android.permission.READ_PHONE_STATE" \
+  "$tmp/max-sdk.apk" x86_64 1.2.3 4
+permissions_apk "$tmp/other-own.apk" \
+  "$(uses 'android:name="org.example.other.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"')"
+check_apk "one asking for another app's own permission fails" 1 \
+  "asks for org.example.other.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" \
+  "$tmp/other-own.apk" x86_64 1.2.3 4
+
 # --- release_lib.sh: debug_sign
 mkdir -p "$tmp/android-empty" "$tmp/android"
 run "" env ANDROID_USER_HOME="$tmp/android-empty" bash -c \
