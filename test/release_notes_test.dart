@@ -154,11 +154,13 @@ void main() {
         multiLine: true,
       ).firstMatch(changelog);
       expect(heading, isNotNull, reason: 'a "## $version" heading');
-      // With its notes, up to the next heading.
+      // With its notes, up to the next entry (its own subheadings, such as
+      // "### Fixed", are part of it).
       final rest = changelog.substring(heading!.end);
-      final next = RegExp(r'^#', multiLine: true).firstMatch(rest);
+      final next = RegExp(r'^#{1,2} ', multiLine: true).firstMatch(rest);
       final notes = next == null ? rest : rest.substring(0, next.start);
-      expect(notes.trim(), isNotEmpty, reason: 'notes for $version');
+      final text = notes.split('\n').where((line) => !line.startsWith('#'));
+      expect(text.join().trim(), isNotEmpty, reason: 'notes for $version');
     });
 
     test('lists the versions newest first, each once', () {

@@ -234,11 +234,13 @@ apk_version() {
 }
 
 # The minSdkVersion of APK $1 (the oldest Android it installs on, as an API
-# level); fails, with aapt2's error, if it can't read it.
+# level); fails, with aapt2's error, if it can't read it. (aapt2 from
+# build-tools 36 on says "minSdkVersion:'24'"; older ones may say
+# "sdkVersion:'24'", as aapt did.)
 apk_min_sdk() {
   local badging found
   badging="$(aapt2_dump badging "$1")" || return 1
-  found="$(sed -n "s/^minSdkVersion:'\([0-9]\{1,\}\)'$/\1/p" <<<"$badging")"
+  found="$(sed -n "s/^\(minS\|s\)dkVersion:'\([0-9]\{1,\}\)'$/\2/p" <<<"$badging")"
   [[ -n "$found" ]] || return 1
   echo "$found"
 }

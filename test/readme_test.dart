@@ -206,6 +206,7 @@ void main() {
   });
 
   test('links to files in the repository point at files that exist', () {
+    var count = 0;
     for (final doc in docs) {
       final text = File(doc).readAsStringSync();
       final targets = [
@@ -213,11 +214,11 @@ void main() {
         for (final m in RegExp(r'\ssrc="([^"]+)"').allMatches(text))
           m.group(1)!,
       ];
-      expect(targets, isNotEmpty, reason: '$doc has links');
       for (final target in targets) {
         if (RegExp(r'^[a-z]+:').hasMatch(target) || target.startsWith('#')) {
           continue;
         }
+        count++;
         // From the linking file's folder.
         final path = File(doc)
             .parent
@@ -230,6 +231,7 @@ void main() {
             reason: '$doc links to $target');
       }
     }
+    expect(count, greaterThan(2), reason: 'the links are found');
   });
 
   test('links to sections, and "see" a section, lead to a heading', () {

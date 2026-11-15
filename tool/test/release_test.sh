@@ -15,6 +15,8 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 source tool/check_lib.sh
 source tool/release_lib.sh
+# Set by the tests themselves, for one call each; not taken from outside.
+unset RELEASE_TEST_MANIFEST RELEASE_TEST_MIN_SDK
 
 java_home="${JAVA_HOME:-$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")}"
 keytool="$java_home/bin/keytool"
@@ -296,6 +298,18 @@ expect "apk_version: an APK without a versionCode fails" 0 "none"
 # --- release_lib.sh: apk_min_sdk
 run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; apk_min_sdk '$tmp/versioned.apk'"
 expect_exact "apk_min_sdk: the minSdkVersion" 0 "$RELEASE_MIN_SDK"
+# An aapt2 that says it as aapt did ("sdkVersion"), and nothing else that
+# ends in it.
+mkdir -p "$tmp/sdk-aapt/build-tools/99.0.0"
+cat >"$tmp/sdk-aapt/build-tools/99.0.0/aapt2" <<'EOF2'
+#!/usr/bin/env bash
+echo "package: name='org.example.release_test' versionCode='1' versionName='1'"
+echo "sdkVersion:'23'"
+echo "targetSdkVersion:'36'"
+EOF2
+chmod +x "$tmp/sdk-aapt/build-tools/99.0.0/aapt2"
+run "" env ANDROID_HOME="$tmp/sdk-aapt" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; apk_min_sdk '$tmp/versioned.apk'"
+expect_exact "apk_min_sdk: an older aapt2's sdkVersion" 0 "23"
 cat >"$tmp/no-sdk-manifest.xml" <<'EOF2'
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="org.example.release_test">
@@ -409,15 +423,15 @@ check_apk "a signed APK fails" 1 "the x86_64 APK is signed" \
   "$tmp/split.apk" x86_64 1.2.3 4
 
 # permissions_apk OUT TAG... : a release APK for x86_64 (4004, 1.2.3) whose
-# manifest has these tags too, and the minSdkVersion $MIN_SDK (if unset,
-# RELEASE_MIN_SDK).
+# manifest has these tags too, and the minSdkVersion $RELEASE_TEST_MIN_SDK
+# (if unset, RELEASE_MIN_SDK).
 permissions_apk() {
   local out=$1
   shift
   {
     echo '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
     echo '    package="org.example.release_test">'
-    echo "  <uses-sdk android:minSdkVersion=\"${MIN_SDK:-$RELEASE_MIN_SDK}\" android:targetSdkVersion=\"36\" />"
+    echo "  <uses-sdk android:minSdkVersion=\"${RELEASE_TEST_MIN_SDK:-$RELEASE_MIN_SDK}\" android:targetSdkVersion=\"36\" />"
     printf '  %s\n' "$@"
     echo '  <application />'
     echo '</manifest>'
@@ -459,12 +473,12 @@ run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; check_perm
 expect "check_permissions: a file that isn't an APK fails" 1 \
   "couldn't read the x86_64 APK's permissions"
 newer=$((RELEASE_MIN_SDK + 2))
-MIN_SDK=$newer permissions_apk "$tmp/min-sdk-newer.apk"
+RELEASE_TEST_MIN_SDK=$newer permissions_apk "$tmp/min-sdk-newer.apk"
 check_apk "one for a newer Android than the README says fails" 1 \
   "the x86_64 APK's minSdkVersion is $newer, not $RELEASE_MIN_SDK" \
   "$tmp/min-sdk-newer.apk" x86_64 1.2.3 4
 older=$((OLDEST_SIGNABLE_SDK - 3))
-MIN_SDK=$older permissions_apk "$tmp/min-sdk-older.apk"
+RELEASE_TEST_MIN_SDK=$older permissions_apk "$tmp/min-sdk-older.apk"
 check_apk "one for an Android without v2 signatures fails, saying why" 1 \
   "the x86_64 APK's minSdkVersion is $older, but release APKs have no v1 signature" \
   "$tmp/min-sdk-older.apk" x86_64 1.2.3 4
