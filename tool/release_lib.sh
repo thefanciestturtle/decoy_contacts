@@ -240,7 +240,8 @@ apk_version() {
 apk_min_sdk() {
   local badging found
   badging="$(aapt2_dump badging "$1")" || return 1
-  found="$(sed -n "s/^\(minS\|s\)dkVersion:'\([0-9]\{1,\}\)'$/\2/p" <<<"$badging")"
+  found="$(sed -nE "s/^(minS|s)dkVersion:'([0-9]+)'$/\2/p" <<<"$badging" |
+    head -n 1)"
   [[ -n "$found" ]] || return 1
   echo "$found"
 }

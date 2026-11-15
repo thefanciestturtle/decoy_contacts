@@ -4,7 +4,7 @@ Based on [Fake Contacts](https://github.com/BillDietrich/fake_contacts) by Bill 
 
 Some apps and companies copy the contacts on your phone, to use or sell them.  Decoy Contacts adds fake contacts among your real ones, so what they copy is worth less.  This is called data poisoning.
 
-<img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.png" width="185" height="411" alt="The app after a Create: the lists of last names and first names, the phone number and email address templates, how many contacts they make with an example, the line 756 fake contacts on this phone, the Create Fake Contacts and Delete Fake Contacts buttons, and the result Created 756 fake contacts" />
+<img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.png" width="185" height="411" alt="The app after a Create: the lists of last names and first names, the phone number and email address templates, how many contacts they make with an example, the line saying how many fake contacts are on the phone, the Create Fake Contacts and Delete Fake Contacts buttons, and the result of the Create" />
 
 With the default settings, the fake contacts stay out of your way:
 * Their names start with Z, so they sort to the end.
