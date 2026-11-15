@@ -209,18 +209,36 @@ aapt2_path() {
   echo "$sdk/build-tools/$newest/aapt2"
 }
 
-# The versionCode and versionName of APK $1, as "CODE NAME"; fails, with
-# aapt2's error, if it can't read them.
-apk_version() {
-  local aapt2 badging found
+# What aapt2 says about APK $1 (`aapt2 dump badging`); fails, with aapt2's
+# error, if it can't read it.
+apk_badging() {
+  local aapt2 badging
   aapt2="$(aapt2_path)" || return 1
   if ! badging="$("$aapt2" dump badging "$1" 2>&1)"; then
     echo "$badging" >&2
     return 1
   fi
+  echo "$badging"
+}
+
+# The versionCode and versionName of APK $1, as "CODE NAME"; fails, with
+# aapt2's error, if it can't read them.
+apk_version() {
+  local badging found
+  badging="$(apk_badging "$1")" || return 1
   found="$(sed -n \
     "s/^package: .* versionCode='\([0-9]\{1,\}\)' versionName='\([^']*\)'.*/\1 \2/p" \
     <<<"$badging")"
+  [[ -n "$found" ]] || return 1
+  echo "$found"
+}
+
+# The minSdkVersion of APK $1 (the oldest Android it installs on, as an API
+# level); fails, with aapt2's error, if it can't read it.
+apk_min_sdk() {
+  local badging found
+  badging="$(apk_badging "$1")" || return 1
+  found="$(sed -n "s/^minSdkVersion:'\([0-9]\{1,\}\)'$/\1/p" <<<"$badging")"
   [[ -n "$found" ]] || return 1
   echo "$found"
 }
@@ -253,6 +271,14 @@ readonly RELEASE_PERMISSIONS=(
   android.permission.WRITE_CONTACTS
 )
 
+# The oldest Android a release installs on, as an API level: 24 is Android
+# 7.0, and the README says the app "needs Android 7.0 or newer"
+# (test/readme_test.dart keeps the two in step). It is Flutter's own
+# minimum (minSdk = flutter.minSdkVersion in android/app/build.gradle.kts),
+# so a Flutter upgrade can change it: the release build then fails, until
+# this and the README are changed with it.
+readonly RELEASE_MIN_SDK=24
+
 # The versionName and build number in pubspec.yaml file $1, as "NAME
 # BUILD": "version: 2.0.0+5" gives "2.0.0 5". The name is numbers and dots
 # (it goes into the APKs' file names). The APKs' versionCodes are made from
@@ -280,8 +306,8 @@ pubspec_version() {
 # Stops the script (fail) unless APK $1 is the release APK for ABI $2 of
 # version $3 with build number $4: unsigned, with native code for that ABI
 # only, with the versionCode ABI_CODE * 1000 + $4 and the versionName $3,
-# asking for no permission but RELEASE_PERMISSIONS, and naming no home
-# folder but the build sandbox's.
+# the minSdkVersion RELEASE_MIN_SDK, asking for no permission but
+# RELEASE_PERMISSIONS, and naming no home folder but the build sandbox's.
 check_release_apk() {
   local apk=$1 abi=$2 version=$3 build=$4 found
   local code=$((ABI_CODE[$abi] * 1000 + build))
@@ -296,6 +322,12 @@ check_release_apk() {
   [[ "$found" == "$code $version" ]] ||
     fail "the $abi APK has versionCode and versionName '$found'," \
          "not '$code $version' (${ABI_CODE[$abi]} * 1000 + $build)"
+  found="$(apk_min_sdk "$apk")" ||
+    fail "couldn't read the $abi APK's minSdkVersion"
+  [[ "$found" == "$RELEASE_MIN_SDK" ]] ||
+    fail "the $abi APK's minSdkVersion is $found, not $RELEASE_MIN_SDK:" \
+         "change RELEASE_MIN_SDK in tool/release_lib.sh, and the Android" \
+         "version the README names, to match"
   check_permissions "$apk" "$abi"
   check_home_paths "$apk"
 }

@@ -1,5 +1,5 @@
-// The release notes: the README's entry for the version in pubspec.yaml and
-// the short text app stores show (F-Droid and IzzyOnDroid read
+// The release notes: CHANGELOG.md's entry for the version in pubspec.yaml
+// and the short text app stores show (F-Droid and IzzyOnDroid read
 // fastlane/.../changelogs/<versionCode>.txt of the tagged commit). These
 // tests keep them in step with the version, so a version bump can't forget
 // them.
@@ -136,42 +136,41 @@ void main() {
     });
   });
 
-  group("the README's release notes", () {
-    final readme = File('README.md').readAsStringSync();
+  group('CHANGELOG.md', () {
+    final changelog = File('CHANGELOG.md').readAsStringSync();
+    // The version of every heading that names one, at any level (the
+    // original app's are a level down), in the order they come.
+    final versions = RegExp(r'^#+ ([0-9][0-9.]*)\s*$', multiLine: true)
+        .allMatches(changelog)
+        .map((m) => m.group(1)!)
+        .toList();
 
-    test("have an entry for pubspec.yaml's version", () {
+    test("starts with pubspec.yaml's version, as an entry of its own", () {
       final version = pubspecVersion().name;
-      final headings = RegExp(
-        r'^### (.*?)\s*$',
-        multiLine: true,
-      ).allMatches(readme).map((m) => m.group(1)).toList();
-      expect(headings, contains(version));
+      expect(versions, isNotEmpty);
+      expect(versions.first, version, reason: 'the newest entry first');
+      expect(
+        changelog,
+        matches(RegExp('^## ${RegExp.escape(version)}\\s*\$', multiLine: true)),
+      );
     });
 
-    test('list the versions oldest first, the newest last', () {
-      final section = RegExp(
-        r'^## Releases\s*$(.*?)^---\s*$',
-        multiLine: true,
-        dotAll: true,
-      ).firstMatch(readme);
-      expect(section, isNotNull, reason: 'a Releases section');
-      final versions = RegExp(r'^### ([0-9][0-9.]*)\s*$', multiLine: true)
-          .allMatches(section!.group(1)!)
-          .map((m) => m.group(1)!.split('.').map(int.parse).toList())
-          .toList();
+    test('lists the versions newest first, each once', () {
       expect(versions, hasLength(greaterThan(1)));
-      for (var i = 1; i < versions.length; i++) {
+      for (final version in versions) {
+        expect(version, matches(RegExp(r'^[0-9]+(\.[0-9]+)*$')));
+      }
+      final numbers = [
+        for (final version in versions)
+          version.split('.').map(int.parse).toList(),
+      ];
+      for (var i = 1; i < numbers.length; i++) {
         expect(
-          _compare(versions[i - 1], versions[i]),
-          lessThan(0),
+          _compare(numbers[i - 1], numbers[i]),
+          greaterThan(0),
           reason: '${versions[i - 1]} before ${versions[i]}',
         );
       }
-      expect(
-        versions.last.join('.'),
-        pubspecVersion().name,
-        reason: 'the last entry is the version being built',
-      );
     });
   });
 }
