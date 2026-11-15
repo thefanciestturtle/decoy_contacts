@@ -25,11 +25,6 @@ import 'in_memory_contacts_gateway.dart';
 /// The files these tests read.
 const docs = ['README.md', 'CHANGELOG.md', 'DEVELOPMENT.md'];
 
-/// The oldest API level a release can start from: release APKs have no v1
-/// signature (SIGNING_OPTIONS in tool/release_lib.sh), and Android before
-/// 7.0 (24) needs one.
-const oldestPossibleSdk = 24;
-
 /// The Android version of each API level a release could start from.
 const androidVersions = {
   24: '7.0',
@@ -65,7 +60,7 @@ String withCommas(int n) => n
 /// as hyphens, other punctuation dropped.
 String anchorOf(String heading) => heading
     .toLowerCase()
-    .replaceAll(RegExp(r'[^\w\- ]'), '')
+    .replaceAll(RegExp(r'[^\p{L}\p{M}\p{N}\p{Pc}\- ]', unicode: true), '')
     .replaceAll(' ', '-');
 
 /// The text of the section under heading [heading] (of any level) in
@@ -87,8 +82,9 @@ void main() {
     // tool/release_lib.sh checks that every release APK has this
     // minSdkVersion.
     final minSdk = int.parse(releaseLibValue('RELEASE_MIN_SDK'));
-    expect(minSdk, greaterThanOrEqualTo(oldestPossibleSdk),
-        reason: 'release APKs have no v1 signature, which older Android needs');
+    // Release APKs have no v1 signature, which older Android needs.
+    expect(minSdk,
+        greaterThanOrEqualTo(int.parse(releaseLibValue('OLDEST_SIGNABLE_SDK'))));
     expect(androidVersions.keys, contains(minSdk));
     final named = RegExp(r'Android (\S+) or newer')
         .allMatches(readme)
@@ -236,24 +232,38 @@ void main() {
     }
   });
 
-  test("links to the README's sections lead to a heading", () {
-    // CHANGELOG.md's 2.0.0 entry links to "If you have Fake Contacts" with
-    // the full address, as the GitHub release copies it.
-    final anchors = {
-      for (final m in RegExp(r'^#+ (.*?)\s*$', multiLine: true).allMatches(readme))
-        anchorOf(m.group(1)!),
-      'readme',
-    };
-    final links = RegExp(
-        '${RegExp.escape('$kSourceUrl')}#([\\w-]+)|\\]\\(README\\.md#([\\w-]+)\\)');
+  test('links to sections, and "see" a section, lead to a heading', () {
+    // CHANGELOG.md's 2.0.0 entry links to the README's "If you have Fake
+    // Contacts" with the full address, as the GitHub release copies it; the
+    // README says 'see "Good to know" below'.
+    Set<String> headings(String text) => {
+          for (final m
+              in RegExp(r'^#+ (.*?)\s*$', multiLine: true).allMatches(text))
+            m.group(1)!,
+        };
+    final readmeAnchors = {...headings(readme).map(anchorOf), 'readme'};
+    final toReadme = RegExp(
+        '(?:${RegExp.escape('$kSourceUrl')}|\\]\\(README\\.md)#([^)\\s]+)');
     var count = 0;
     for (final doc in docs) {
-      for (final m in links.allMatches(File(doc).readAsStringSync())) {
+      final text = File(doc).readAsStringSync();
+      final own = headings(text);
+      for (final m in toReadme.allMatches(text)) {
         count++;
-        expect(anchors, contains(m.group(1) ?? m.group(2)), reason: doc);
+        expect(readmeAnchors, contains(Uri.decodeFull(m.group(1)!)),
+            reason: '$doc: ${m.group(0)}');
+      }
+      for (final m in RegExp(r'\]\(#([^)\s]+)\)').allMatches(text)) {
+        count++;
+        expect(own.map(anchorOf), contains(Uri.decodeFull(m.group(1)!)),
+            reason: '$doc: ${m.group(0)}');
+      }
+      for (final m in RegExp(r'see "([^"]+)"').allMatches(text)) {
+        count++;
+        expect(own, contains(m.group(1)), reason: '$doc: ${m.group(0)}');
       }
     }
-    expect(count, greaterThan(0));
+    expect(count, greaterThan(1));
   });
 
   test('the files and folders named in code spans exist', () {

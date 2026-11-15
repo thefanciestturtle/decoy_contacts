@@ -28,7 +28,7 @@ Release APKs are signed with this app's own key.  Android installs an update onl
 
 `7e9a346a64feba002aa3d9fe060c3a2df5f78dd1a79a56bdb1873072245f6d6c`
 
-To check an APK you downloaded, `apksigner verify --print-certs` (from the Android SDK's build-tools) shows the fingerprint after "certificate SHA-256 digest".  Each release is built so that a build of the same source gives the same files, apart from the signature (see [DEVELOPMENT.md](DEVELOPMENT.md)).
+To check an APK you downloaded, `apksigner verify --print-certs FILE.apk` (apksigner is in the Android SDK's build-tools) shows the fingerprint after "certificate SHA-256 digest".  Each release is built so that a build of the same source gives the same files, apart from the signature (see [DEVELOPMENT.md](DEVELOPMENT.md)).
 
 ### If you have Fake Contacts
 
