@@ -349,11 +349,13 @@ expect "check_apk_abi: an unknown ABI fails" 1 "not for an unknown ABI"
 # --- release_lib.sh: check_release_apk, on APKs made with aapt2
 # release_apk OUT CODE NAME TEXT [ABI...] : an APK with versionCode CODE
 # and versionName NAME, holding TEXT in a native library for each ABI
-# (x86_64 by default).
+# (x86_64 by default). Its manifest is $RELEASE_TEST_MANIFEST if set,
+# else the tiny app's.
 release_apk() {
   local out=$1 code=$2 name=$3 text=$4
   shift 4
-  "$build_tools/aapt2" link -o "$out" --manifest "$tmp/AndroidManifest.xml" \
+  "$build_tools/aapt2" link -o "$out" \
+    --manifest "${RELEASE_TEST_MANIFEST:-$tmp/AndroidManifest.xml}" \
     -I "$platform/android.jar" --version-code "$code" --version-name "$name"
   python3 -I - "$out" "$text" "${@:-x86_64}" <<'EOF'
 import sys, zipfile
@@ -389,6 +391,56 @@ check_apk "an APK naming a home folder fails" 1 "names a home folder" \
 add_block "$tmp/split.apk" 7109871a
 check_apk "a signed APK fails" 1 "the x86_64 APK is signed" \
   "$tmp/split.apk" x86_64 1.2.3 4
+
+# permissions_apk OUT TAG... : a release APK for x86_64 (4004, 1.2.3) whose
+# manifest has these tags too.
+permissions_apk() {
+  local out=$1
+  shift
+  {
+    echo '<manifest xmlns:android="http://schemas.android.com/apk/res/android"'
+    echo '    package="org.example.release_test">'
+    echo '  <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36" />'
+    printf '  %s\n' "$@"
+    echo '  <application />'
+    echo '</manifest>'
+  } >"$tmp/permissions-manifest.xml"
+  RELEASE_TEST_MANIFEST="$tmp/permissions-manifest.xml" \
+    release_apk "$out" 4004 1.2.3 "$CLEAN"
+}
+uses() { echo "<uses-permission $* />"; }
+readonly OWN=org.example.release_test.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+permissions_apk "$tmp/contacts.apk" \
+  "$(uses 'android:name="android.permission.READ_CONTACTS"')" \
+  "$(uses 'android:name="android.permission.WRITE_CONTACTS"')" \
+  "<permission android:name=\"$OWN\" android:protectionLevel=\"signature\" />" \
+  "$(uses "android:name=\"$OWN\"")"
+check_apk "one asking only for contacts and its own permission passes" 0 \
+  fine "$tmp/contacts.apk" x86_64 1.2.3 4
+permissions_apk "$tmp/internet.apk" \
+  "$(uses 'android:name="android.permission.READ_CONTACTS"')" \
+  "$(uses 'android:name="android.permission.INTERNET"')"
+check_apk "one asking for internet access fails" 1 \
+  "the x86_64 APK asks for android.permission.INTERNET" \
+  "$tmp/internet.apk" x86_64 1.2.3 4
+permissions_apk "$tmp/sdk23.apk" \
+  '<uses-permission-sdk-23 android:name="android.permission.CAMERA" />'
+check_apk "one asking for more from Android 6 on fails" 1 \
+  "the x86_64 APK asks for android.permission.CAMERA" \
+  "$tmp/sdk23.apk" x86_64 1.2.3 4
+permissions_apk "$tmp/max-sdk.apk" \
+  "$(uses 'android:maxSdkVersion="32" android:name="android.permission.READ_PHONE_STATE"')"
+check_apk "one asking for more up to some Android version fails" 1 \
+  "the x86_64 APK asks for android.permission.READ_PHONE_STATE" \
+  "$tmp/max-sdk.apk" x86_64 1.2.3 4
+permissions_apk "$tmp/other-own.apk" \
+  "$(uses 'android:name="org.example.other.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"')"
+check_apk "one asking for another app's own permission fails" 1 \
+  "asks for org.example.other.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" \
+  "$tmp/other-own.apk" x86_64 1.2.3 4
+run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; check_permissions '$tmp/AndroidManifest.xml' x86_64 && echo fine"
+expect "check_permissions: a file that isn't an APK fails" 1 \
+  "couldn't read the x86_64 APK's permissions"
 
 # --- release_lib.sh: debug_sign
 mkdir -p "$tmp/android-empty" "$tmp/android"

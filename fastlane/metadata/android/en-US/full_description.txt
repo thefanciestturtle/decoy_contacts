@@ -1,3 +1,16 @@
-Create fake phone contacts, that will be stored on your phone along with your real contacts.  The idea is to feed fake data to any apps or companies who are copying our private data to use or sell it.  This is called "data-poisoning".
-    
-Nothing about these fake contacts will interfere with your normal use of your phone or your real contacts.
+Some apps and companies copy the contacts on your phone, to use or sell them. Decoy Contacts adds fake contacts among your real ones, so what they copy is worth less. This is called data poisoning.
+
+With the default settings, the fake contacts stay out of your way:
+- Their names start with Z, so they sort to the end.
+- Their phone numbers are in the UK range reserved for TV and film (+44 7700 900000 to 900999), so they can't be anyone's real number.
+- Their email addresses use example.com, a domain reserved for examples.
+
+You choose the first and last names, and templates for the phone number and email address. Create adds a fake contact for each first name with each last name. Before you start, the app shows how many that makes, with an example.
+
+Delete removes only the fake contacts this app created, and only if their name, phone number and email address are still as it made them. It never deletes your real contacts, even ones with the same name. Create and Delete both ask first, with the exact number.
+
+The app has no internet access, no ads and no trackers. The only permission it asks you for is access to your contacts.
+
+It keeps a list of the fake contacts it created, so Delete can find them. The list stays on this phone and isn't backed up. After a move to a new phone, clearing the app's data, uninstalling the app or restoring your contacts from a backup, Delete can't find the fake contacts made before, but your Contacts app can still delete them. So to remove them with Delete, use it before you move to a new phone, clear the app's data or uninstall it.
+
+Based on Fake Contacts by Bill Dietrich.

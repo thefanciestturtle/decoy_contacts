@@ -29,6 +29,9 @@
 #
 # It also checks that the app asks for no internet access: its privacy policy
 # says it has none. (Debug and profile builds do ask, for Flutter's tools.)
+# And before installing it, that the APK asks for no permission but access
+# to contacts, as the store listing says (check_permissions in
+# release_lib.sh, which build_release.sh runs on every release APK too).
 #
 # Release builds can't be inspected with `run-as`, so this needs an emulator
 # image where `adb root` works (google_apis, not google_apis_playstore). The
@@ -70,9 +73,11 @@ become_root() {
 }
 
 # What it needs, checked before anything on the emulator is changed (the
-# cleanup below uninstalls the app): to sign an unsigned APK, or the one it
-# builds, with the debug key, apksigner and that key.
+# cleanup below uninstalls the app): aapt2, to read the APK's permissions;
+# to sign an unsigned APK, or the one it builds, with the debug key,
+# apksigner and that key.
 need python3
+aapt2_path >/dev/null || exit 1
 # (Only read: nothing on the emulator changes yet.)
 abi="$(adb_ shell getprop ro.product.cpu.abi | tr -d '\r')"
 needs_signing=true
@@ -99,6 +104,11 @@ if [[ $# -eq 0 ]]; then
   apk="build/app/outputs/flutter-apk/app-$abi-release.apk"
   [[ -f "$apk" ]] || fail "the build made no APK at $apk"
 fi
+
+echo "== The APK should ask for no permission but access to contacts"
+# As the store listing says. (build_release.sh checks every release APK so
+# too; this one may have been built some other way.)
+check_permissions "$apk" "$abi"
 
 tmp="$(mktemp -d)"
 was_root=false
