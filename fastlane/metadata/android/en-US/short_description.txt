@@ -1,1 +1,1 @@
-Create fake phone contacts, for data-poisoning.
+Adds fake contacts to your phone, for data poisoning

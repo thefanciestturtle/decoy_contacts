@@ -1,3 +1,16 @@
-Crea contactos telefónicos falsos, que se almacenarán en tu teléfono junto con tus contactos reales.  La idea es alimentar con datos falsos a cualquier aplicación o empresa que copie nuestros datos privados para utilizarlos o venderlos.  Esto se llama "envenenamiento de datos".
-    
-Ninguno de estos contactos falsos interferirá con el uso normal de tu teléfono o tus contactos reales.
+Algunas aplicaciones y empresas copian los contactos de tu teléfono para usarlos o venderlos. Decoy Contacts añade contactos falsos entre los reales, para que lo que copian valga menos. Esto se llama envenenamiento de datos.
+
+Con los ajustes predeterminados, los contactos falsos no te estorban:
+- Sus nombres empiezan por Z, así que quedan al final de la lista.
+- Sus números de teléfono están en el rango del Reino Unido reservado para la televisión y el cine (+44 7700 900000 a 900999), así que no pueden ser el número real de nadie.
+- Sus direcciones de correo electrónico usan example.com, un dominio reservado para ejemplos.
+
+Tú eliges los nombres y apellidos, y las plantillas del número de teléfono y del correo electrónico. El botón «Create Fake Contacts» añade un contacto falso por cada combinación de nombre y apellido. Antes de empezar, la aplicación muestra cuántos son, con un ejemplo.
+
+El botón «Delete Fake Contacts» solo elimina los contactos falsos que creó esta aplicación, y solo si siguen tal como los creó. Nunca toca tus contactos reales, aunque tengan el mismo nombre. Los dos botones preguntan antes, con el número exacto.
+
+La aplicación no tiene acceso a internet, ni anuncios ni rastreadores. Solo necesita acceso a tus contactos. Guarda una lista de los contactos falsos que creó, para que «Delete Fake Contacts» pueda encontrarlos. La lista se queda en este teléfono y no se incluye en las copias de seguridad. Por eso, si cambias de teléfono, reinstalas la aplicación o restauras tus contactos desde una copia de seguridad, borra los contactos falsos antiguos desde tu aplicación de Contactos.
+
+La aplicación está en inglés.
+
+Basada en Fake Contacts, de Bill Dietrich.
