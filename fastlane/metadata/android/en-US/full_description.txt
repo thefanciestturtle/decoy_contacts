@@ -11,6 +11,6 @@ Delete removes only the fake contacts this app created, and only if their name, 
 
 The app has no internet access, no ads and no trackers. The only permission it asks for is access to your contacts.
 
-It keeps a list of the fake contacts it created, so Delete can find them. The list stays on this phone and isn't backed up. After a move to a new phone, clearing the app's data, uninstalling the app or restoring your contacts from a backup, Delete can't find the fake contacts made before, but your Contacts app can still delete them. To remove them with Delete, use it before any of these.
+It keeps a list of the fake contacts it created, so Delete can find them. The list stays on this phone and isn't backed up. After a move to a new phone, clearing the app's data, uninstalling the app or restoring your contacts from a backup, Delete can't find the fake contacts made before, but your Contacts app can still delete them. So to remove them with Delete, use it before you move to a new phone, clear the app's data or uninstall it.
 
 Based on Fake Contacts by Bill Dietrich.

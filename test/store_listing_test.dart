@@ -10,12 +10,15 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:decoy_contacts/about_page.dart' show kAboutSections;
 import 'package:decoy_contacts/fake_contacts_core.dart';
 import 'package:decoy_contacts/main.dart';
 import 'package:decoy_contacts/settings_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'in_memory_contacts_gateway.dart';
 
 final metadataDir = Directory('fastlane/metadata/android');
 
@@ -150,7 +153,15 @@ Png _readPng(File file) {
   }
   expect(at, bytes.length, reason: '$where: nothing after IEND');
   expect(chunks.first, 'IHDR', reason: '$where starts with IHDR');
+  expect(chunks.where((c) => c == 'IHDR'), hasLength(1), reason: where);
   expect(chunks.last, 'IEND', reason: '$where ends with IEND');
+  final firstIdat = chunks.indexOf('IDAT');
+  expect(firstIdat, isNonNegative, reason: '$where has image data');
+  expect(
+    chunks.lastIndexOf('IDAT') - firstIdat + 1,
+    chunks.where((c) => c == 'IDAT').length,
+    reason: '$where: the IDAT chunks come one after another',
+  );
   final ihdr = ByteData.sublistView(header!);
   final png = (
     width: ihdr.getUint32(0),
@@ -159,9 +170,24 @@ Png _readPng(File file) {
     colourType: ihdr.getUint8(9),
     chunks: chunks,
   );
+  expect(header.length, 13, reason: '$where: IHDR is 13 bytes');
+  expect(ihdr.getUint8(10), 0, reason: '$where: compression method 0');
+  expect(ihdr.getUint8(11), 0, reason: '$where: filter method 0');
   expect(ihdr.getUint8(12), 0, reason: '$where: not interlaced');
   const channels = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4};
+  const bitDepths = {
+    0: [1, 2, 4, 8, 16],
+    2: [8, 16],
+    3: [1, 2, 4, 8],
+    4: [8, 16],
+    6: [8, 16],
+  };
   expect(channels.keys, contains(png.colourType), reason: where);
+  expect(
+    bitDepths[png.colourType],
+    contains(png.bitDepth),
+    reason: '$where: a bit depth its colour type allows',
+  );
   final bitsPerRow = png.width * channels[png.colourType]! * png.bitDepth;
   // Each row: a filter byte, then the pixels.
   final rowBytes = 1 + (bitsPerRow + 7) ~/ 8;
@@ -327,7 +353,7 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
     });
-    await tester.pumpWidget(const MyApp());
+    await tester.pumpWidget(MyApp(contacts: InMemoryContactsGateway()));
     await tester.pumpAndSettle();
     for (final label in labels) {
       expect(
@@ -343,25 +369,40 @@ void main() {
 
   test('the descriptions say what the app asks for and keeps', () {
     // "No internet access", "The only permission it asks for is access to
-    // your contacts" and "isn't backed up". (Plugins could add to the
-    // permissions; tool/release_smoke_test.sh checks the release build has
-    // no internet access.)
-    final manifest = File('android/app/src/main/AndroidManifest.xml')
-        .readAsStringSync();
-    expect(
-      RegExp(r'<uses-permission\s+android:name="([^"]*)"')
-          .allMatches(manifest)
-          .map((m) => m.group(1))
-          .toSet(),
-      {'android.permission.READ_CONTACTS', 'android.permission.WRITE_CONTACTS'},
+    // your contacts" and "isn't backed up". (Plugins can add permissions
+    // to the build: tool/release_smoke_test.sh checks the release build's.)
+    String withoutComments(String xml) =>
+        xml.replaceAll(RegExp('<!--.*?-->', dotAll: true), '');
+    String? attribute(String tag, String name) =>
+        RegExp('\\s$name="([^"]*)"').firstMatch(tag)?.group(1);
+    final manifest = withoutComments(
+      File('android/app/src/main/AndroidManifest.xml').readAsStringSync(),
     );
-    expect(manifest, contains('android:allowBackup="false"'));
+    // <uses-permission ...>, <uses-permission-sdk-23 ...>
     expect(
-      manifest,
-      contains('android:dataExtractionRules="@xml/data_extraction_rules"'),
+      [
+        for (final tag in RegExp(
+          r'<uses-permission[^>]*>',
+        ).allMatches(manifest))
+          attribute(tag.group(0)!, 'android:name'),
+      ],
+      unorderedEquals([
+        'android.permission.READ_CONTACTS',
+        'android.permission.WRITE_CONTACTS',
+      ]),
     );
-    final rules = File('android/app/src/main/res/xml/data_extraction_rules.xml')
-        .readAsStringSync();
+    final application = RegExp(r'<application\b[^>]*>').allMatches(manifest);
+    expect(application, hasLength(1));
+    final tag = application.single.group(0)!;
+    expect(attribute(tag, 'android:allowBackup'), 'false');
+    expect(
+      attribute(tag, 'android:dataExtractionRules'),
+      '@xml/data_extraction_rules',
+    );
+    final rules = withoutComments(
+      File('android/app/src/main/res/xml/data_extraction_rules.xml')
+          .readAsStringSync(),
+    );
     for (final section in ['cloud-backup', 'device-transfer']) {
       final body = RegExp(
         '<$section>(.*?)</$section>',
@@ -392,15 +433,59 @@ void main() {
 
   test('the Spanish description says the app is in English, while it is', () {
     // Then it names the buttons by their English labels too. Once the app
-    // is translated (U10: its texts in ARB files), both change.
-    final bTranslated =
-        File('l10n.yaml').existsSync() ||
-        Directory('lib')
-            .listSync(recursive: true)
-            .any((f) => f.path.endsWith('.arb'));
+    // is translated into Spanish (U10: its texts in ARB files), all change.
+    final bTranslated = Directory('lib')
+        .listSync(recursive: true)
+        .any((f) => RegExp(r'_es(_\w+)?\.arb$').hasMatch(f.path));
     final full = read('es', 'full_description.txt');
-    expect(full.contains('La aplicación está en inglés.'), !bTranslated);
-    expect(full.contains('«Create Fake Contacts»'), !bTranslated);
+    for (final english in [
+      'La aplicación está en inglés.',
+      '«Create Fake Contacts»',
+      '«Delete Fake Contacts»',
+    ]) {
+      expect(full.contains(english), !bTranslated, reason: english);
+    }
+  });
+
+  test('the About text screenshot 4 shows is still the app\'s', () {
+    // en-US/images/phoneScreenshots/4.png shows About from the top: the
+    // name, the version, then these, down to the next heading. If they
+    // change, retake it. (Not the version: it shows the one it was taken
+    // with.)
+    expect(
+      [
+        for (final (heading, paragraphs) in kAboutSections.take(3))
+          [heading, ...paragraphs],
+        [kAboutSections[3].$1],
+      ],
+      [
+        [
+          'What it does',
+          'Some apps and companies copy the contacts on your phone, to use or '
+              'sell them. This app adds fake contacts among your real ones, so '
+              'what they copy is worth less. This is called data poisoning.',
+          "The fake contacts don't get in the way of your real ones. By "
+              'default their names start with Z, so they sort to the end.',
+        ],
+        [
+          'Create and Delete',
+          'Create adds a fake contact for each first name with each last '
+              'name. In the phone number template, each n becomes a digit. In '
+              'the email address template, FIRST and LAST become the names.',
+          'Delete only removes fake contacts this app created, and only if '
+              'they are still as it made them. Your real contacts are never '
+              'touched.',
+        ],
+        [
+          'What it stores',
+          'Your names and templates, and a list of the fake contacts it '
+              "created, so Delete can find them. They stay in the app's own "
+              'storage on this phone.',
+        ],
+        ['New phone or backup'],
+      ],
+      reason: 'screenshot 4 shows this text: retake it',
+    );
   });
 
   group('the images', () {
@@ -450,13 +535,20 @@ void main() {
       }
     });
 
-    test('screenshots are the same size, upright, and opaque', () {
+    test('screenshots are the same size, upright (phone), and opaque', () {
       for (final dir in screenshotDirs()) {
         (int, int)? size;
         for (final file in dir.listSync().whereType<File>()) {
           final where = file.path;
           final png = readPng(file);
-          expect(png.height, greaterThan(png.width), reason: '$where upright');
+          // (Phone screenshots: TV and tablet ones can be landscape.)
+          if (baseName(dir) == 'phoneScreenshots') {
+            expect(
+              png.height,
+              greaterThan(png.width),
+              reason: '$where upright',
+            );
+          }
           size ??= (png.width, png.height);
           expect(
             (png.width, png.height),
