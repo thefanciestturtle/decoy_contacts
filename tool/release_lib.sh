@@ -242,8 +242,8 @@ apk_permissions() {
 }
 
 # The only permissions a release may ask for: access to contacts, as the
-# store listing says ("The only permission it asks for is access to your
-# contacts"), and no internet access, as the privacy policy says. Plugins
+# store listing says ("The only permission it asks you for is access to
+# your contacts"), and no internet access, as the privacy policy says. Plugins
 # can add permissions to the build. (The app's own
 # <package>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION, which androidx.core
 # declares so that only the app itself can send it some broadcasts, is
@@ -308,14 +308,22 @@ check_permissions() {
     fail "couldn't read the $abi APK's permissions"
   package="$(head -n 1 <<<"$found")"
   while read -r permission; do
-    if [[ -n "$permission" &&
-          " ${RELEASE_PERMISSIONS[*]} " != *" $permission "* &&
-          "$permission" != "$package.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" ]]
-    then
+    [[ -z "$permission" ||
+       "$permission" == "$package.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" ]] &&
+      continue
+    is_release_permission "$permission" ||
       fail "the $abi APK asks for $permission: a release may ask only for" \
            "${RELEASE_PERMISSIONS[*]}"
-    fi
   done < <(tail -n +2 <<<"$found")
+}
+
+# Whether $1 is one of RELEASE_PERMISSIONS.
+is_release_permission() {
+  local permission
+  for permission in "${RELEASE_PERMISSIONS[@]}"; do
+    [[ "$permission" == "$1" ]] && return 0
+  done
+  return 1
 }
 
 # Runs apksigner with "$@", with the JDK in JAVA_HOME if that is set (the

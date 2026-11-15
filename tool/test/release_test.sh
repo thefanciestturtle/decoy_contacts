@@ -349,13 +349,13 @@ expect "check_apk_abi: an unknown ABI fails" 1 "not for an unknown ABI"
 # --- release_lib.sh: check_release_apk, on APKs made with aapt2
 # release_apk OUT CODE NAME TEXT [ABI...] : an APK with versionCode CODE
 # and versionName NAME, holding TEXT in a native library for each ABI
-# (x86_64 by default). Its manifest is $MANIFEST if set, else the tiny
-# app's.
+# (x86_64 by default). Its manifest is $RELEASE_TEST_MANIFEST if set,
+# else the tiny app's.
 release_apk() {
   local out=$1 code=$2 name=$3 text=$4
   shift 4
   "$build_tools/aapt2" link -o "$out" \
-    --manifest "${MANIFEST:-$tmp/AndroidManifest.xml}" \
+    --manifest "${RELEASE_TEST_MANIFEST:-$tmp/AndroidManifest.xml}" \
     -I "$platform/android.jar" --version-code "$code" --version-name "$name"
   python3 -I - "$out" "$text" "${@:-x86_64}" <<'EOF'
 import sys, zipfile
@@ -405,7 +405,8 @@ permissions_apk() {
     echo '  <application />'
     echo '</manifest>'
   } >"$tmp/permissions-manifest.xml"
-  MANIFEST="$tmp/permissions-manifest.xml" release_apk "$out" 4004 1.2.3 "$CLEAN"
+  RELEASE_TEST_MANIFEST="$tmp/permissions-manifest.xml" \
+    release_apk "$out" 4004 1.2.3 "$CLEAN"
 }
 uses() { echo "<uses-permission $* />"; }
 readonly OWN=org.example.release_test.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
