@@ -11,8 +11,11 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:decoy_contacts/fake_contacts_core.dart';
+import 'package:decoy_contacts/main.dart';
 import 'package:decoy_contacts/settings_store.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 final metadataDir = Directory('fastlane/metadata/android');
 
@@ -34,21 +37,24 @@ const textLimits = {
 };
 
 /// Characters that can't be seen, or that change how the text around them
-/// shows (direction marks, line separators), and so can't be checked by
-/// reading.
+/// shows, and so can't be checked by reading: controls (tabs, carriage
+/// returns, ...), format characters (direction marks, zero-width
+/// spaces, ...), private or unassigned ones, line and paragraph
+/// separators, every space but the plain one, and the marks and fillers
+/// that show nothing (variation selectors, Hangul fillers, the blank
+/// Braille pattern, ...). Newlines end lines, and are allowed.
 final invisible = RegExp(
-  r'[\u00A0\u00AD\u061C\u180E\u200B-\u200F\u2028-\u202F\u2060-\u2064\u2066-\u2069\uFEFF]',
+  r'(?![ \n])[\p{C}\p{Z}\u034F\u115F\u1160\u17B4\u17B5\u2800\u3164\uFE00-\uFE0F\uFFA0\u{E0100}-\u{E01EF}]',
   unicode: true,
 );
 
 /// The locale folders.
 List<String> locales() =>
-    metadataDir
-        .listSync()
-        .whereType<Directory>()
-        .map((dir) => dir.uri.pathSegments.where((s) => s.isNotEmpty).last)
-        .toList()
+    metadataDir.listSync().whereType<Directory>().map(baseName).toList()
       ..sort();
+
+String baseName(FileSystemEntity e) =>
+    e.uri.pathSegments.where((s) => s.isNotEmpty).last;
 
 /// The text of [name] in [locale], without its final newline.
 String read(String locale, String name) {
@@ -57,9 +63,9 @@ String read(String locale, String name) {
 }
 
 /// Checks that [file] is clean text: UTF-8, lines ending in a single "\n"
-/// each, the last one too, no tabs or other control characters, no space
-/// at the start or end of a line, nothing invisible, no blank line at the
-/// start or end or two in a row.
+/// each, the last one too, nothing [invisible] (no tabs either), no space
+/// at the start or end of a line, no blank line at the start or end or two
+/// in a row.
 void expectCleanText(File file) {
   final where = file.path;
   expect(file.existsSync(), isTrue, reason: '$where exists');
@@ -69,16 +75,12 @@ void expectCleanText(File file) {
   expect(text, isNot(startsWith('\n')), reason: '$where: blank line first');
   expect(text, isNot(contains('\n\n\n')), reason: '$where: two blank lines');
   expect(
-    text.runes.where(
-      (c) => (c < 0x20 && c != 0x0A) || (c >= 0x7F && c <= 0x9F),
-    ),
+    [
+      for (final m in invisible.allMatches(text))
+        'U+${m.group(0)!.runes.single.toRadixString(16).toUpperCase()}',
+    ],
     isEmpty,
-    reason: '$where: no tabs, carriage returns or other controls',
-  );
-  expect(
-    invisible.allMatches(text).map((m) => m.group(0)!.runes.single),
-    isEmpty,
-    reason: '$where: nothing invisible (write a plain space)',
+    reason: '$where: nothing invisible, no tabs (write a plain space)',
   );
   for (final line in text.split('\n')) {
     expect(line, line.trim(), reason: '$where: space at a line start or end');
@@ -108,8 +110,13 @@ typedef Png = ({
 
 /// Reads [file] as a PNG file, checked to be whole: the signature, every
 /// chunk with its CRC, IHDR first and IEND last, nothing after it, and
-/// image data that unpacks to exactly the size the header gives.
-Png readPng(File file) {
+/// image data that unpacks to exactly the size the header gives. Each file
+/// is read once.
+Png readPng(File file) => _pngs.putIfAbsent(file.path, () => _readPng(file));
+
+final _pngs = <String, Png>{};
+
+Png _readPng(File file) {
   final where = file.path;
   final bytes = file.readAsBytesSync();
   const signature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
@@ -166,28 +173,26 @@ Png readPng(File file) {
   return png;
 }
 
-/// The images under any locale's images folder.
-List<File> storeImages() => [
+/// The images folders of the locales that have one.
+List<Directory> imagesDirs() => [
   for (final locale in locales())
-    if (Directory('${metadataDir.path}/$locale/images').existsSync())
-      ...Directory('${metadataDir.path}/$locale/images')
-          .listSync(recursive: true)
-          .whereType<File>(),
+    Directory('${metadataDir.path}/$locale/images'),
+].where((dir) => dir.existsSync()).toList();
+
+/// The images in them.
+List<File> storeImages() => [
+  for (final dir in imagesDirs())
+    ...dir.listSync(recursive: true).whereType<File>(),
 ];
 
 /// The screenshot folders among them (phoneScreenshots,
 /// tenInchScreenshots, ...).
 List<Directory> screenshotDirs() => [
-  for (final locale in locales())
-    if (Directory('${metadataDir.path}/$locale/images').existsSync())
-      ...Directory('${metadataDir.path}/$locale/images')
-          .listSync()
-          .whereType<Directory>()
-          .where((d) => baseName(d).endsWith('Screenshots')),
+  for (final dir in imagesDirs())
+    ...dir.listSync().whereType<Directory>().where(
+      (d) => baseName(d).endsWith('Screenshots'),
+    ),
 ];
-
-String baseName(FileSystemEntity e) =>
-    e.uri.pathSegments.where((s) => s.isNotEmpty).last;
 
 void main() {
   test('every locale has a credit line and search words', () {
@@ -288,18 +293,6 @@ void main() {
           expect(full(), contains('900999'));
           expect(full(), contains('example.com'));
         });
-
-        test('names only buttons the app has', () {
-          // Quoted «like this», by their labels in the app.
-          final home = File('lib/home_page.dart').readAsStringSync();
-          for (final label in RegExp('«([^»]*)»').allMatches(full())) {
-            expect(
-              home,
-              contains('Text("${label.group(1)}")'),
-              reason: 'a button labelled "${label.group(1)}"',
-            );
-          }
-        });
       });
     });
   }
@@ -318,12 +311,93 @@ void main() {
     expect(kDefaultEmailTemplate, endsWith('@example.com'));
   });
 
+  testWidgets('the buttons the descriptions name by their labels are the '
+      "app's", (tester) async {
+    // Quoted «like this». (The English one calls them Create and Delete.)
+    final labels = {
+      for (final locale in credits.keys)
+        for (final m in RegExp(
+          '«([^»]*)»',
+        ).allMatches(read(locale, 'full_description.txt')))
+          m.group(1)!,
+    };
+    expect(labels, isNotEmpty);
+    SharedPreferences.setMockInitialValues({});
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    });
+    await tester.pumpWidget(const MyApp());
+    await tester.pumpAndSettle();
+    for (final label in labels) {
+      expect(
+        find.ancestor(
+          of: find.text(label),
+          matching: find.byWidgetPredicate((w) => w is ButtonStyleButton),
+        ),
+        findsOneWidget,
+        reason: 'a button labelled "$label"',
+      );
+    }
+  });
+
+  test('the descriptions say what the app asks for and keeps', () {
+    // "No internet access", "The only permission it asks for is access to
+    // your contacts" and "isn't backed up". (Plugins could add to the
+    // permissions; tool/release_smoke_test.sh checks the release build has
+    // no internet access.)
+    final manifest = File('android/app/src/main/AndroidManifest.xml')
+        .readAsStringSync();
+    expect(
+      RegExp(r'<uses-permission\s+android:name="([^"]*)"')
+          .allMatches(manifest)
+          .map((m) => m.group(1))
+          .toSet(),
+      {'android.permission.READ_CONTACTS', 'android.permission.WRITE_CONTACTS'},
+    );
+    expect(manifest, contains('android:allowBackup="false"'));
+    expect(
+      manifest,
+      contains('android:dataExtractionRules="@xml/data_extraction_rules"'),
+    );
+    final rules = File('android/app/src/main/res/xml/data_extraction_rules.xml')
+        .readAsStringSync();
+    for (final section in ['cloud-backup', 'device-transfer']) {
+      final body = RegExp(
+        '<$section>(.*?)</$section>',
+        dotAll: true,
+      ).firstMatch(rules)?.group(1);
+      expect(body, isNotNull, reason: section);
+      expect(
+        RegExp(r'<exclude domain="(\w+)" path="\." />')
+            .allMatches(body!)
+            .map((m) => m.group(1))
+            .toSet(),
+        containsAll([
+          'root',
+          'file',
+          'database',
+          'sharedpref',
+          'external',
+          'device_root',
+          'device_file',
+          'device_database',
+          'device_sharedpref',
+        ]),
+        reason: '$section excludes everything',
+      );
+      expect(body, isNot(contains('<include')), reason: section);
+    }
+  });
+
   test('the Spanish description says the app is in English, while it is', () {
     // Then it names the buttons by their English labels too. Once the app
-    // is translated (U10), both change.
-    final bTranslated = File('pubspec.yaml')
-        .readAsStringSync()
-        .contains('flutter_localizations');
+    // is translated (U10: its texts in ARB files), both change.
+    final bTranslated =
+        File('l10n.yaml').existsSync() ||
+        Directory('lib')
+            .listSync(recursive: true)
+            .any((f) => f.path.endsWith('.arb'));
     final full = read('es', 'full_description.txt');
     expect(full.contains('La aplicación está en inglés.'), !bTranslated);
     expect(full.contains('«Create Fake Contacts»'), !bTranslated);
@@ -355,16 +429,24 @@ void main() {
       }
     });
 
-    test('screenshots are numbered 1.png, 2.png, ... in the order shown', () {
+    test('screenshots are numbered 1, 2, ... in the order shown', () {
       final dirs = screenshotDirs();
       expect(dirs, isNotEmpty);
       for (final dir in dirs) {
-        // fdroidserver sorts the names as text: 10.png would come before
-        // 2.png.
+        // fdroidserver sorts the names as text, so from 10 on they need
+        // the same number of digits (01.png, ...): 10.png would come
+        // before 2.png.
         final names = dir.listSync().map(baseName).toList()..sort();
-        expect(names, [
-          for (var i = 1; i <= names.length; i++) '$i.png',
-        ], reason: dir.path);
+        expect(
+          [
+            for (final name in names)
+              int.tryParse(
+                RegExp(r'^(\d+)\.png$').firstMatch(name)?.group(1) ?? '',
+              ),
+          ],
+          [for (var i = 1; i <= names.length; i++) i],
+          reason: '${dir.path}: $names',
+        );
       }
     });
 
@@ -381,9 +463,11 @@ void main() {
             size,
             reason: '$where is as big as the others',
           );
-          // 8 bits per channel, colour type 2: RGB without alpha.
+          // 8 bits per channel, colour type 2: RGB without alpha, and no
+          // colour made see-through (tRNS).
           expect(png.bitDepth, 8, reason: where);
           expect(png.colourType, 2, reason: '$where: RGB, no alpha');
+          expect(png.chunks, isNot(contains('tRNS')), reason: where);
         }
       }
     });

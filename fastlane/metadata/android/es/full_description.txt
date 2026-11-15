@@ -7,7 +7,7 @@ Con los ajustes predeterminados, los contactos falsos no te estorban:
 
 Tú eliges los nombres y apellidos, y las plantillas del número de teléfono y del correo electrónico. El botón «Create Fake Contacts» añade un contacto falso por cada combinación de nombre y apellido. Antes de empezar, la aplicación muestra cuántos son, con un ejemplo.
 
-El botón «Delete Fake Contacts» solo elimina los contactos falsos que creó esta aplicación, y solo si siguen tal como los creó. Nunca borra tus contactos reales, aunque tengan el mismo nombre. Los dos botones preguntan antes, con el número exacto.
+El botón «Delete Fake Contacts» solo elimina los contactos falsos que creó esta aplicación, y solo si su nombre, su número de teléfono y su correo electrónico siguen tal como los creó. Nunca borra tus contactos reales, aunque tengan el mismo nombre. Los dos botones preguntan antes, con el número exacto.
 
 La aplicación no tiene acceso a internet, ni anuncios ni rastreadores. El único permiso que pide es el acceso a tus contactos.
 
