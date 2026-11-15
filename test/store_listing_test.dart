@@ -11,7 +11,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:decoy_contacts/about_page.dart' show kAboutSections;
+import 'package:decoy_contacts/about_page.dart' show AboutPage, kAboutSections;
 import 'package:decoy_contacts/contact_actions.dart';
 import 'package:decoy_contacts/fake_contacts_core.dart';
 import 'package:decoy_contacts/main.dart';
@@ -372,8 +372,8 @@ void main() {
   });
 
   test('the descriptions say what the app asks for and keeps', () {
-    // "No internet access", "The only permission it asks for is access to
-    // your contacts" and "isn't backed up". (Plugins can add permissions
+    // "No internet access", "The only permission it asks you for is access
+    // to your contacts" and "isn't backed up". (Plugins can add permissions
     // to the build: tool/release_lib.sh checks each release APK's.)
     String withoutComments(String xml) =>
         xml.replaceAll(RegExp('<!--.*?-->', dotAll: true), '');
@@ -501,13 +501,24 @@ void main() {
     );
   });
 
+  testWidgets("screenshot 4's title and heading are still the app's", (
+    tester,
+  ) async {
+    // Above the sections pinned above (see there).
+    await tester.pumpWidget(const MaterialApp(home: AboutPage()));
+    expect(find.widgetWithText(AppBar, 'About'), findsOneWidget);
+    expect(find.text('Decoy Contacts'), findsOneWidget);
+    expect(find.textContaining(RegExp(r'^Version ')), findsOneWidget);
+  });
+
   testWidgets("the text screenshots 1, 2, 3 and 5 show is still the app's", (
     tester,
   ) async {
     // 1.png and 5.png: the home screen with the default settings after
-    // creating all 756 fake contacts (5.png without the result); 2.png and
-    // 3.png: the dialogs before Create and Delete, over it. If any of this
-    // changes, retake them.
+    // creating all 756 fake contacts (5.png without the result). 2.png: the
+    // dialog before Create, over the home screen with none created yet.
+    // 3.png: the dialog before Delete, over the home screen after Create.
+    // If any of this changes, retake them.
     expect(
       kDefaultLastNames,
       'Zen,Zaragoza,Zabinski,Zimmermann,Zapata,Zona,Zidane,Zeiss,Zimmer,Zaal,'
@@ -535,6 +546,12 @@ void main() {
       skippedChanged: 0,
     );
     expect(statusMessage(all), '756 fake contacts on this phone.');
+    expect(
+      statusMessage(
+        const DeletePreview(toDelete: 0, skippedMerged: 0, skippedChanged: 0),
+      ),
+      'No fake contacts on this phone.',
+    );
     expect(
       createdMessage(
         const CreateResult(created: 756, alreadyExisted: 0, untracked: 0),

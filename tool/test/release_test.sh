@@ -349,11 +349,13 @@ expect "check_apk_abi: an unknown ABI fails" 1 "not for an unknown ABI"
 # --- release_lib.sh: check_release_apk, on APKs made with aapt2
 # release_apk OUT CODE NAME TEXT [ABI...] : an APK with versionCode CODE
 # and versionName NAME, holding TEXT in a native library for each ABI
-# (x86_64 by default).
+# (x86_64 by default). Its manifest is $MANIFEST if set, else the tiny
+# app's.
 release_apk() {
   local out=$1 code=$2 name=$3 text=$4
   shift 4
-  "$build_tools/aapt2" link -o "$out" --manifest "$tmp/AndroidManifest.xml" \
+  "$build_tools/aapt2" link -o "$out" \
+    --manifest "${MANIFEST:-$tmp/AndroidManifest.xml}" \
     -I "$platform/android.jar" --version-code "$code" --version-name "$name"
   python3 -I - "$out" "$text" "${@:-x86_64}" <<'EOF'
 import sys, zipfile
@@ -403,14 +405,7 @@ permissions_apk() {
     echo '  <application />'
     echo '</manifest>'
   } >"$tmp/permissions-manifest.xml"
-  "$build_tools/aapt2" link -o "$out" \
-    --manifest "$tmp/permissions-manifest.xml" -I "$platform/android.jar" \
-    --version-code 4004 --version-name 1.2.3
-  python3 -I - "$out" "$CLEAN" <<'EOF'
-import sys, zipfile
-with zipfile.ZipFile(sys.argv[1], 'a', zipfile.ZIP_STORED) as apk:
-    apk.writestr('lib/x86_64/libapp.so', sys.argv[2].encode())
-EOF
+  MANIFEST="$tmp/permissions-manifest.xml" release_apk "$out" 4004 1.2.3 "$CLEAN"
 }
 uses() { echo "<uses-permission $* />"; }
 readonly OWN=org.example.release_test.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
@@ -442,6 +437,9 @@ permissions_apk "$tmp/other-own.apk" \
 check_apk "one asking for another app's own permission fails" 1 \
   "asks for org.example.other.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" \
   "$tmp/other-own.apk" x86_64 1.2.3 4
+run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; check_permissions '$tmp/AndroidManifest.xml' x86_64 && echo fine"
+expect "check_permissions: a file that isn't an APK fails" 1 \
+  "couldn't read the x86_64 APK's permissions"
 
 # --- release_lib.sh: debug_sign
 mkdir -p "$tmp/android-empty" "$tmp/android"

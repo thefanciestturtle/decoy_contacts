@@ -93,7 +93,7 @@ The first release of Decoy Contacts, a separate app from Fake Contacts (see the 
 * Results show under the buttons until your next tap, instead of in a message that covered them.  Text fields are outlined, "Create" is filled, "Delete" is outlined in red, and the app follows the phone's dark theme.
 * The menu (⋮) has "Reset to defaults" and "About" (what the app does and stores, the privacy policy, the version, the source code and the licenses).
 * TalkBack reads the results.  With a keyboard or D-pad, the focus is shown, goes back to the button you used, and can leave a text field with the arrow keys.
-* The privacy policy now says "It has no internet access."  The release build is checked to ask for no internet permission.
+* The privacy policy now says "It has no internet access."  The release build is checked to ask for no permission but access to contacts, so none for the internet.
 * Release APKs come one for each type of processor, are signed with the app's own key, and are built so that a build of the same source gives the same files.
 * Settings load once and save shortly after you stop typing (and when the app is backgrounded); the page scrolls on small screens; name lists wrap.
 

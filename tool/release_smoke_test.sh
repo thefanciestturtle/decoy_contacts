@@ -100,6 +100,11 @@ if [[ $# -eq 0 ]]; then
   [[ -f "$apk" ]] || fail "the build made no APK at $apk"
 fi
 
+echo "== The APK should ask for no permission but access to contacts"
+# As the store listing says. (build_release.sh checks every release APK so
+# too; this one may have been built some other way.)
+check_permissions "$apk" "$abi"
+
 tmp="$(mktemp -d)"
 was_root=false
 cleanup() {
