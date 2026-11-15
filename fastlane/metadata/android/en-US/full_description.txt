@@ -7,8 +7,10 @@ With the default settings, the fake contacts stay out of your way:
 
 You choose the first and last names, and templates for the phone number and email address. Create adds a fake contact for each first name with each last name. Before you start, the app shows how many that makes, with an example.
 
-Delete removes only the fake contacts this app created, and only if they are still as it made them. Your real contacts are never touched, even ones with the same name. Create and Delete both ask first, with the exact number.
+Delete removes only the fake contacts this app created, and only if they are still as it made them. It never deletes your real contacts, even ones with the same name. Create and Delete both ask first, with the exact number.
 
-The app has no internet access, no ads and no trackers. It needs only access to your contacts. It keeps a list of the fake contacts it created, so Delete can find them. The list stays on this phone and isn't backed up. So after a move to a new phone, a reinstall, or restoring your contacts from a backup, delete the old fake contacts in your Contacts app.
+The app has no internet access, no ads and no trackers. The only permission it asks for is access to your contacts.
+
+It keeps a list of the fake contacts it created, so Delete can find them. The list stays on this phone and isn't backed up. After a move to a new phone, clearing the app's data, uninstalling the app or restoring your contacts from a backup, Delete can't find the fake contacts made before, but your Contacts app can still delete them. To remove them with Delete, use it before any of these.
 
 Based on Fake Contacts by Bill Dietrich.

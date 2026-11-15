@@ -7,9 +7,11 @@ Con los ajustes predeterminados, los contactos falsos no te estorban:
 
 Tú eliges los nombres y apellidos, y las plantillas del número de teléfono y del correo electrónico. El botón «Create Fake Contacts» añade un contacto falso por cada combinación de nombre y apellido. Antes de empezar, la aplicación muestra cuántos son, con un ejemplo.
 
-El botón «Delete Fake Contacts» solo elimina los contactos falsos que creó esta aplicación, y solo si siguen tal como los creó. Nunca toca tus contactos reales, aunque tengan el mismo nombre. Los dos botones preguntan antes, con el número exacto.
+El botón «Delete Fake Contacts» solo elimina los contactos falsos que creó esta aplicación, y solo si siguen tal como los creó. Nunca borra tus contactos reales, aunque tengan el mismo nombre. Los dos botones preguntan antes, con el número exacto.
 
-La aplicación no tiene acceso a internet, ni anuncios ni rastreadores. Solo necesita acceso a tus contactos. Guarda una lista de los contactos falsos que creó, para que «Delete Fake Contacts» pueda encontrarlos. La lista se queda en este teléfono y no se incluye en las copias de seguridad. Por eso, si cambias de teléfono, reinstalas la aplicación o restauras tus contactos desde una copia de seguridad, borra los contactos falsos antiguos desde tu aplicación de Contactos.
+La aplicación no tiene acceso a internet, ni anuncios ni rastreadores. El único permiso que pide es el acceso a tus contactos.
+
+Guarda una lista de los contactos falsos que creó, para que «Delete Fake Contacts» pueda encontrarlos. La lista se queda en este teléfono y no se incluye en las copias de seguridad. Si cambias de teléfono, borras los datos de la aplicación, la desinstalas o restauras tus contactos desde una copia de seguridad, la aplicación ya no encuentra los contactos falsos que creó antes, pero puedes borrarlos desde tu aplicación de Contactos. Para borrarlos con «Delete Fake Contacts», hazlo antes.
 
 La aplicación está en inglés.
 
