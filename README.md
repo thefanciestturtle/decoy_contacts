@@ -4,7 +4,7 @@ Based on [Fake Contacts](https://github.com/BillDietrich/fake_contacts) by Bill 
 
 Some apps and companies copy the contacts on your phone, to use or sell them.  Decoy Contacts adds fake contacts among your real ones, so what they copy is worth less.  This is called data poisoning.
 
-<img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.png" width="185" height="411" alt="The app's screen: the lists of last names and first names, the phone number and email address templates, how many contacts they make with an example, and the Create Fake Contacts and Delete Fake Contacts buttons" />
+<img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.png" width="185" height="411" alt="The app after a Create: the lists of last names and first names, the phone number and email address templates, how many contacts they make with an example, the line 756 fake contacts on this phone, the Create Fake Contacts and Delete Fake Contacts buttons, and the result Created 756 fake contacts" />
 
 With the default settings, the fake contacts stay out of your way:
 * Their names start with Z, so they sort to the end.
@@ -68,7 +68,7 @@ The app keeps your settings: it saves them shortly after you stop typing.
 
 * A big batch takes a while (about half a minute for 10,000 contacts).  The buttons are disabled while it runs, and the app shows how far it got, with a Stop button (Back stops it too) that stops it after the current group of contacts.  If the app is closed or killed partway through a Create, it still knows which contacts it made, so "Delete" can remove them.
 
-* The result stays under the buttons until you tap Create or Delete again; errors are marked with an icon.  Once Android stops asking for access to your contacts (after you have refused it twice, say), the app offers to open its settings instead, where you can allow it.
+* The result stays under the buttons until you next tap Create or Delete, or reset to the defaults; errors are marked with an icon.  Once Android stops asking for access to your contacts (after you have refused it twice, say), the app offers to open its settings instead, where you can allow it.
 
 * The digits for "n" are worked out from the contact's last name, the same way every time.  So if several people leave everything at the defaults, the same contacts, with the same names, phone numbers and email addresses, are on each of their phones.  That's good for data poisoning.  It also means that all fake contacts with the same last name get the same phone number.
 

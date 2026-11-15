@@ -209,23 +209,23 @@ aapt2_path() {
   echo "$sdk/build-tools/$newest/aapt2"
 }
 
-# What aapt2 says about APK $1 (`aapt2 dump badging`); fails, with aapt2's
-# error, if it can't read it.
-apk_badging() {
-  local aapt2 badging
+# What `aapt2 dump $1` says about APK $2 (badging, permissions, ...); fails,
+# with aapt2's error, if it can't read it.
+aapt2_dump() {
+  local aapt2 dump
   aapt2="$(aapt2_path)" || return 1
-  if ! badging="$("$aapt2" dump badging "$1" 2>&1)"; then
-    echo "$badging" >&2
+  if ! dump="$("$aapt2" dump "$1" "$2" 2>&1)"; then
+    echo "$dump" >&2
     return 1
   fi
-  echo "$badging"
+  echo "$dump"
 }
 
 # The versionCode and versionName of APK $1, as "CODE NAME"; fails, with
 # aapt2's error, if it can't read them.
 apk_version() {
   local badging found
-  badging="$(apk_badging "$1")" || return 1
+  badging="$(aapt2_dump badging "$1")" || return 1
   found="$(sed -n \
     "s/^package: .* versionCode='\([0-9]\{1,\}\)' versionName='\([^']*\)'.*/\1 \2/p" \
     <<<"$badging")"
@@ -237,7 +237,7 @@ apk_version() {
 # level); fails, with aapt2's error, if it can't read it.
 apk_min_sdk() {
   local badging found
-  badging="$(apk_badging "$1")" || return 1
+  badging="$(aapt2_dump badging "$1")" || return 1
   found="$(sed -n "s/^minSdkVersion:'\([0-9]\{1,\}\)'$/\1/p" <<<"$badging")"
   [[ -n "$found" ]] || return 1
   echo "$found"
@@ -247,12 +247,8 @@ apk_min_sdk() {
 # one per line, after its package name on the first line; fails, with
 # aapt2's error, if it can't read them.
 apk_permissions() {
-  local aapt2 dump package
-  aapt2="$(aapt2_path)" || return 1
-  if ! dump="$("$aapt2" dump permissions "$1" 2>&1)"; then
-    echo "$dump" >&2
-    return 1
-  fi
+  local dump package
+  dump="$(aapt2_dump permissions "$1")" || return 1
   package="$(sed -n "s/^package: \(.*\)$/\1/p" <<<"$dump")"
   [[ -n "$package" ]] || return 1
   echo "$package"
@@ -276,7 +272,9 @@ readonly RELEASE_PERMISSIONS=(
 # (test/readme_test.dart keeps the two in step). It is Flutter's own
 # minimum (minSdk = flutter.minSdkVersion in android/app/build.gradle.kts),
 # so a Flutter upgrade can change it: the release build then fails, until
-# this and the README are changed with it.
+# this and the README are changed with it. It can't go below 24: release
+# APKs have no v1 signature (SIGNING_OPTIONS), and Android before 7.0
+# needs one.
 readonly RELEASE_MIN_SDK=24
 
 # The versionName and build number in pubspec.yaml file $1, as "NAME
