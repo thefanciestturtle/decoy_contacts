@@ -1,24 +1,26 @@
-"""Draws the app icon's PNGs from its vector drawable. Run with python3 -I
-from anywhere; needs Pillow.
+#!/usr/bin/env python3
+"""Draws the app icon's PNGs from its vector drawable. Needs Python 3 with
+Pillow; runs from any folder.
 
-  make_icon_pngs.py
+  tool/make_icon_pngs.py
       Writes the PNG icons from the adaptive icon's layers (the colour
       ic_launcher_background and drawable/ic_launcher_foreground.xml): the
       launcher icons for Android 7 (mipmap-*dpi/ic_launcher.png, which have
       no adaptive icons) and the store icon
       (fastlane/metadata/android/en-US/images/icon.png). Each is the icon
       cut to a circle 44/48 of its width (Material's keyline for a round
-      icon), on transparency. Run it after changing either layer.
+      icon), on transparency. Run it after changing either layer. A PNG
+      that already shows exactly this picture is left as it is.
 
-  make_icon_pngs.py --check
-      Draws them again and fails, naming them, if the files differ (by
-      more than rounding), are missing, or have other sizes.
+  tool/make_icon_pngs.py --check
+      Draws them again and fails, naming them, if the files show anything
+      else, are missing, can't be read, or have other sizes.
 
 It draws only what the vector drawable can say with absolute M, L, C and Z
-path commands, fill colours with alpha, fillAlpha, fillType, and groups with
-clip paths; anything else stops it, so the PNGs can't silently differ from
-what Android draws. Shapes are drawn 8 times as big and scaled down, which
-smooths their edges.
+path commands, each subpath a simple loop (not crossing itself), fill
+colours with alpha, fillAlpha, fillType, and groups with clip paths; anything
+else stops it, so the PNGs can't silently differ from what Android draws.
+Shapes are drawn 8 times as big and scaled down, which smooths their edges.
 """
 
 import math
@@ -35,6 +37,7 @@ BACKGROUND = RES / 'values/ic_launcher_background.xml'
 FOREGROUND = RES / 'drawable/ic_launcher_foreground.xml'
 
 # The PNGs: path, and width (= height) in pixels. A launcher icon is 48 dp.
+# (test/app_icon_test.dart has the same list.)
 PNGS = [
     (RES / 'mipmap-mdpi/ic_launcher.png', 48),
     (RES / 'mipmap-hdpi/ic_launcher.png', 72),
@@ -54,9 +57,6 @@ KEYLINE = 44 / 48
 
 SUPERSAMPLE = 8
 CUBIC_STEPS = 32
-# Largest difference per colour channel that --check allows: rounding in
-# another Pillow version, not a changed shape or colour.
-TOLERANCE = 2
 
 
 class Unsupported(Exception):
@@ -65,6 +65,13 @@ class Unsupported(Exception):
 
 def attr(element, name):
     return element.get(ANDROID + name)
+
+
+def required(element, name, where):
+    value = attr(element, name)
+    if value is None:
+        raise Unsupported(f'{where}: <{element.tag}> without android:{name}')
+    return value
 
 
 def parse_colour(text, where):
@@ -83,7 +90,7 @@ def background_colour():
     root = ET.parse(BACKGROUND).getroot()
     for colour in root.iter('color'):
         if colour.get('name') == 'ic_launcher_background':
-            return parse_colour(colour.text.strip(), str(BACKGROUND))
+            return parse_colour((colour.text or '').strip(), str(BACKGROUND))
     raise Unsupported(f'{BACKGROUND}: no colour ic_launcher_background')
 
 
@@ -144,16 +151,50 @@ def signed_area(points):
     return sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(points, points[1:] + points[:1])) / 2
 
 
+def orientation(a, b, c):
+    turn = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    return 0 if abs(turn) < 1e-12 else (1 if turn > 0 else -1)
+
+
+def segments_meet(a, b, c, d):
+    """Whether the segments ab and cd cross or touch."""
+    o1, o2, o3, o4 = orientation(a, b, c), orientation(a, b, d), orientation(c, d, a), orientation(c, d, b)
+    if o1 != o2 and o3 != o4:
+        return True
+
+    def within(p, q, r):  # r, on the line pq, is between p and q
+        return min(p[0], q[0]) <= r[0] <= max(p[0], q[0]) and min(p[1], q[1]) <= r[1] <= max(p[1], q[1])
+
+    return ((o1 == 0 and within(a, b, c)) or (o2 == 0 and within(a, b, d))
+            or (o3 == 0 and within(c, d, a)) or (o4 == 0 and within(c, d, b)))
+
+
+def check_simple(subpaths, where):
+    """Stops on a subpath that crosses or touches itself, or has no area:
+    filling one takes real winding numbers, which fill_mask doesn't count."""
+    for points in subpaths:
+        loop = [p for i, p in enumerate(points) if p != points[i - 1]]
+        if len(loop) < 3 or abs(signed_area(loop)) < 1e-9:
+            raise Unsupported(f'{where}: a subpath with no area')
+        edges = list(zip(loop, loop[1:] + loop[:1]))
+        boxes = [(min(p[0], q[0]), min(p[1], q[1]), max(p[0], q[0]), max(p[1], q[1])) for p, q in edges]
+        for i in range(len(edges)):
+            for j in range(i + 2, len(edges) - (1 if i == 0 else 0)):
+                bi, bj = boxes[i], boxes[j]
+                if bi[2] < bj[0] or bj[2] < bi[0] or bi[3] < bj[1] or bj[3] < bi[1]:
+                    continue
+                if segments_meet(*edges[i], *edges[j]):
+                    raise Unsupported(f'{where}: a subpath crosses or touches itself')
+
+
 def fill_mask(subpaths, even_odd, size, transform):
     """A mask, 255 inside the path (by its fill rule) and 0 outside.
 
-    Counts each subpath as a simple loop: it adds 1 or takes 1 from the
-    winding number inside it, by which way round it runs."""
+    Counts each subpath as a simple loop (check_simple): it adds 1 or takes
+    1 from the winding number inside it, by which way round it runs."""
     counts = Image.new('L', size, 128)
     parity = Image.new('1', size, 0)
     for points in subpaths:
-        if len(points) < 3 or signed_area(points) == 0:
-            continue
         loop = Image.new('L', size, 0)
         ImageDraw.Draw(loop).polygon([transform(p) for p in points], fill=1)
         if even_odd:
@@ -165,6 +206,12 @@ def fill_mask(subpaths, even_odd, size, transform):
     if even_odd:
         return parity.convert('L')
     return counts.point(lambda v: 0 if v == 128 else 255)
+
+
+def vector_path(element, where):
+    subpaths = parse_path(required(element, 'pathData', where), where)
+    check_simple(subpaths, where)
+    return subpaths
 
 
 def check_attributes(element, allowed, where):
@@ -184,7 +231,7 @@ def draw_vector(canvas, path, transform, clip):
     check_attributes(root, {'android:width', 'android:height', 'android:viewportWidth',
                             'android:viewportHeight'}, where)
     for name in ('viewportWidth', 'viewportHeight'):
-        if attr(root, name) is None or float(attr(root, name)) != CANVAS:
+        if float(required(root, name, where)) != CANVAS:
             raise Unsupported(f'{where}: {name} is not {CANVAS}')
     for name in ('width', 'height'):
         if attr(root, name) != f'{CANVAS}dp':
@@ -201,18 +248,17 @@ def draw_children(canvas, element, transform, clip, where):
             check_attributes(child, {'android:name', 'android:pathData'}, where)
             # Android clips by the nonzero rule; later children see the
             # clip, the group's parent doesn't.
-            mask = fill_mask(parse_path(attr(child, 'pathData'), where), False, canvas.size, transform)
+            mask = fill_mask(vector_path(child, where), False, canvas.size, transform)
             clip = ImageChops.multiply(clip, mask)
         elif child.tag == 'path':
             check_attributes(child, {'android:name', 'android:pathData', 'android:fillColor',
                                      'android:fillAlpha', 'android:fillType'}, where)
-            r, g, b, a = parse_colour(attr(child, 'fillColor'), where)
+            r, g, b, a = parse_colour(required(child, 'fillColor', where), where)
             alpha = a * float(attr(child, 'fillAlpha') or 1)
             fill_type = attr(child, 'fillType') or 'nonZero'
             if fill_type not in ('nonZero', 'evenOdd'):
                 raise Unsupported(f'{where}: fillType {fill_type}')
-            mask = fill_mask(parse_path(attr(child, 'pathData'), where),
-                             fill_type == 'evenOdd', canvas.size, transform)
+            mask = fill_mask(vector_path(child, where), fill_type == 'evenOdd', canvas.size, transform)
             mask = ImageChops.multiply(mask, clip)
             layer = Image.new('RGBA', canvas.size, (r, g, b, 0))
             layer.putalpha(mask.point(lambda v: round(v * alpha / 255)))
@@ -229,10 +275,8 @@ def render(size, foreground=FOREGROUND, background=None):
     offset = big / 2 - CANVAS / 2 * scale
 
     def transform(point):
-        # Pillow fills the pixels whose corner (not centre) is inside a
-        # shape: half a pixel back puts the shapes where they belong.
         x, y = point
-        return (offset + x * scale - 0.5, offset + y * scale - 0.5)
+        return (offset + x * scale, offset + y * scale)
 
     steps = 1440
     circle = fill_mask([[
@@ -252,17 +296,21 @@ def render(size, foreground=FOREGROUND, background=None):
 
 
 def differences(image, path):
-    """Why the PNG at [path] doesn't match [image]; empty if it does."""
+    """Why the PNG at [path] doesn't show [image]; empty if it does."""
     if not path.exists():
         return ['missing']
-    with Image.open(path) as saved:
-        saved.load()
-        if saved.size != image.size:
-            return [f'{saved.size[0]} x {saved.size[1]}, not {image.size[0]} x {image.size[1]}']
-        diff = ImageChops.difference(saved.convert('RGBA'), image)
-        largest = max(high for _, high in diff.getextrema())
-        if largest > TOLERANCE:
-            return [f'differs by up to {largest} in a colour channel']
+    try:
+        with Image.open(path) as saved:
+            saved.load()
+            if saved.size != image.size:
+                return [f'{saved.size[0]} x {saved.size[1]}, not {image.size[0]} x {image.size[1]}']
+            # Premultiplied: the colour of a transparent pixel doesn't show.
+            diff = ImageChops.difference(saved.convert('RGBA').convert('RGBa'), image.convert('RGBa'))
+    except OSError as error:
+        return [f"can't be read ({error})"]
+    largest = max(high for _, high in diff.getextrema())
+    if largest:
+        return [f'differs by up to {largest} in a colour channel']
     return []
 
 
@@ -275,15 +323,17 @@ def main(argv):
         for path, size in PNGS:
             image = render(size)
             name = path.relative_to(ROOT)
+            problems = differences(image, path)
             if check:
-                for problem in differences(image, path):
-                    failed.append(f'{name}: {problem}')
-            else:
+                failed += [f'{name}: {problem}' for problem in problems]
+            elif problems:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 # No metadata: Pillow adds none unless asked.
                 image.save(path, optimize=True)
                 print(f'Wrote {name} ({size} x {size})')
-    except Unsupported as error:
+            else:
+                print(f'Kept {name} (the same picture)')
+    except (Unsupported, ET.ParseError, OSError, ValueError) as error:
         sys.exit(f"Can't draw the icon: {error}")
     if failed:
         sys.exit('The icon PNGs differ from the vector icon (run tool/make_icon_pngs.py):\n'

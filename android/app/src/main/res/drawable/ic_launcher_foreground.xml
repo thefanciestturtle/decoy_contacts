@@ -15,7 +15,9 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- The water line: white at 55% over the background. -->
+    <!-- The water line: white at 55% over the background, mixed here (a
+         blend would round differently in Android and in the PNGs);
+         test/app_icon_test.dart checks the mix. -->
     <path
         android:fillColor="#FFA5B8CC"
         android:pathData="M31,71.5 L77,71.5 C77.828,71.5 78.5,72.172 78.5,73 C78.5,73.828 77.828,74.5 77,74.5 L31,74.5 C30.172,74.5 29.5,73.828 29.5,73 C29.5,72.172 30.172,71.5 31,71.5 Z" />

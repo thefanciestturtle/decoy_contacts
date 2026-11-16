@@ -11,6 +11,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:decoy_contacts/app_theme.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'png_file.dart';
@@ -54,6 +55,12 @@ class XmlElement {
 
   /// The value of the attribute android:[name].
   String? operator [](String name) => attributes['android:$name'];
+
+  /// The value of the attribute android:[name], which it must have.
+  String need(String name, String where) {
+    expect(this[name], isNotNull, reason: '$where: <$tag> android:$name');
+    return this[name]!;
+  }
 }
 
 /// The root element of the XML file at [path]. Reads only the plain XML of
@@ -221,9 +228,12 @@ List<List<ui.Offset>> edges(Subpath subpath) {
 
 /// [subpath] as text that is the same for the same shape drawn the same
 /// way round, whichever point it starts from.
-String shapeKey(Subpath subpath) => (edges(
-  subpath,
-).map((points) => points.join(' ')).toList()..sort()).join(' / ');
+String shapeKey(Subpath subpath) =>
+    (edges(subpath)
+            .map((points) => points.map((p) => '${p.dx},${p.dy}').join(' '))
+            .toList()
+          ..sort())
+        .join(' / ');
 
 /// The elements of a vector drawable, the attributes each may have, and so
 /// what tool/make_icon_pngs.py can draw.
@@ -258,7 +268,8 @@ Iterable<XmlElement> allElements(XmlElement element) sync* {
 /// (what it draws, not what it clips with).
 List<Subpath> drawnSubpaths(String path) => [
   for (final element in allElements(readXml(path)))
-    if (element.tag == 'path') ...parsePath(element['pathData']!, path),
+    if (element.tag == 'path')
+      ...parsePath(element.need('pathData', path), path),
 ];
 
 /// Draws the children of [element], a vector drawable or a group in it, as
@@ -272,13 +283,15 @@ void drawChildren(ui.Canvas canvas, XmlElement element, String where) {
         canvas.restore();
       case 'clip-path':
         // Android's clip paths fill by the nonzero rule.
-        canvas.clipPath(toPath(parsePath(child['pathData']!, where)));
+        canvas.clipPath(
+          toPath(parsePath(child.need('pathData', where), where)),
+        );
       case 'path':
-        final colour = parseColour(child['fillColor']!, where);
+        final colour = parseColour(child.need('fillColor', where), where);
         final alpha = double.parse(child['fillAlpha'] ?? '1');
         canvas.drawPath(
           toPath(
-            parsePath(child['pathData']!, where),
+            parsePath(child.need('pathData', where), where),
             evenOdd: child['fillType'] == 'evenOdd',
           ),
           ui.Paint()..color = colour.withValues(alpha: colour.a * alpha),
@@ -304,7 +317,9 @@ Future<Uint8List> render(
     ..scale(scale)
     ..translate(dpWidth / 2 - centre.dx, dpWidth / 2 - centre.dy);
   draw(canvas);
-  final image = await recorder.endRecording().toImage(width, width);
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(width, width);
+  picture.dispose();
   final bytes = await image.toByteData();
   image.dispose();
   return bytes!.buffer.asUint8List();
@@ -340,10 +355,11 @@ void main() {
   group('the adaptive icon', () {
     test('is the launcher icon, with a background, a foreground and a '
         'monochrome layer', () {
-      expect(
-        File('android/app/src/main/AndroidManifest.xml').readAsStringSync(),
-        contains('android:icon="@mipmap/ic_launcher"'),
-      );
+      const manifestPath = 'android/app/src/main/AndroidManifest.xml';
+      final application = readXml(manifestPath).children
+          .where((element) => element.tag == 'application');
+      expect(application, hasLength(1), reason: manifestPath);
+      expect(application.single['icon'], '@mipmap/ic_launcher');
       final icon = readXml(adaptiveIconPath);
       expect(icon.tag, 'adaptive-icon');
       expect(
@@ -355,7 +371,11 @@ void main() {
         },
       );
       expect(icon.children, hasLength(3));
-      backgroundColour();
+      // The background is the app's own primary colour.
+      expect(
+        backgroundColour(),
+        appTheme(ui.Brightness.light).colorScheme.primary,
+      );
       for (final path in [foregroundPath, monochromePath]) {
         expect(File(path).existsSync(), isTrue, reason: path);
       }
@@ -379,7 +399,7 @@ void main() {
             reason: where,
           );
           if (element.tag == 'path') {
-            parseColour(element['fillColor']!, where);
+            parseColour(element.need('fillColor', where), where);
             final alpha = double.parse(element['fillAlpha'] ?? '1');
             expect(alpha, inInclusiveRange(0, 1), reason: where);
             expect(
@@ -389,7 +409,7 @@ void main() {
             );
           }
           if (element.tag == 'path' || element.tag == 'clip-path') {
-            parsePath(element['pathData']!, where);
+            parsePath(element.need('pathData', where), where);
           }
         }
       }
@@ -438,7 +458,11 @@ void main() {
         'the eye': ((66.4, 40.3), const ui.Color(0xFF10233C), 0.0),
         'the bill': ((79.0, 43.8), const ui.Color(0xFFF2A33A), 1.0),
         'the wing': ((46.0, 56.0), const ui.Color(0xFFD1E4FF), 1.0),
-        'the water line': ((54.0, 73.0), const ui.Color(0xFFA5B8CC), 0.55),
+        'the water line': (
+          (54.0, 73.0),
+          ui.Color.alphaBlend(white.withValues(alpha: 0.55), background),
+          0.55,
+        ),
         'between the duck and the water': ((54.0, 68.5), background, 0.0),
         'above the duck': ((54.0, 40.0), background, 0.0),
       };
@@ -460,16 +484,15 @@ void main() {
             ((y * pixelsPerDp).floor() * width + (x * pixelsPerDp).floor())
                 .round() *
             4;
-        expect(
-          [colour[at], colour[at + 1], colour[at + 2], colour[at + 3]],
-          [
-            (rgb.r * 255).round(),
-            (rgb.g * 255).round(),
-            (rgb.b * 255).round(),
-            255,
-          ],
-          reason: '$where: colour',
-        );
+        // (Within 1, for rounding where colours are blended.)
+        final channels = [rgb.r, rgb.g, rgb.b, 1.0];
+        for (var channel = 0; channel < 4; channel++) {
+          expect(
+            colour[at + channel],
+            closeTo((channels[channel] * 255).round(), 1),
+            reason: '$where: colour',
+          );
+        }
         expect(
           monochrome[at + 3] / 255,
           closeTo(alpha, 0.02),
@@ -480,6 +503,31 @@ void main() {
   });
 
   group('the PNG icons (Android 7 and the stores)', () {
+    test('are the ones tool/make_icon_pngs.py draws', () {
+      const toolPath = 'tool/make_icon_pngs.py';
+      final tool = File(toolPath).readAsStringSync();
+      final list = RegExp(
+        r'^PNGS = \[\n(.*?)^\]',
+        multiLine: true,
+        dotAll: true,
+      ).firstMatch(tool);
+      expect(list, isNotNull, reason: '$toolPath: PNGS');
+      expect({
+        for (final entry in RegExp(
+          r"^    \((RES|ROOT) / '([^']+)', (\d+)\),$",
+          multiLine: true,
+        ).allMatches(list![1]!))
+          '${entry[1] == 'RES' ? '$res/' : ''}${entry[2]}': int.parse(
+            entry[3]!,
+          ),
+      }, pngWidths);
+      expect(
+        list[1]!.trim().split('\n'),
+        hasLength(pngWidths.length),
+        reason: '$toolPath: one PNG a line',
+      );
+    });
+
     test('are RGBA PNGs without metadata, at their sizes', () {
       for (final MapEntry(key: path, value: width) in pngWidths.entries) {
         final png = readPng(File(path));
@@ -510,14 +558,18 @@ void main() {
         for (var y = 1; y < width - 1; y++) {
           for (var x = 1; x < width - 1; x++) {
             final i = (y * width + x) * 4;
-            final isFlat = [
-              for (var dy = -1; dy <= 1; dy++)
-                for (var dx = -1; dx <= 1; dx++)
-                  same(expected, i, ((y + dy) * width + x + dx) * 4),
-            ].every((s) => s);
+            var isFlat = true;
+            for (var dy = -1; dy <= 1 && isFlat; dy++) {
+              for (var dx = -1; dx <= 1 && isFlat; dx++) {
+                isFlat = same(expected, i, ((y + dy) * width + x + dx) * 4);
+              }
+            }
             if (!isFlat) continue;
             flat++;
-            if (![0, 1, 2, 3].every((c) => actual[i + c] == expected[i + c])) {
+            if (!(actual[i] == expected[i] &&
+                actual[i + 1] == expected[i + 1] &&
+                actual[i + 2] == expected[i + 2] &&
+                actual[i + 3] == expected[i + 3])) {
               differing.add('($x, $y)');
             }
           }
