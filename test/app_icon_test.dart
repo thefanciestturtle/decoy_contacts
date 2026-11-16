@@ -236,7 +236,7 @@ String shapeKey(Subpath subpath) =>
         .join(' / ');
 
 /// The elements of a vector drawable, the attributes each may have, and so
-/// what tool/make_icon_pngs.py can draw.
+/// what tool/make_icon_pngs.py can draw: paths, no groups or clip paths.
 const vectorAttributes = {
   'vector': {
     'xmlns:android',
@@ -245,8 +245,6 @@ const vectorAttributes = {
     'android:viewportWidth',
     'android:viewportHeight',
   },
-  'group': {'android:name'},
-  'clip-path': {'android:name', 'android:pathData'},
   'path': {
     'android:name',
     'android:pathData',
@@ -264,28 +262,17 @@ Iterable<XmlElement> allElements(XmlElement element) sync* {
   }
 }
 
-/// The subpaths of the `<path>` elements of the vector drawable at [path]
-/// (what it draws, not what it clips with).
+/// The subpaths of the `<path>` elements of the vector drawable at [path].
 List<Subpath> drawnSubpaths(String path) => [
   for (final element in allElements(readXml(path)))
     if (element.tag == 'path')
       ...parsePath(element.need('pathData', path), path),
 ];
 
-/// Draws the children of [element], a vector drawable or a group in it, as
-/// Android does: a clip path clips what comes after it in its group.
+/// Draws the paths of [element], a vector drawable.
 void drawChildren(ui.Canvas canvas, XmlElement element, String where) {
   for (final child in element.children) {
     switch (child.tag) {
-      case 'group':
-        canvas.save();
-        drawChildren(canvas, child, where);
-        canvas.restore();
-      case 'clip-path':
-        // Android's clip paths fill by the nonzero rule.
-        canvas.clipPath(
-          toPath(parsePath(child.need('pathData', where), where)),
-        );
       case 'path':
         final colour = parseColour(child.need('fillColor', where), where);
         final alpha = double.parse(child['fillAlpha'] ?? '1');
@@ -387,8 +374,8 @@ void main() {
       }
     });
 
-    test('layers are 108 dp vectors with only what tool/make_icon_pngs.py '
-        'draws', () {
+    test('layers are 108 dp vectors with only the elements, attributes and '
+        'path commands tool/make_icon_pngs.py draws', () {
       for (final path in [foregroundPath, monochromePath]) {
         final vector = readXml(path);
         expect(vector.tag, 'vector', reason: path);
@@ -414,7 +401,7 @@ void main() {
               reason: where,
             );
           }
-          if (element.tag == 'path' || element.tag == 'clip-path') {
+          if (element.tag == 'path') {
             parsePath(element.need('pathData', where), where);
           }
         }

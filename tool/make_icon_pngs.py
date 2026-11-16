@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Draws the app icon's PNGs from its vector drawable. Needs Python 3 with
-Pillow; runs from any folder.
+Pillow 9.1 or newer; runs from any folder.
 
   tool/make_icon_pngs.py
       Writes the PNG icons from the adaptive icon's layers (the colour
@@ -19,12 +19,14 @@ Pillow; runs from any folder.
 
 It draws only what the vector drawable can say with absolute M, L, C and Z
 path commands, each subpath a simple loop (not crossing itself), fill
-colours with alpha, fillAlpha, fillType, and groups with clip paths; anything
-else stops it, so the PNGs can't silently differ from what Android draws.
+colours with alpha, fillAlpha and fillType; anything else (groups, clip
+paths, strokes, ...) stops it, so the PNGs can't silently differ from what
+Android draws.
 Shapes are drawn 8 times as big and scaled down, which smooths their edges.
 """
 
 import math
+import os
 import pathlib
 import re
 import sys
@@ -32,9 +34,12 @@ import xml.etree.ElementTree as ET
 import zlib
 
 try:
+    import PIL
     from PIL import Image, ImageChops, ImageDraw
 except ImportError:
-    sys.exit('tool/make_icon_pngs.py needs Pillow (on Debian or Ubuntu: python3-pil).')
+    sys.exit('tool/make_icon_pngs.py needs Pillow 9.1 or newer (on Debian or Ubuntu: python3-pil).')
+if tuple(map(int, re.findall(r'\d+', PIL.__version__)[:2])) < (9, 1):
+    sys.exit(f'tool/make_icon_pngs.py needs Pillow 9.1 or newer, not {PIL.__version__}.')
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RES = ROOT / 'android/app/src/main/res'
@@ -227,9 +232,8 @@ def check_attributes(element, allowed, where):
 
 
 def load_vector(path):
-    """The drawing in the vector drawable at [path], checked to hold only
-    what this tool draws: a list of steps, each ('group', steps),
-    ('clip', subpaths) or ('path', subpaths, (r, g, b), alpha, even_odd)."""
+    """The paths of the vector drawable at [path], checked to be only what
+    this tool draws: each (subpaths, (r, g, b), alpha, even_odd)."""
     root = ET.parse(path).getroot()
     where = str(path)
     if root.tag != 'vector':
@@ -242,56 +246,37 @@ def load_vector(path):
     for name in ('width', 'height'):
         if attr(root, name) != f'{CANVAS}dp':
             raise Unsupported(f'{where}: {name} is not {CANVAS}dp')
-    return load_children(root, where)
-
-
-def load_children(element, where):
-    steps = []
-    for child in element:
-        if child.tag != 'group' and len(child):
-            # Say an <aapt:attr> with a gradient instead of the fill colour.
-            raise Unsupported(f'{where}: <{child.tag}> with <{child[0].tag}> in it')
-        if child.tag == 'group':
-            check_attributes(child, {'android:name'}, where)
-            steps.append(('group', load_children(child, where)))
-        elif child.tag == 'clip-path':
-            check_attributes(child, {'android:name', 'android:pathData'}, where)
-            steps.append(('clip', vector_path(child, where)))
-        elif child.tag == 'path':
-            check_attributes(child, {'android:name', 'android:pathData', 'android:fillColor',
-                                     'android:fillAlpha', 'android:fillType'}, where)
-            r, g, b, a = parse_colour(required(child, 'fillColor', where), where)
-            fill_type = attr(child, 'fillType') or 'nonZero'
-            if fill_type not in ('nonZero', 'evenOdd'):
-                raise Unsupported(f'{where}: fillType {fill_type}')
-            steps.append(('path', vector_path(child, where), (r, g, b),
-                          a * float(attr(child, 'fillAlpha') or 1), fill_type == 'evenOdd'))
-        else:
+    paths = []
+    for child in root:
+        if child.tag != 'path':
             raise Unsupported(f'{where}: <{child.tag}>')
-    return steps
+        if len(child):
+            # Say an <aapt:attr> with a gradient instead of the fill colour.
+            raise Unsupported(f'{where}: <path> with <{child[0].tag}> in it')
+        check_attributes(child, {'android:name', 'android:pathData', 'android:fillColor',
+                                 'android:fillAlpha', 'android:fillType'}, where)
+        r, g, b, a = parse_colour(required(child, 'fillColor', where), where)
+        fill_type = attr(child, 'fillType') or 'nonZero'
+        if fill_type not in ('nonZero', 'evenOdd'):
+            raise Unsupported(f'{where}: fillType {fill_type}')
+        paths.append((vector_path(child, where), (r, g, b),
+                      a * float(attr(child, 'fillAlpha') or 1), fill_type == 'evenOdd'))
+    return paths
 
 
-def draw(canvas, steps, transform, clip):
-    """Draws [steps] (from load_vector) onto [canvas] (RGBA), inside the
-    mask [clip]. As in Android, a clip path clips what comes after it in its
-    group."""
-    for step in steps:
-        if step[0] == 'group':
-            draw(canvas, step[1], transform, clip)
-        elif step[0] == 'clip':
-            # Android clips by the nonzero rule.
-            clip = ImageChops.multiply(clip, fill_mask(step[1], False, canvas.size, transform))
-        else:
-            _, subpaths, (r, g, b), alpha, even_odd = step
-            mask = ImageChops.multiply(fill_mask(subpaths, even_odd, canvas.size, transform), clip)
-            layer = Image.new('RGBA', canvas.size, (r, g, b, 0))
-            layer.putalpha(mask.point(lambda v: round(v * alpha / 255)))
-            canvas.alpha_composite(layer)
+def draw(canvas, paths, transform, clip):
+    """Draws [paths] (from load_vector) onto [canvas] (RGBA), inside the
+    mask [clip]."""
+    for subpaths, (r, g, b), alpha, even_odd in paths:
+        mask = ImageChops.multiply(fill_mask(subpaths, even_odd, canvas.size, transform), clip)
+        layer = Image.new('RGBA', canvas.size, (r, g, b, 0))
+        layer.putalpha(mask.point(lambda v: round(v * alpha / 255)))
+        canvas.alpha_composite(layer)
 
 
 def render(size, background, foreground):
     """The round icon, [size] pixels wide: the [background] colour and the
-    [foreground] steps, cut to a circle of 44/48 of the width."""
+    [foreground] paths, cut to a circle of 44/48 of the width."""
     big = size * SUPERSAMPLE
     scale = big * KEYLINE / VISIBLE
     offset = big / 2 - CANVAS / 2 * scale
@@ -374,29 +359,44 @@ def differences(image, path):
     return []
 
 
+def write(image, path):
+    """Writes [image] to [path] whole or not at all: to a temporary file
+    first, which then takes its place."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + '.partial')
+    try:
+        # No metadata: Pillow adds none unless asked.
+        image.save(partial, format='PNG', optimize=True)
+        os.replace(partial, path)
+    finally:
+        partial.unlink(missing_ok=True)
+
+
 def main(argv):
     if argv not in ([], ['--check']):
         sys.exit(__doc__)
     check = argv == ['--check']
-    failed = []
     try:
         background = background_colour()
         foreground = load_vector(FOREGROUND)
-        for path, size in PNGS:
-            image = render(size, background, foreground)
-            name = path.relative_to(ROOT)
-            problems = differences(image, path)
-            if check:
-                failed += [f'{name}: {problem}' for problem in problems]
-            elif problems:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                # No metadata: Pillow adds none unless asked.
-                image.save(path, optimize=True)
-                print(f'Wrote {name} ({size} x {size})')
-            else:
-                print(f'Kept {name} (the same picture)')
+        # All drawn before any is written, so a drawing error writes none.
+        images = [(path, size, render(size, background, foreground)) for path, size in PNGS]
     except (Unsupported, ET.ParseError, OSError, ValueError) as error:
         sys.exit(f"Can't draw the icon: {error}")
+    failed = []
+    for path, size, image in images:
+        name = path.relative_to(ROOT)
+        problems = differences(image, path)
+        if check:
+            failed += [f'{name}: {problem}' for problem in problems]
+        elif problems:
+            try:
+                write(image, path)
+            except OSError as error:
+                sys.exit(f"Can't write {name}: {error}")
+            print(f'Wrote {name} ({size} x {size})')
+        else:
+            print(f'Kept {name} (the same picture)')
     if failed:
         sys.exit('The icon PNGs differ from the vector icon (run tool/make_icon_pngs.py):\n'
                  + '\n'.join(f'  {line}' for line in failed))

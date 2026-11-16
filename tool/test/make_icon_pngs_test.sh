@@ -6,6 +6,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
+source tool/check_lib.sh
 python3 -c 'import PIL' 2>/dev/null || {
   echo "tool/test/make_icon_pngs_test.sh needs Python 3 with Pillow (on Debian or Ubuntu: python3-pil)." >&2
   exit 1
@@ -13,8 +14,8 @@ python3 -c 'import PIL' 2>/dev/null || {
 readonly RES=android/app/src/main/res
 readonly FOREGROUND=$RES/drawable/ic_launcher_foreground.xml
 readonly BACKGROUND=$RES/values/ic_launcher_background.xml
-# The PNGs the tool writes, from its own list.
-mapfile -t PNGS < <(python3 - <<'EOF'
+# The PNGs the tool writes, from its own list. (-B: no __pycache__ in tool/.)
+mapfile -t PNGS < <(python3 -B - <<'EOF'
 import importlib.util
 spec = importlib.util.spec_from_file_location('make_icon_pngs', 'tool/make_icon_pngs.py')
 tool = importlib.util.module_from_spec(spec)
@@ -159,10 +160,14 @@ data[16:24] = (60000).to_bytes(4, 'big') * 2
 data[29:33] = zlib.crc32(bytes(data[12:29])).to_bytes(4, 'big')
 open(path, 'wb').write(data)
 EOF
+rm "$dir/${PNGS[4]}"
 expect "--check names a PNG Pillow can't open, and goes on to the others" 1 \
-  "$RES/mipmap-xhdpi/ic_launcher.png: can't be read" same -- --check
-expect "...and writing writes it again" 0 "Wrote $RES/mipmap-xhdpi/ic_launcher.png (96 x 96)
-Kept $RES/mipmap-xxhdpi/ic_launcher.png (the same picture)" changed --
+  "$RES/mipmap-xhdpi/ic_launcher.png: can't be read
+$RES/mipmap-xxxhdpi/ic_launcher.png: missing" same -- --check
+expect "...and writing writes them again" 0 "Wrote $RES/mipmap-xhdpi/ic_launcher.png (96 x 96)
+Kept $RES/mipmap-xxhdpi/ic_launcher.png (the same picture)
+Wrote $RES/mipmap-xxxhdpi/ic_launcher.png (192 x 192)" changed --
+expect "...after which --check passes" 0 "The icon PNGs match the vector icon." same -- --check
 
 # A PNG that shows the right picture but isn't written as the tool writes
 # it: named by --check, and written again. CHANGE is Python that changes
@@ -223,8 +228,10 @@ cant_draw "a stroke" '<path
         android:fillColor="#FFF2A33A"' '<path
         android:strokeWidth="1"
         android:fillColor="#FFF2A33A"' "<path> attribute android:strokeWidth"
-cant_draw "a group that moves what is in it" '    <!-- The bill, under the head. -->' \
-  '    <group android:translateX="1" />' "<group> attribute android:translateX"
+cant_draw "a group" '    <!-- The bill, under the head. -->' \
+  '    <group android:name="bill" />' "<group>"
+cant_draw "a clip path" '    <!-- The bill, under the head. -->' \
+  '    <clip-path android:pathData="M0,0 L108,0 L108,108 Z" />' "<clip-path>"
 cant_draw "a path that crosses itself" \
   'M75,41.5 C79,41.1 82.4,42.2 84.2,44.5 C82,46.1 78,46.5 74.4,45.7 Z' \
   'M54,36 L60,54 L44,43 L64,43 L48,54 Z' "a subpath crosses or touches itself"
