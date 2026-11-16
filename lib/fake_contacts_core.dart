@@ -156,8 +156,8 @@ LedgerEntry entryFor(FakeName name, String phoneTemplate, String emailTemplate) 
 /// themselves, so other apps reading the address book can't use it to filter
 /// out the fakes. Raw contact IDs are only meaningful on the phone that
 /// assigned them, so the app opts out of Android backup and device transfer
-/// (see AndroidManifest.xml), and Delete also checks that each contact still
-/// matches its entry.
+/// (see AndroidManifest.xml), and Delete also checks that each raw contact
+/// still matches its entry.
 class Ledger {
   final Map<String, LedgerEntry> entries;
 
@@ -301,11 +301,13 @@ Map<String, LedgerEntry> newlyCreatedRawIds({
   final unmatched = entriesNotFound(
       created.take(createdContactIds.length).toList(), result.values);
   if (unmatched.isNotEmpty) {
+    // The call gave a contact ID for each, so it made them all.
     result.addAll(createdBeforeFailure(
         planned: unmatched,
         oldRawIds: {...oldRawIds, ...result.keys},
         after: after,
-        fingerprintsByRaw: fingerprintsByRaw));
+        fingerprintsByRaw: fingerprintsByRaw,
+        allCreated: true));
   }
   return result;
 }
@@ -320,18 +322,23 @@ Map<String, LedgerEntry> newlyCreatedRawIds({
 /// contact's own fingerprints (see [fingerprintsOf]). Which contact holds it
 /// doesn't matter: Android may have merged it with another.
 ///
-/// It is left out if it matches several planned entries, or if more new raw
-/// contacts match an entry than there are planned fakes with it (say, a
-/// copy synced from another phone meanwhile): which one this app created
-/// can't be told then. Left out, it is only skipped by Create and never
-/// deleted. (Two planned fakes can have the same name, phone and email, as
-/// names can hold spaces: "A B" "C" and "A" "B C". Which raw contact is
-/// which of them doesn't matter.)
+/// It is left out if it matches several planned entries, or if another new
+/// raw contact matches the same entry (say, a copy synced from another phone
+/// meanwhile): which one this app created can't be told then. Left out, it
+/// is only skipped by Create and never deleted.
+///
+/// Two planned fakes can have the same name, phone and email, as names can
+/// hold spaces: "A B" "C" and "A" "B C". If the call is known to have made
+/// [allCreated] of them, an entry can be taken by as many new raw contacts
+/// as there are planned fakes with it (which of them is which doesn't
+/// matter). Otherwise, after a failure, such fakes are left out, as a copy
+/// synced meanwhile could be taken for one the call didn't make.
 Map<String, LedgerEntry> createdBeforeFailure({
   required List<LedgerEntry> planned,
   required Set<String> oldRawIds,
   required AddressBook after,
   required Map<String, Set<String>> fingerprintsByRaw,
+  bool allCreated = false,
 }) {
   // Planned fingerprint -> its entry, and how many planned fakes have it.
   final byFingerprint = <String, LedgerEntry>{};
@@ -359,7 +366,7 @@ Map<String, LedgerEntry> createdBeforeFailure({
     for (final MapEntry(key: raw, value: fingerprints) in found.entries)
       if (fingerprints.length == 1 &&
           matches[fingerprints.single]!.length <=
-              plannedCount[fingerprints.single]!)
+              (allCreated ? plannedCount[fingerprints.single]! : 1))
         raw: byFingerprint[fingerprints.single]!,
   };
 }

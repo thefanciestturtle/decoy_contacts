@@ -902,14 +902,19 @@ void main() {
       expect((deleted!.deleted, deleted.skippedChanged), (4, 0));
       expect(book.displayNames, ['Alice Example']);
 
-      // The same after a call that fails once it has made them all: they
-      // are found by their details, both of them.
+      // After a call that fails once it has made them all, the two can't be
+      // told from a copy synced meanwhile: they stay pending, the others
+      // are recorded.
       book.createAllError = Exception('provider gone');
       book.createAllStopsAfter = 4;
-      final again = await createFakeContacts(book, const LedgerStore(), same);
-      expect((again!.created, again.untracked), (4, 0));
-      expect((await stored()).length, 4);
-      expect(logged.single, contains('recovered: Exception: provider gone'));
+      final error = await createFakeContacts(book, const LedgerStore(), same)
+          .then<Object?>((_) => null, onError: (Object e) => e);
+      final stopped = error! as StoppedPartway;
+      expect((stopped.done, stopped.planned), (2, 4));
+      final left = await const LedgerStore().loadWithPending();
+      expect(left.ledger.entries.values.map((e) => e.name),
+          unorderedEquals(['A C', 'A B B C']));
+      expect(left.pending!.entries.map((e) => e.name), ['A B C', 'A B C']);
     });
 
     test('a second Create finds all four, also with the ledger lost: the one '

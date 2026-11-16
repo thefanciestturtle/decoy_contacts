@@ -387,7 +387,7 @@ Future<CreateResult?> createFakeContacts(
           after: after,
           fingerprintsByRaw: fingerprintsByRawOf(createdContacts));
       done += ids.length;
-      final missing = _notFound(entries, found);
+      final missing = entriesNotFound(entries, found.values);
       if (missing.isNotEmpty) {
         // Not under the contact IDs the call gave (say, Android linked one
         // with another contact meanwhile, which changes its ID): look for
@@ -400,7 +400,7 @@ Future<CreateResult?> createFakeContacts(
       final seen = {...allRawIds(after), ...found.keys};
       known.addAll(seen);
       maxRawId = _higher(maxRawId, maxRawIdOf(seen));
-      untracked += _notFound(entries, found).length;
+      untracked += entriesNotFound(entries, found.values).length;
     } catch (e, st) {
       // What this chunk created isn't known: work it out from the address
       // book.
@@ -421,7 +421,7 @@ Future<CreateResult?> createFakeContacts(
       if (count != entries.length) {
         // Those not found stay pending, in case this read was wrong: the
         // next Create or Delete looks again.
-        final unfound = _notFound(entries, found);
+        final unfound = entriesNotFound(entries, found.values);
         try {
           await ledgerStore.save(
               Ledger({...plan.stored.entries, ...created, ...found}),
@@ -463,12 +463,6 @@ Future<CreateResult?> createFakeContacts(
     stopped: bStopped,
   );
 }
-
-/// The entries of [entries] that no raw contact in [found] was recorded
-/// with (equal entries count one by one: see [entriesNotFound]).
-List<LedgerEntry> _notFound(
-        List<LedgerEntry> entries, Map<String, LedgerEntry> found) =>
-    entriesNotFound(entries, found.values);
 
 /// The higher of two raw contact IDs, either of which may be missing.
 int? _higher(int? a, int? b) =>

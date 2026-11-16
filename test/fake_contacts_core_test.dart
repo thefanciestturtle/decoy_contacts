@@ -455,7 +455,8 @@ void main() {
       // Names can hold spaces: "A B" "C" and "A" "B C" are both "A B C",
       // and with templates that give no n or FIRST/LAST, the same details.
       final abc = entryFor(const FakeName('A B', 'C'), '+447700900123', '');
-      Map<String, LedgerEntry> recorded(List<String> raws) =>
+      Map<String, LedgerEntry> recorded(List<String> raws,
+              {bool allCreated = false}) =>
           createdBeforeFailure(
             planned: [abc, abc, zoe],
             oldRawIds: const {},
@@ -463,15 +464,21 @@ void main() {
             fingerprintsByRaw: {
               for (final r in raws) r: fingerprintsMatching(abc),
             },
+            allCreated: allCreated,
           );
 
-      test('each raw contact with those details is recorded, up to two', () {
-        expect(recorded(['20', '21']), {'20': abc, '21': abc});
-        expect(recorded(['20']), {'20': abc});
+      test('if the call made them all, each raw contact with those details '
+          'is recorded, up to two', () {
+        expect(recorded(['20', '21'], allCreated: true),
+            {'20': abc, '21': abc});
+        expect(recorded(['20'], allCreated: true), {'20': abc});
+        expect(recorded(['20', '21', '22'], allCreated: true), isEmpty);
       });
 
-      test('three such raw contacts: none is', () {
-        expect(recorded(['20', '21', '22']), isEmpty);
+      test('after a failure, one is recorded only if it is the only one: a '
+          'second could be a copy synced meanwhile', () {
+        expect(recorded(['20']), {'20': abc});
+        expect(recorded(['20', '21']), isEmpty);
       });
     });
 
