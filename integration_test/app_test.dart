@@ -111,6 +111,46 @@ class HangsAfterCreating extends FlutterContactsGateway {
   }
 }
 
+/// The device's address book, but just before Delete's first delete call
+/// (so after Delete has checked the fakes), the [real] contact arrives in
+/// another account, as a sync could bring it in. It has the name of a fake,
+/// and Android merges contacts of different accounts that have the same
+/// name, so it ends up in that fake's contact. (On API 36 the merged contact
+/// gets a new contact ID.)
+class RealContactArrivesBeforeDelete extends FlutterContactsGateway {
+  RealContactArrivesBeforeDelete(this.real);
+
+  final RealContact real;
+
+  /// Once [real] has arrived: the raw contact IDs of the fake's contact
+  /// before, and of the contact [real] is part of after; and [real]'s own.
+  List<String>? fakeRawIds, mergedRawIds;
+  String? rawId;
+
+  @override
+  Future<void> deleteAll(List<String> contactIds) async {
+    if (rawId == null) await _arrive();
+    return super.deleteAll(contactIds);
+  }
+
+  Future<void> _arrive() async {
+    final name = '${real.first} ${real.last}';
+    fakeRawIds = rawIdsOf((await readAddressBook())
+        .values
+        .singleWhere((c) => c.displayName == name));
+    // The ID of the contact it is part of.
+    final [id] = await FlutterContacts.createAll([
+      Contact(
+        name: Name(first: real.first, last: real.last),
+        phones: [if (real.phone != null) Phone(number: real.phone!)],
+        emails: [if (real.email != null) Email(address: real.email!)],
+      ),
+    ], account: kOtherAccount);
+    mergedRawIds = rawIdsOf((await readAddressBook())[id]!);
+    rawId = mergedRawIds!.singleWhere((r) => !fakeRawIds!.contains(r));
+  }
+}
+
 /// The device's address book, but each create call waits a moment first,
 /// so a test can tap Stop while the first one runs.
 class SlowCreate extends FlutterContactsGateway {
@@ -279,6 +319,45 @@ void main() {
     final zach = contactWithRawId(book, zachRawId);
     expect(rawIdsOf(zach), unorderedEquals(rawIdsOf(merged)));
     expect(phonesOf(zach), contains('+15555550104'));
+  });
+
+  testWidgets('C17: a real contact that Android merges into a fake\'s contact '
+      'after Delete checked it, and before the delete, survives',
+      (tester) async {
+    await startWithEmptyAddressBook(tester);
+    final real = await seed(kRealContacts);
+    final gateway = RealContactArrivesBeforeDelete(
+        (first: 'Zoe', last: 'Zen', phone: '+15555550101', email: null));
+    await launchApp(tester, contacts: gateway);
+    expect(
+        await tapAndWaitForResult(tester, kCreate,
+            confirm: 'Create 4 fake contacts?'),
+        'Created 4 fake contacts.');
+    await expectStatus(tester, '4 fake contacts on this phone.');
+
+    expect(
+        await tapAndWaitForResult(tester, kDelete,
+            confirm: 'Delete 4 fake contacts?'),
+        'Deleted 4 fake contacts.');
+    // The race happened: Android merged the real Zoe Zen into the fake Zoe
+    // Zen's contact after Delete had checked it.
+    expect(gateway.fakeRawIds, hasLength(1));
+    expect(gateway.mergedRawIds,
+        unorderedEquals([...gateway.fakeRawIds!, gateway.rawId]),
+        reason: 'Android should have merged the real Zoe Zen into the fake');
+
+    // All four fakes are gone, and only they: the real Zoe Zen is still
+    // there, on its own.
+    final book = await readAddressBook();
+    final zoe = contactWithRawId(book, gateway.rawId!);
+    expect(rawIdsOf(zoe), [gateway.rawId],
+        reason: 'the fake Zoe Zen should be gone from it');
+    expect(zoe.displayName, 'Zoe Zen');
+    expect(phonesOf(zoe), ['+15555550101']);
+    expectUnchanged(book, real);
+    expect(book, hasLength(real.length + 1));
+    expect(await storedLedger(), isEmpty);
+    await expectStatus(tester, 'No fake contacts on this phone.');
   });
 
   testWidgets('C15: Android merges two contacts stored on the phone whose '
