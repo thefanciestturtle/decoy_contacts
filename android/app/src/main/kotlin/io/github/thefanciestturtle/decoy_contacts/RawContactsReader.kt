@@ -1,8 +1,6 @@
 package io.github.thefanciestturtle.decoy_contacts
 
 import android.content.ContentResolver
-import android.os.Handler
-import android.os.Looper
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Email
 import android.provider.ContactsContract.CommonDataKinds.Phone
@@ -12,7 +10,7 @@ import android.provider.ContactsContract.RawContacts
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import java.util.concurrent.Executors
+import io.flutter.plugin.common.StandardMethodCodec
 
 /**
  * Reads the address book one raw contact at a time, for the app's Dart code
@@ -26,8 +24,18 @@ import java.util.concurrent.Executors
 class RawContactsReader(private val resolver: ContentResolver) :
     MethodChannel.MethodCallHandler {
 
+    /**
+     * Calls are handled one at a time on a background thread, not Android's
+     * main thread: with thousands of contacts the queries, and encoding the
+     * answer, take a while.
+     */
     fun register(messenger: BinaryMessenger) {
-        MethodChannel(messenger, CHANNEL).setMethodCallHandler(this)
+        MethodChannel(
+            messenger,
+            CHANNEL,
+            StandardMethodCodec.INSTANCE,
+            messenger.makeBackgroundTaskQueue(),
+        ).setMethodCallHandler(this)
     }
 
     /**
@@ -41,17 +49,12 @@ class RawContactsReader(private val resolver: ContentResolver) :
             result.notImplemented()
             return
         }
-        val contactIds = call.argument<List<String>>("contactIds")
-        // Off the main thread: with thousands of contacts the queries take a
-        // while. The answer goes back on the main thread, also after an Error
-        // (say, out of memory), so the Dart side never waits for nothing.
-        executor.execute {
-            try {
-                val raws = read(contactIds)
-                mainThread.post { result.success(raws) }
-            } catch (e: Throwable) {
-                mainThread.post { result.error("read_failed", e.toString(), null) }
-            }
+        // Answered even after an Error (say, out of memory), so the Dart side
+        // never waits for nothing.
+        try {
+            result.success(read(call.argument<List<String>>("contactIds")))
+        } catch (e: Throwable) {
+            result.error("read_failed", e.toString(), null)
         }
     }
 
@@ -84,7 +87,7 @@ class RawContactsReader(private val resolver: ContentResolver) :
     private fun read(contactIds: List<String>?): List<Map<String, Any>> {
         val shown = HashSet<Long>()
         var firstBatch = true
-        forEachBatch(contactIds) { filter, args ->
+        forEachBatch(contactIds) { batch ->
             val cursor = resolver.query(
                 Contacts.CONTENT_URI.buildUpon()
                     .appendQueryParameter(
@@ -92,8 +95,8 @@ class RawContactsReader(private val resolver: ContentResolver) :
                         ContactsContract.Directory.DEFAULT.toString(),
                     ).build(),
                 arrayOf(Contacts._ID),
-                filter(Contacts._ID).removePrefix(" AND ").ifEmpty { null },
-                args,
+                batch?.let { inList(Contacts._ID, it) },
+                batch?.toTypedArray(),
                 null,
             )
             if (cursor == null) {
@@ -106,19 +109,18 @@ class RawContactsReader(private val resolver: ContentResolver) :
         if (shown.isEmpty()) return emptyList()
 
         val raws = HashMap<Long, Raw>()
-        forEachBatch(contactIds) { filter, args ->
-            val cursor = resolver.query(
+        forEachBatch(contactIds) { batch ->
+            resolver.query(
                 RawContacts.CONTENT_URI,
                 arrayOf(RawContacts._ID, RawContacts.CONTACT_ID, RawContacts.DISPLAY_NAME_PRIMARY),
                 // Raw contacts that wait for a sync to remove them have no
                 // contact any more; those Android keeps out of every contact
                 // (aggregation disabled) have none either.
                 "${RawContacts.DELETED} = 0 AND ${RawContacts.CONTACT_ID} IS NOT NULL" +
-                    filter(RawContacts.CONTACT_ID),
-                args,
+                    (batch?.let { " AND " + inList(RawContacts.CONTACT_ID, it) } ?: ""),
+                batch?.toTypedArray(),
                 null,
-            ) ?: throw IllegalStateException("no cursor for the raw contacts")
-            cursor.use {
+            )?.use {
                 while (it.moveToNext()) {
                     val contactId = it.getLong(1)
                     if (contactId in shown) {
@@ -126,24 +128,23 @@ class RawContactsReader(private val resolver: ContentResolver) :
                         raws[id] = Raw(id, contactId, it.getString(2) ?: "")
                     }
                 }
-            }
+            } ?: throw IllegalStateException("no cursor for the raw contacts")
         }
         if (raws.isEmpty()) return emptyList()
 
         // By the raw contacts found, not by contact: Android may move a raw
         // contact to another contact between the two queries. (Nor every row:
         // those of hidden contacts would only be read to be dropped.)
-        forEachBatch(raws.keys.map { it.toString() }) { filter, args ->
-            val cursor = resolver.query(
+        forEachBatch(raws.keys.map { it.toString() }) { batch ->
+            resolver.query(
                 Data.CONTENT_URI,
                 // DATA1 is Phone.NUMBER for a phone number and Email.ADDRESS
                 // for an email address.
                 arrayOf(Data.RAW_CONTACT_ID, Data.MIMETYPE, Data.DATA1),
-                "${Data.MIMETYPE} IN (?, ?)" + filter(Data.RAW_CONTACT_ID),
-                arrayOf(Phone.CONTENT_ITEM_TYPE, Email.CONTENT_ITEM_TYPE) + args,
+                "${Data.MIMETYPE} IN (?, ?) AND " + inList(Data.RAW_CONTACT_ID, batch!!),
+                arrayOf(Phone.CONTENT_ITEM_TYPE, Email.CONTENT_ITEM_TYPE) + batch,
                 null,
-            ) ?: throw IllegalStateException("no cursor for the phone numbers and emails")
-            cursor.use {
+            )?.use {
                 while (it.moveToNext()) {
                     val raw = raws.getValue(it.getLong(0))
                     val value = it.getString(2) ?: ""
@@ -153,31 +154,25 @@ class RawContactsReader(private val resolver: ContentResolver) :
                         raw.emails.add(value)
                     }
                 }
-            }
+            } ?: throw IllegalStateException("no cursor for the phone numbers and emails")
         }
         return raws.values.sortedBy { it.id }.map { it.toMap() }
     }
 
+    /** "column IN (?, ...)", with a placeholder for each of [ids]. */
+    private fun inList(column: String, ids: List<String>) =
+        "$column IN (${ids.joinToString(",") { "?" }})"
+
     /**
-     * Runs [query] once with no filter, or once per batch of [ids] (none for
-     * an empty list). [query] gets a function that turns an ID column into
-     * the selection to add (" AND column IN (...)", or "" with no filter),
-     * and the arguments it needs.
+     * Runs [query] once with no batch (null) if [ids] is null, and otherwise
+     * once per batch of [ids] (not at all for an empty list).
      */
-    private inline fun forEachBatch(
-        ids: List<String>?,
-        query: (filter: (String) -> String, args: Array<String>) -> Unit,
-    ) {
+    private inline fun forEachBatch(ids: List<String>?, query: (batch: List<String>?) -> Unit) {
         if (ids == null) {
-            query({ "" }, emptyArray())
+            query(null)
             return
         }
-        for (batch in ids.chunked(MAX_IDS_PER_QUERY)) {
-            query(
-                { column -> " AND $column IN (${batch.joinToString(",") { "?" }})" },
-                batch.toTypedArray(),
-            )
-        }
+        for (batch in ids.chunked(MAX_IDS_PER_QUERY)) query(batch)
     }
 
     companion object {
@@ -186,8 +181,5 @@ class RawContactsReader(private val resolver: ContentResolver) :
 
         // SQLite allows 999 arguments per query; the Data query adds two.
         private const val MAX_IDS_PER_QUERY = 900
-
-        private val executor = Executors.newSingleThreadExecutor()
-        private val mainThread = Handler(Looper.getMainLooper())
     }
 }

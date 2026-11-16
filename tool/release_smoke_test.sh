@@ -23,11 +23,14 @@
 #    app must show them in its Last names field (read from the screen with
 #    `uiautomator dump`, as accessibility services see it).
 #
-# 3. With access to the contacts and a record of one fake whose raw contact
-#    doesn't exist, third start: the app reads the address book to count
-#    the fakes (with its own Android code, RawContactsReader.kt, which R8
-#    shrinks too), and its status line must say there are none. Had the
-#    read failed, the line would stay empty. The address book is only read.
+# 3. A contact stored on the phone is added to the address book, and the
+#    app is given access to the contacts and a record of that contact as a
+#    fake it created. Third start: the app reads the address book to count
+#    its fakes (with its own Android code, RawContactsReader.kt, which R8
+#    shrinks too: each raw contact's name, phone numbers and email
+#    addresses), and its status line must say there is one. Had the read
+#    failed, the line would stay empty. The contact is removed again at the
+#    end.
 #
 # After each start the app must still be running, with no crash, no ANR and
 # no Dart error in the log. Create and Delete aren't exercised.
@@ -52,7 +55,10 @@ source tool/release_lib.sh
 readonly PREFS="/data/data/$APP_ID/shared_prefs/FlutterSharedPreferences.xml"
 readonly DEFAULT_TEMPLATE='+447700900nnn'
 readonly CUSTOM_NAMES='Zen, Zima'
-readonly NO_FAKES='No fake contacts on this phone.'
+# The contact the third start counts, and its status line then.
+readonly SMOKE_GIVEN='Smoke' SMOKE_FAMILY='Test'
+readonly SMOKE_PHONE='+447700900999' SMOKE_EMAIL='smoke.test@example.com'
+readonly ONE_FAKE='1 fake contact on this phone.'
 readonly TIMEOUT_S=60
 
 # adbd restarts on `adb root` / `adb unroot`, which can take a while.
@@ -118,7 +124,13 @@ check_permissions "$apk" "$abi"
 
 tmp="$(mktemp -d)"
 was_root=false
+smoke_raw="" # the raw contact the third start adds
 cleanup() {
+  if [[ -n "$smoke_raw" ]]; then
+    # Stored on the phone, so it is gone at once (no sync to wait for).
+    adb_ shell content delete --uri content://com.android.contacts/raw_contacts \
+      --where "_id=$smoke_raw" >/dev/null 2>&1 || true
+  fi
   adb_ uninstall "$APP_ID" >/dev/null 2>&1 || true
   if ! $was_root; then
     adb_ unroot >/dev/null 2>&1 || true
@@ -206,6 +218,21 @@ wait_for_text() {
     fi
     sleep 1
   done
+}
+
+# Every raw contact ID in the address book, one per line, sorted as text.
+raw_contact_ids() {
+  adb_ shell content query --uri content://com.android.contacts/raw_contacts \
+      --projection _id | tr -d '\r' | sed -n 's/^Row: .* _id=\([0-9]*\).*/\1/p' |
+    sort
+}
+
+# Adds a data row of the type $1 (the end of its MIME type) to the raw
+# contact the third start added, with the columns given after it.
+add_smoke_data() {
+  adb_ shell content insert --uri content://com.android.contacts/data \
+    --bind "raw_contact_id:i:$smoke_raw" \
+    --bind "mimetype:s:vnd.android.cursor.item/$1" "${@:2}"
 }
 
 # Puts back the stored settings from $1 (a copy on this computer), with
@@ -319,21 +346,40 @@ check_app_ok
 adb_ shell am force-stop "$APP_ID"
 
 echo "== Third start, with access to contacts: the app should read them"
+# (`content` can say nothing and exit 0 when it fails, so each step is
+# checked by reading back.)
+before="$(raw_contact_ids)"
+adb_ shell content insert --uri content://com.android.contacts/raw_contacts \
+  --bind account_type:n: --bind account_name:n: >/dev/null 2>&1 || true
+smoke_raw="$(comm -13 <(echo "$before") <(raw_contact_ids))"
+[[ "$smoke_raw" =~ ^[0-9]+$ ]] ||
+  fail "couldn't add a contact to the address book (new: '$smoke_raw')"
+add_smoke_data name --bind "data2:s:$SMOKE_GIVEN" --bind "data3:s:$SMOKE_FAMILY"
+add_smoke_data phone_v2 --bind "data1:s:$SMOKE_PHONE" --bind data2:i:2
+add_smoke_data email_v2 --bind "data1:s:$SMOKE_EMAIL" --bind data2:i:1
+# One line per data row: the name (as shown), the number, the address.
+added="$(adb_ shell content query --uri content://com.android.contacts/data \
+    --projection data1 --where "raw_contact_id=$smoke_raw" | tr -d '\r' |
+  sed -n 's/^Row: [0-9]* data1=//p')"
+for want in "$SMOKE_GIVEN $SMOKE_FAMILY" "$SMOKE_PHONE" "$SMOKE_EMAIL"; do
+  grep -q -F -x -e "$want" <<<"$added" ||
+    fail "couldn't give the added contact its details: $added"
+done
 for permission in READ_CONTACTS WRITE_CONTACTS; do
   adb_ shell pm grant "$APP_ID" "android.permission.$permission" ||
     fail "couldn't grant $permission"
 done
-# Raw contact IDs start at 1, so raw contact 0 never exists. (In the file,
-# the JSON's quotes are &quot;, and & is special in sed's replacement.)
+# (In the file, the JSON's quotes are &quot;, and & is special in sed's
+# replacement.)
 adb_ pull "$PREFS" "$tmp/prefs.xml" >/dev/null 2>&1 ||
   fail "couldn't read the app's settings file"
-sed -e 's|</map>|    <string name="flutter.fakeRawContactLedgerV1">{\&quot;0\&quot;:{\&quot;name\&quot;:\&quot;Zoe Zen\&quot;,\&quot;phone\&quot;:\&quot;\&quot;,\&quot;email\&quot;:\&quot;\&quot;}}</string>\n</map>|' \
+sed -e "s|</map>|    <string name=\"flutter.fakeRawContactLedgerV1\">{\\&quot;$smoke_raw\\&quot;:{\\&quot;name\\&quot;:\\&quot;$SMOKE_GIVEN $SMOKE_FAMILY\\&quot;,\\&quot;phone\\&quot;:\\&quot;$SMOKE_PHONE\\&quot;,\\&quot;email\\&quot;:\\&quot;$SMOKE_EMAIL\\&quot;}}</string>\n</map>|" \
     "$tmp/prefs.xml" > "$tmp/edited.xml"
-grep -q -F 'fakeRawContactLedgerV1">{&quot;0&quot;:' "$tmp/edited.xml" ||
-  fail "couldn't add a record of a fake to the settings"
+grep -q -F "fakeRawContactLedgerV1\">{&quot;$smoke_raw&quot;:" "$tmp/edited.xml" ||
+  fail "couldn't add a record of the contact to the settings"
 write_prefs "$tmp/edited.xml"
 start_app
-wait_for_text "$NO_FAKES"
+wait_for_text "$ONE_FAKE"
 check_app_ok
 
 echo "== Release build OK"

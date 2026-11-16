@@ -216,22 +216,30 @@ void main() {
       expect(main, contains('RawContactsReader('));
     });
 
-    test('the release smoke test stores a record of a fake that the app '
-        'reads, and waits for the status line that a read of it gives', () {
-      // So it can't pass without the app reading the contacts: had the
-      // record not been read, nothing would be read; had the read failed,
-      // the status line would stay empty.
+    test('the release smoke test stores a record of its contact that the '
+        'app reads, and waits for the status line that a read of it gives',
+        () {
+      // So it can't pass without the app reading the contact's own details:
+      // had the record not been read, nothing would be read; had the read
+      // failed, the status line would stay empty.
       final script = File('tool/release_smoke_test.sh').readAsStringSync();
-      final json = jsonEncode({'0': const LedgerEntry('Zoe Zen', '', '').toJson()});
-      expect(Ledger.decode(json).length, 1);
-      // In the settings file the quotes are &quot;, written as \&quot; in
-      // sed's replacement.
-      expect(script, contains('<string name="flutter.$kLedgerPrefsKey">'
-          '${json.replaceAll('"', r'\&quot;')}</string>'));
-      const none =
-          DeletePreview(toDelete: 0, skippedMerged: 0, skippedChanged: 0);
-      expect(script, contains("readonly NO_FAKES='${statusMessage(none)}'"));
-      expect(script, contains('wait_for_text "\$NO_FAKES"'));
+      String value(String name) =>
+          RegExp("$name='([^']*)'").firstMatch(script)!.group(1)!;
+      final entry = LedgerEntry('${value('SMOKE_GIVEN')} '
+          '${value('SMOKE_FAMILY')}', value('SMOKE_PHONE'), value('SMOKE_EMAIL'));
+      expect(Ledger.decode(jsonEncode({'17': entry.toJson()})).length, 1);
+      // In the script, the values are shell variables, and the settings
+      // file's quotes are &quot;, written as \\&quot; in sed's replacement.
+      final template = jsonEncode({
+        r'$smoke_raw': const LedgerEntry(r'$SMOKE_GIVEN $SMOKE_FAMILY',
+                r'$SMOKE_PHONE', r'$SMOKE_EMAIL')
+            .toJson(),
+      }).replaceAll('"', r'\\&quot;');
+      expect(script, contains('<string name=\\"flutter.$kLedgerPrefsKey\\">'
+          '$template</string>'));
+      const one = DeletePreview(toDelete: 1, skippedMerged: 0, skippedChanged: 0);
+      expect(script, contains("readonly ONE_FAKE='${statusMessage(one)}'"));
+      expect(script, contains('wait_for_text "\$ONE_FAKE"'));
     });
   });
 }
