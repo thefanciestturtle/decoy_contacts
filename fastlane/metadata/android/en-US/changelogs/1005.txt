@@ -1,4 +1,4 @@
-Version 2.0.0: Decoy Contacts is now its own app, next to Fake Contacts 1.8.
+Version 2.0.0: Decoy Contacts is now its own app, with a new icon, next to Fake Contacts 1.8.
 - Delete removes only contacts this app created, never real ones with the same name.
 - Create no longer makes duplicates.
 - Asks first, with the exact count; big batches show progress and a Stop button.

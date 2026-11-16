@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The launcher icon: a decoy duck, the wooden duck hunters float on the
+     water to fool real ducks. This is the foreground layer, over the colour
+     ic_launcher_background.
+
+     108 x 108 dp. A launcher shows at most the middle 72 x 72 dp, cut to
+     its shape, and always the middle circle of 66 dp (the safe zone), which
+     holds everything here.
+
+     Only absolute M, L, C and Z commands, which tool/make_icon_pngs.py can
+     draw: it makes the Android 7 icons and the store icon from this file
+     and the background colour. Run it after a change here. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- The water line: white at 55% over the background. -->
+    <path
+        android:fillColor="#FFA5B8CC"
+        android:pathData="M31,71.5 L77,71.5 C77.828,71.5 78.5,72.172 78.5,73 C78.5,73.828 77.828,74.5 77,74.5 L31,74.5 C30.172,74.5 29.5,73.828 29.5,73 C29.5,72.172 30.172,71.5 31,71.5 Z" />
+    <!-- The bill, under the head. -->
+    <path
+        android:fillColor="#FFF2A33A"
+        android:pathData="M75,41.5 C79,41.1 82.4,42.2 84.2,44.5 C82,46.1 78,46.5 74.4,45.7 Z" />
+    <!-- The body, with the tail up at the back. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M73,56 C73,50.5 69,47.7 63.5,47.3 C57,46.7 49,45.3 42,46.9 C37.5,47.9 34,49.9 31,50.1 C28.4,50.3 26,49.1 23.6,46.9 C23.4,50.7 25.4,53.9 28.4,55.7 C29.4,61.1 33.6,66 41,66 L63,66 C69,66 73,61.5 73,56 Z" />
+    <!-- The head. (A path of its own: in one path with the body, the part
+         they share would fill or not by which way round each runs.) -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M59.5,42.1 C59.5,37.682 63.082,34.1 67.5,34.1 C71.918,34.1 75.5,37.682 75.5,42.1 C75.5,46.518 71.918,50.1 67.5,50.1 C63.082,50.1 59.5,46.518 59.5,42.1 Z" />
+    <!-- The wing. -->
+    <path
+        android:fillColor="#FFD1E4FF"
+        android:pathData="M60.4,55.1 C55,51.9 44,51.3 32.8,52.9 C36.6,59.1 44.6,61.7 52.4,61.5 C57.4,61.3 61.4,58.5 60.4,55.1 Z" />
+    <!-- The eye. -->
+    <path
+        android:fillColor="#FF10233C"
+        android:pathData="M64.7,40.3 C64.7,39.361 65.461,38.6 66.4,38.6 C67.339,38.6 68.1,39.361 68.1,40.3 C68.1,41.239 67.339,42 66.4,42 C65.461,42 64.7,41.239 64.7,40.3 Z" />
+</vector>

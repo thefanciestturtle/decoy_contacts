@@ -4,7 +4,7 @@ The versions of Decoy Contacts, newest first.
 
 ## 2.0.0
 The first release of Decoy Contacts, a separate app from Fake Contacts (see ["If you have Fake Contacts"](https://github.com/thefanciestturtle/decoy_contacts#if-you-have-fake-contacts) in the README).
-* Renamed to Decoy Contacts, with its own app ID (`io.github.thefanciestturtle.decoy_contacts`): it is a separate app from Fake Contacts, and installs next to it.
+* Renamed to Decoy Contacts, with a new icon and its own app ID (`io.github.thefanciestturtle.decoy_contacts`): it is a separate app from Fake Contacts, and installs next to it.
 * Only Android is supported; the iOS project is gone.
 * Updated to current Flutter, Dart 3 and flutter_contacts; progress spinner and result messages (from https://github.com/BillDietrich/fake_contacts/pull/11).
 * "Delete" now removes only contacts this app created, never real contacts with the same name.
