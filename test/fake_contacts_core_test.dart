@@ -451,6 +451,30 @@ void main() {
       );
     });
 
+    group('two planned fakes with the same name, phone and email', () {
+      // Names can hold spaces: "A B" "C" and "A" "B C" are both "A B C",
+      // and with templates that give no n or FIRST/LAST, the same details.
+      final abc = entryFor(const FakeName('A B', 'C'), '+447700900123', '');
+      Map<String, LedgerEntry> recorded(List<String> raws) =>
+          createdBeforeFailure(
+            planned: [abc, abc, zoe],
+            oldRawIds: const {},
+            after: {'c20': raws},
+            fingerprintsByRaw: {
+              for (final r in raws) r: fingerprintsMatching(abc),
+            },
+          );
+
+      test('each raw contact with those details is recorded, up to two', () {
+        expect(recorded(['20', '21']), {'20': abc, '21': abc});
+        expect(recorded(['20']), {'20': abc});
+      });
+
+      test('three such raw contacts: none is', () {
+        expect(recorded(['20', '21', '22']), isEmpty);
+      });
+    });
+
     test('a raw contact that matches two fakes makes both ambiguous', () {
       // Raw 20 has the details of both; raw 21 only Zoe's. Either could be
       // the Zoe Zen this app created.
@@ -467,6 +491,14 @@ void main() {
         isEmpty,
       );
     });
+  });
+
+  test('entriesNotFound counts equal entries one by one', () {
+    final zoe = fake('Zoe', 'Zen');
+    final zach = fake('Zach', 'Zen');
+    expect(entriesNotFound([zoe, zoe, zach], [zoe]), [zoe, zach]);
+    expect(entriesNotFound([zoe, zoe, zach], [zoe, zach, zoe]), isEmpty);
+    expect(entriesNotFound([zoe], []), [zoe]);
   });
 
   test('maxRawIdOf compares numbers, not text, and skips the rest', () {

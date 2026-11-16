@@ -298,11 +298,8 @@ Map<String, LedgerEntry> newlyCreatedRawIds({
       result[added.single] = entries.single;
     }
   });
-  final recorded = result.values.toSet();
-  final unmatched = [
-    for (final e in created.take(createdContactIds.length))
-      if (!recorded.contains(e)) e,
-  ];
+  final unmatched = entriesNotFound(
+      created.take(createdContactIds.length).toList(), result.values);
   if (unmatched.isNotEmpty) {
     result.addAll(createdBeforeFailure(
         planned: unmatched,
@@ -323,17 +320,26 @@ Map<String, LedgerEntry> newlyCreatedRawIds({
 /// contact's own fingerprints (see [fingerprintsOf]). Which contact holds it
 /// doesn't matter: Android may have merged it with another.
 ///
-/// It is left out if it matches several planned entries, or if another new
-/// raw contact matches the same entry (say, a copy synced from another phone
-/// meanwhile): which one this app created can't be told then. Left out, it
-/// is only skipped by Create and never deleted.
+/// It is left out if it matches several planned entries, or if more new raw
+/// contacts match an entry than there are planned fakes with it (say, a
+/// copy synced from another phone meanwhile): which one this app created
+/// can't be told then. Left out, it is only skipped by Create and never
+/// deleted. (Two planned fakes can have the same name, phone and email, as
+/// names can hold spaces: "A B" "C" and "A" "B C". Which raw contact is
+/// which of them doesn't matter.)
 Map<String, LedgerEntry> createdBeforeFailure({
   required List<LedgerEntry> planned,
   required Set<String> oldRawIds,
   required AddressBook after,
   required Map<String, Set<String>> fingerprintsByRaw,
 }) {
-  final byFingerprint = {for (final e in planned) e.fingerprint: e};
+  // Planned fingerprint -> its entry, and how many planned fakes have it.
+  final byFingerprint = <String, LedgerEntry>{};
+  final plannedCount = <String, int>{};
+  for (final e in planned) {
+    byFingerprint[e.fingerprint] = e;
+    plannedCount[e.fingerprint] = (plannedCount[e.fingerprint] ?? 0) + 1;
+  }
   // Planned fingerprint -> the new raw contacts that have it, and new raw
   // contact -> the planned fingerprints it has.
   final matches = <String, List<String>>{};
@@ -351,9 +357,32 @@ Map<String, LedgerEntry> createdBeforeFailure({
   }
   return {
     for (final MapEntry(key: raw, value: fingerprints) in found.entries)
-      if (fingerprints.length == 1 && matches[fingerprints.single]!.length == 1)
+      if (fingerprints.length == 1 &&
+          matches[fingerprints.single]!.length <=
+              plannedCount[fingerprints.single]!)
         raw: byFingerprint[fingerprints.single]!,
   };
+}
+
+/// The entries of [entries] that none of [found] stands for. Equal entries
+/// count one by one: two fakes with the same name, phone and email need two
+/// raw contacts (see [createdBeforeFailure]).
+List<LedgerEntry> entriesNotFound(
+    List<LedgerEntry> entries, Iterable<LedgerEntry> found) {
+  final left = <LedgerEntry, int>{};
+  for (final e in found) {
+    left[e] = (left[e] ?? 0) + 1;
+  }
+  final notFound = <LedgerEntry>[];
+  for (final e in entries) {
+    final n = left[e] ?? 0;
+    if (n > 0) {
+      left[e] = n - 1;
+    } else {
+      notFound.add(e);
+    }
+  }
+  return notFound;
 }
 
 /// The highest of [rawIds] as a number, or null if there are none (or none

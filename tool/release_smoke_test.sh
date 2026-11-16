@@ -55,7 +55,12 @@ source tool/release_lib.sh
 readonly PREFS="/data/data/$APP_ID/shared_prefs/FlutterSharedPreferences.xml"
 readonly DEFAULT_TEMPLATE='+447700900nnn'
 readonly CUSTOM_NAMES='Zen, Zima'
-# The contact the third start counts, and its status line then.
+# The contact the third start counts, and its status line then. It is
+# marked (in a column for sync adapters, which a contact stored on the phone
+# doesn't use) so that only it is changed and removed; SMOKE_WHERE selects
+# it, quoted for the shell on the device that adb hands the command to.
+readonly SMOKE_MARK="decoy-contacts-smoke-test-$$-$RANDOM"
+readonly SMOKE_WHERE="\"sync4='$SMOKE_MARK'\""
 readonly SMOKE_GIVEN='Smoke' SMOKE_FAMILY='Test'
 readonly SMOKE_PHONE='+447700900999' SMOKE_EMAIL='smoke.test@example.com'
 readonly ONE_FAKE='1 fake contact on this phone.'
@@ -124,12 +129,12 @@ check_permissions "$apk" "$abi"
 
 tmp="$(mktemp -d)"
 was_root=false
-smoke_raw="" # the raw contact the third start adds
+smoke_marked=false # set once the third start may have added its contact
 cleanup() {
-  if [[ -n "$smoke_raw" ]]; then
+  if $smoke_marked; then
     # Stored on the phone, so it is gone at once (no sync to wait for).
     adb_ shell content delete --uri content://com.android.contacts/raw_contacts \
-      --where "_id=$smoke_raw" >/dev/null 2>&1 || true
+      --where "$SMOKE_WHERE" >/dev/null 2>&1 || true
   fi
   adb_ uninstall "$APP_ID" >/dev/null 2>&1 || true
   if ! $was_root; then
@@ -218,13 +223,6 @@ wait_for_text() {
     fi
     sleep 1
   done
-}
-
-# Every raw contact ID in the address book, one per line, sorted as text.
-raw_contact_ids() {
-  adb_ shell content query --uri content://com.android.contacts/raw_contacts \
-      --projection _id | tr -d '\r' | sed -n 's/^Row: .* _id=\([0-9]*\).*/\1/p' |
-    sort
 }
 
 # Adds a data row of the type $1 (the end of its MIME type) to the raw
@@ -348,12 +346,16 @@ adb_ shell am force-stop "$APP_ID"
 echo "== Third start, with access to contacts: the app should read them"
 # (`content` can say nothing and exit 0 when it fails, so each step is
 # checked by reading back.)
-before="$(raw_contact_ids)"
+smoke_marked=true
 adb_ shell content insert --uri content://com.android.contacts/raw_contacts \
-  --bind account_type:n: --bind account_name:n: >/dev/null 2>&1 || true
-smoke_raw="$(comm -13 <(echo "$before") <(raw_contact_ids))"
+  --bind account_type:n: --bind account_name:n: --bind "sync4:s:$SMOKE_MARK" \
+  >/dev/null 2>&1 || true
+smoke_raw="$(adb_ shell content query \
+    --uri content://com.android.contacts/raw_contacts --projection _id \
+    --where "$SMOKE_WHERE" | tr -d '\r' |
+  sed -n 's/^Row: [0-9]* _id=\([0-9]*\)$/\1/p')"
 [[ "$smoke_raw" =~ ^[0-9]+$ ]] ||
-  fail "couldn't add a contact to the address book (new: '$smoke_raw')"
+  fail "couldn't add a contact to the address book (found: '$smoke_raw')"
 add_smoke_data name --bind "data2:s:$SMOKE_GIVEN" --bind "data3:s:$SMOKE_FAMILY"
 add_smoke_data phone_v2 --bind "data1:s:$SMOKE_PHONE" --bind data2:i:2
 add_smoke_data email_v2 --bind "data1:s:$SMOKE_EMAIL" --bind data2:i:1

@@ -881,6 +881,37 @@ void main() {
       expect((deleted!.deleted, deleted.skippedChanged), (4, 0));
     });
 
+    test('two fakes with the same name, phone and email that Android merged: '
+        'both recorded and deleted', () async {
+      // "A B" "C" and "A" "B C" are both "A B C"; with no n in the phone
+      // template and no email, their details are the same too.
+      book.mergeInto = (c) =>
+          c.first == 'A' && c.last == 'B C' ? book.idOf('A B C') : null;
+      const same = Settings(
+        lastNamesText: 'C, B C',
+        firstNamesText: 'A B, A',
+        phoneTemplateText: '+447700900123',
+        emailTemplateText: '',
+      );
+      final result = await createFakeContacts(book, const LedgerStore(), same);
+
+      expect((result!.created, result.untracked), (4, 0));
+      expect(book.rawIdsOf(book.idOf('A B C')), hasLength(2));
+      expect((await stored()).length, 4);
+      final deleted = await deleteFakeContacts(book, const LedgerStore());
+      expect((deleted!.deleted, deleted.skippedChanged), (4, 0));
+      expect(book.displayNames, ['Alice Example']);
+
+      // The same after a call that fails once it has made them all: they
+      // are found by their details, both of them.
+      book.createAllError = Exception('provider gone');
+      book.createAllStopsAfter = 4;
+      final again = await createFakeContacts(book, const LedgerStore(), same);
+      expect((again!.created, again.untracked), (4, 0));
+      expect((await stored()).length, 4);
+      expect(logged.single, contains('recovered: Exception: provider gone'));
+    });
+
     test('a second Create finds all four, also with the ledger lost: the one '
         "shown under the other's name too", () async {
       await createFakeContacts(book, const LedgerStore(), settings);

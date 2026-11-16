@@ -417,7 +417,7 @@ Future<CreateResult?> createFakeContacts(
             stackTrace: st);
       }
       found = recovered.created;
-      final count = found.values.toSet().length;
+      final count = found.length; // a raw contact per fake
       if (count != entries.length) {
         // Those not found stay pending, in case this read was wrong: the
         // next Create or Delete looks again.
@@ -465,15 +465,10 @@ Future<CreateResult?> createFakeContacts(
 }
 
 /// The entries of [entries] that no raw contact in [found] was recorded
-/// with.
+/// with (equal entries count one by one: see [entriesNotFound]).
 List<LedgerEntry> _notFound(
-    List<LedgerEntry> entries, Map<String, LedgerEntry> found) {
-  final foundEntries = found.values.toSet();
-  return [
-    for (final entry in entries)
-      if (!foundEntries.contains(entry)) entry,
-  ];
-}
+        List<LedgerEntry> entries, Map<String, LedgerEntry> found) =>
+    entriesNotFound(entries, found.values);
 
 /// The higher of two raw contact IDs, either of which may be missing.
 int? _higher(int? a, int? b) =>
