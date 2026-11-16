@@ -236,8 +236,8 @@ Iterable<String> fingerprintsOf(
 /// Names from [wanted] that don't already exist. Makes "Create" idempotent.
 ///
 /// A name is skipped if it's a tracked fake that's still present, or if some
-/// contact already has exactly the name, phone and email this name would be
-/// created with (listed in [existingFingerprints], matched via
+/// raw contact already has exactly the name, phone and email this name would
+/// be created with (listed in [existingFingerprints], matched via
 /// [fingerprintOf]). The second check stops a duplicate set appearing even
 /// if the ledger is lost, e.g. after the app's data is cleared. It only
 /// prevents creation; deletion never relies on it.
@@ -262,70 +262,88 @@ List<FakeName> namesToCreate(
   ];
 }
 
-/// Works out which raw contacts were just created.
+/// Works out which raw contacts were just created, and which fake each is.
 ///
 /// [created] are the entries for the contacts passed to the create call, and
-/// [createdContactIds] the contact IDs it returned, in the same order. Android
-/// may have merged a new raw contact into an existing contact, so only raw IDs
-/// that aren't in [oldRawIds] (those that existed before) are recorded.
+/// [createdContactIds] the contact IDs it returned, in the same order. Only
+/// raw contacts that aren't in [oldRawIds] (those that existed before) are
+/// new: Android may have merged a fake into an existing contact.
+///
+/// A contact the call gave for one fake that holds one new raw contact holds
+/// that fake. If Android merged fakes with each other (or a fake with a raw
+/// contact added meanwhile), a contact holds several new raw contacts: each
+/// is then told apart by its own name, phone and email ([fingerprintsByRaw]
+/// gives each raw contact's fingerprints), by the rule of
+/// [createdBeforeFailure]. Those it can't tell apart are left out.
 Map<String, LedgerEntry> newlyCreatedRawIds({
   required List<LedgerEntry> created,
   required List<String> createdContactIds,
   required Set<String> oldRawIds,
   required AddressBook after,
+  required Map<String, Set<String>> fingerprintsByRaw,
 }) {
-  final result = <String, LedgerEntry>{};
+  // The fakes the call put in each contact.
+  final createdIn = <String, List<LedgerEntry>>{};
   for (var i = 0; i < created.length && i < createdContactIds.length; i++) {
-    for (final raw in after[createdContactIds[i]] ?? const <String>[]) {
-      if (!oldRawIds.contains(raw) && !result.containsKey(raw)) {
-        result[raw] = created[i];
-      }
-    }
+    (createdIn[createdContactIds[i]] ??= []).add(created[i]);
   }
+  final result = <String, LedgerEntry>{};
+  createdIn.forEach((contactId, entries) {
+    final raws = after[contactId] ?? const <String>[];
+    final added = [for (final r in raws) if (!oldRawIds.contains(r)) r];
+    if (entries.length == 1 && added.length == 1) {
+      result[added.single] = entries.single;
+    } else {
+      result.addAll(createdBeforeFailure(
+          planned: entries,
+          oldRawIds: oldRawIds,
+          after: {contactId: raws},
+          fingerprintsByRaw: fingerprintsByRaw));
+    }
+  });
   return result;
 }
 
 /// Works out which raw contacts a create call made before it failed, as it
 /// then doesn't say (the IDs of what it did create are lost).
 ///
-/// [planned] are the entries for the contacts passed to the create call.
-/// A contact in [after] (with its fingerprints in [fingerprintsByContact])
-/// that holds raw contacts which aren't in [oldRawIds] (those that existed
+/// [planned] are the entries for the contacts passed to the create call. A
+/// raw contact in [after] that isn't in [oldRawIds] (those that existed
 /// before) is taken for the fake of a planned entry if it has exactly that
-/// entry's name, phone and email (see [fingerprintsOf]); its new raw
-/// contacts are recorded with that entry, as [newlyCreatedRawIds] does.
+/// entry's name, phone and email: [fingerprintsByRaw] gives each raw
+/// contact's own fingerprints (see [fingerprintsOf]). Which contact holds it
+/// doesn't matter: Android may have merged it with another.
 ///
 /// It is left out if it matches several planned entries, or if another new
-/// contact matches the same entry (say, a copy synced from another phone
+/// raw contact matches the same entry (say, a copy synced from another phone
 /// meanwhile): which one this app created can't be told then. Left out, it
 /// is only skipped by Create and never deleted.
 Map<String, LedgerEntry> createdBeforeFailure({
   required List<LedgerEntry> planned,
   required Set<String> oldRawIds,
   required AddressBook after,
-  required Map<String, Set<String>> fingerprintsByContact,
+  required Map<String, Set<String>> fingerprintsByRaw,
 }) {
   final byFingerprint = {for (final e in planned) e.fingerprint: e};
-  // Planned fingerprint -> the new contacts that have it, and new contact
-  // -> its new raw contacts and the planned fingerprints it has.
+  // Planned fingerprint -> the new raw contacts that have it, and new raw
+  // contact -> the planned fingerprints it has.
   final matches = <String, List<String>>{};
-  final newContacts = <String, (List<String>, List<String>)>{};
-  after.forEach((contactId, raws) {
-    final added = [for (final r in raws) if (!oldRawIds.contains(r)) r];
-    if (added.isEmpty) return;
-    final found = [
-      for (final f in fingerprintsByContact[contactId] ?? const <String>{})
+  final found = <String, List<String>>{};
+  for (final raw in allRawIds(after)) {
+    if (oldRawIds.contains(raw)) continue;
+    final fingerprints = [
+      for (final f in fingerprintsByRaw[raw] ?? const <String>{})
         if (byFingerprint.containsKey(f)) f,
     ];
-    newContacts[contactId] = (added, found);
-    for (final f in found) {
-      (matches[f] ??= []).add(contactId);
+    found[raw] = fingerprints;
+    for (final f in fingerprints) {
+      (matches[f] ??= []).add(raw);
     }
-  });
+  }
   return {
-    for (final (added, found) in newContacts.values)
-      if (found.length == 1 && matches[found.single]!.length == 1)
-        for (final raw in added) raw: byFingerprint[found.single]!,
+    for (final MapEntry(key: raw, value: fingerprints) in found.entries)
+      if (fingerprints.length == 1 && matches[fingerprints.single]!.length == 1)
+        raw: byFingerprint[fingerprints.single]!,
   };
 }
 
@@ -387,7 +405,7 @@ Map<String, LedgerEntry> createdByPending(
   PendingCreate pending, {
   required Set<String> recorded,
   required AddressBook after,
-  required Map<String, Set<String>> fingerprintsByContact,
+  required Map<String, Set<String>> fingerprintsByRaw,
 }) {
   final max = pending.maxRawId;
   bool isNew(String raw) {
@@ -403,13 +421,14 @@ Map<String, LedgerEntry> createdByPending(
         if (!isNew(r)) r,
     },
     after: after,
-    fingerprintsByContact: fingerprintsByContact,
+    fingerprintsByRaw: fingerprintsByRaw,
   );
 }
 
 class DeletePlan {
-  /// Contacts made up entirely of raw contacts this app created, which still
-  /// have exactly the name, phone number and email they were created with.
+  /// Contacts made up entirely of raw contacts this app created, each of
+  /// which still has exactly the name, phone number and email it was created
+  /// with.
   final List<String> contactIdsToDelete;
 
   /// Number of tracked raw contacts deleted along with [contactIdsToDelete].
@@ -419,9 +438,10 @@ class DeletePlan {
   /// contact that also holds data the app didn't create.
   final int skippedMerged;
 
-  /// Tracked raw contacts left alone because their contact no longer matches
-  /// what was recorded: edited since, or the raw contact ID now belongs to a
-  /// different contact (for example if the ledger came from another phone).
+  /// Tracked raw contacts left alone because one in their contact (they or
+  /// another fake merged with them) no longer matches what was recorded:
+  /// edited since, or the raw contact ID now belongs to a different contact
+  /// (for example if the ledger came from another phone).
   final int skippedChanged;
 
   /// Ledger after the deletion: only the skipped entries remain.
@@ -439,12 +459,15 @@ class DeletePlan {
 /// Plans a deletion that can only remove what this app created.
 ///
 /// A contact is deleted only if every one of its raw contacts is in the
-/// ledger, and its fingerprints (see [fingerprintsOf]), given per contact ID
-/// in [fingerprintsByContact], are exactly the ones recorded for those raw
-/// contacts. So a contact whose name, phone numbers or email addresses differ
-/// in any way from what the app created is never deleted.
+/// ledger and has exactly the name, phone and email recorded for it: its own
+/// fingerprints (see [fingerprintsOf]), given per raw contact ID in
+/// [fingerprintsByRaw], must be just the recorded one. So a contact that
+/// holds anything the app didn't create, or a name, phone number or email
+/// address that differs in any way from what the app created, is never
+/// deleted. Each raw contact is checked on its own, so a contact into which
+/// Android merged several of the app's fakes is deleted too.
 DeletePlan planDelete(Ledger ledger, AddressBook book,
-    Map<String, Set<String>> fingerprintsByContact) {
+    Map<String, Set<String>> fingerprintsByRaw) {
   final toDelete = <String>[];
   final remaining = <String, LedgerEntry>{};
   var deleted = 0;
@@ -464,9 +487,13 @@ DeletePlan planDelete(Ledger ledger, AddressBook book,
       keep();
       return;
     }
-    final recorded = {for (final r in tracked) ledger.entries[r]!.fingerprint};
-    final actual = fingerprintsByContact[contactId] ?? const <String>{};
-    if (recorded.length != actual.length || !actual.containsAll(recorded)) {
+    bool unchanged(String raw) {
+      final actual = fingerprintsByRaw[raw] ?? const <String>{};
+      return actual.length == 1 &&
+          actual.single == ledger.entries[raw]!.fingerprint;
+    }
+
+    if (!tracked.every(unchanged)) {
       skippedChanged += tracked.length;
       keep();
       return;

@@ -1,5 +1,6 @@
 import 'dart:developer';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 
 import 'contacts_gateway.dart';
@@ -38,32 +39,14 @@ class FlutterContactsGateway implements ContactsGateway {
       await FlutterContacts.permissions.check(PermissionType.readWrite) ==
       PermissionStatus.granted;
 
+  /// Read by the app's own Android code (RawContactsReader.kt), not the
+  /// plugin: the plugin gives one name per contact, and the app needs each
+  /// raw contact's own.
   @override
   Future<List<StoredContact>> getAll({List<String>? ids}) async {
-    final contacts = await FlutterContacts.getAll(
-      properties: {
-        ContactProperty.identifiers,
-        ContactProperty.name,
-        ContactProperty.phone,
-        ContactProperty.email,
-      },
-      filter: ids == null ? null : ContactFilter.ids(ids),
-    );
-    return [
-      for (final c in contacts)
-        if (c.id != null)
-          StoredContact(
-            id: c.id!,
-            rawContactIds: [
-              for (final r
-                  in c.android?.identifiers?.rawContacts ?? const <RawContact>[])
-                if (r.rawContactId != null) r.rawContactId!,
-            ],
-            displayName: c.displayName ?? "",
-            phones: [for (final p in c.phones) p.number],
-            emails: [for (final e in c.emails) e.address],
-          ),
-    ];
+    final raws = await kRawContactsChannel.invokeListMethod<Map<Object?, Object?>>(
+        kReadRawContacts, {'contactIds': ?ids});
+    return contactsOfRawContacts(raws ?? const []);
   }
 
   @override
@@ -81,6 +64,34 @@ class FlutterContactsGateway implements ContactsGateway {
   @override
   Future<void> deleteAll(List<String> contactIds) =>
       FlutterContacts.deleteAll(contactIds);
+}
+
+/// The app's own channel to its Android code, which reads raw contacts
+/// (android/app/src/main/kotlin/.../RawContactsReader.kt).
+const MethodChannel kRawContactsChannel =
+    MethodChannel('io.github.thefanciestturtle.decoy_contacts/raw_contacts');
+
+/// The method on [kRawContactsChannel] that reads raw contacts: those of the
+/// contacts with the IDs in its argument "contactIds", or of every contact.
+const String kReadRawContacts = 'read';
+
+/// The contacts that [raws] make up, in the order of their first raw
+/// contacts. Each of [raws] is a raw contact as [kReadRawContacts] answers
+/// it: a map with "id", "contactId", "displayName", "phones" and "emails".
+List<StoredContact> contactsOfRawContacts(List<Map<Object?, Object?>> raws) {
+  final byContact = <String, List<StoredRawContact>>{};
+  for (final raw in raws) {
+    (byContact[raw['contactId'] as String] ??= []).add(StoredRawContact(
+      id: raw['id'] as String,
+      displayName: raw['displayName'] as String,
+      phones: [for (final p in raw['phones'] as List) p as String],
+      emails: [for (final e in raw['emails'] as List) e as String],
+    ));
+  }
+  return [
+    for (final MapEntry(key: id, value: rawContacts) in byContact.entries)
+      StoredContact(id: id, rawContacts: rawContacts),
+  ];
 }
 
 /// The answer to a permission request, from the plugin's status [before]

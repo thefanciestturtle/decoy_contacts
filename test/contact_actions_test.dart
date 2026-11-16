@@ -766,6 +766,8 @@ void main() {
       // Recorded when the first chunk was looked up; the second chunk's
       // lookup doesn't take it again.
       expect(ledger.entries[raws.first]!.name, 'Zoe Zen');
+      expect(ledger.entries[raws.last]!.name, 'Zach Zen');
+      expect(ledger.length, 4);
     });
 
     test('Delete: a chunk all deleted before its call failed: it goes on',
@@ -781,6 +783,172 @@ void main() {
       expect((result!.deleted, result.stopped), (4, false));
       expect(book.all, isEmpty);
       expect((await const LedgerStore().load()).isEmpty, isTrue);
+    });
+  });
+
+  group('fakes that Android merged with each other (C15)', () {
+    // Zen and Zena give the same phone number, so the fakes "Zena Zen" and
+    // "Zen Zena" (the same letters) get the same number, and Android merges
+    // them: see [mergeReversed].
+    Settings names(String last, String first) => Settings(
+          lastNamesText: last,
+          firstNamesText: first,
+          phoneTemplateText: kDefaultPhoneTemplate,
+          emailTemplateText: kDefaultEmailTemplate,
+        );
+    final settings = names('Zen, Zena', 'Zen, Zena');
+
+    /// From now on, a new contact whose name is another's in reverse is
+    /// merged into that one, as Android does when they also share a number.
+    void mergeReversed() {
+      book.mergeInto = (c) {
+        if (c.first == c.last) return null;
+        final reversed = '${c.last} ${c.first}';
+        for (final contact in book.all) {
+          if (contact.rawContacts.any((r) => r.displayName == reversed)) {
+            return contact.id;
+          }
+        }
+        return null;
+      };
+    }
+
+    /// The two raw contacts of the merged contact, "Zena Zen" (created
+    /// first, so its name is shown) and "Zen Zena".
+    List<String> mergedPair() {
+      final raws = book.rawIdsOf(book.idOf('Zena Zen'));
+      expect(raws, hasLength(2));
+      return raws;
+    }
+
+    setUp(() {
+      book.add('Alice Example', phones: ['+15555550103']);
+      mergeReversed();
+    });
+
+    test('Create records each with its own details; the count, the preview '
+        'and Delete take all four', () async {
+      final result =
+          await createFakeContacts(book, const LedgerStore(), settings);
+      expect((result!.created, result.untracked), (4, 0));
+      // Found among the contacts the call gave, without reading every
+      // contact again (once before, once for those).
+      expect(book.getAllCalls, 2);
+      expect(book.all, hasLength(4)); // Alice, and the fakes in three
+      final [zenaZen, zenZena] = mergedPair();
+      final ledger = await stored();
+      expect(ledger.length, 4);
+      expect(ledger.entries[zenaZen], entryFor(const FakeName('Zena', 'Zen'),
+          kDefaultPhoneTemplate, kDefaultEmailTemplate));
+      expect(ledger.entries[zenZena], entryFor(const FakeName('Zen', 'Zena'),
+          kDefaultPhoneTemplate, kDefaultEmailTemplate));
+
+      expect((await countFakeContacts(book, const LedgerStore())).toDelete, 4);
+      final preview = await previewDelete(book, const LedgerStore());
+      expect((preview.toDelete, preview.skippedMerged, preview.skippedChanged),
+          (4, 0, 0));
+      final deleted =
+          await deleteFakeContacts(book, const LedgerStore(), atMost: 4);
+      expect((deleted!.deleted, deleted.skippedMerged, deleted.skippedChanged),
+          (4, 0, 0));
+      expect(book.displayNames, ['Alice Example']);
+      expect((await stored()).isEmpty, isTrue);
+    });
+
+    test('the first of the pair moved into the second one\'s contact during '
+        'the call: both are recorded, by their details', () async {
+      // As Android does when they are written in two batches: the contact ID
+      // the call gave for "Zena Zen" is gone by the time it returns.
+      book.mergeInto = null;
+      late String gone;
+      book.afterCreateAll = (_) async {
+        gone = book.idOf('Zena Zen');
+        book.merge(into: book.idOf('Zen Zena'), from: gone);
+      };
+      final result =
+          await createFakeContacts(book, const LedgerStore(), settings);
+
+      expect((result!.created, result.untracked), (4, 0));
+      expect(book.contactOfRaw(book.rawIdsOf(book.idOf('Zen Zena')).last),
+          isNot(gone));
+      final [zenZena, zenaZen] = book.rawIdsOf(book.idOf('Zen Zena'));
+      final ledger = await stored();
+      expect((ledger.entries[zenaZen]!.name, ledger.entries[zenZena]!.name),
+          ('Zena Zen', 'Zen Zena'));
+      final deleted = await deleteFakeContacts(book, const LedgerStore());
+      expect((deleted!.deleted, deleted.skippedChanged), (4, 0));
+    });
+
+    test('a second Create finds all four, also with the ledger lost: the one '
+        "shown under the other's name too", () async {
+      await createFakeContacts(book, const LedgerStore(), settings);
+      final again =
+          await createFakeContacts(book, const LedgerStore(), settings);
+      expect((again!.created, again.alreadyExisted), (0, 4));
+
+      SharedPreferences.setMockInitialValues({});
+      final afterLoss =
+          await createFakeContacts(book, const LedgerStore(), settings);
+      expect((afterLoss!.created, afterLoss.alreadyExisted), (0, 4));
+      expect(book.createAllCalls, hasLength(1));
+    });
+
+    test('merged across two Creates: Delete removes both', () async {
+      await createFakeContacts(book, const LedgerStore(),
+          names('Zen', 'Zena'));
+      final second = await createFakeContacts(book, const LedgerStore(),
+          names('Zena', 'Zen'));
+      expect((second!.created, second.untracked), (1, 0));
+      final [zenaZen, zenZena] = mergedPair();
+      final ledger = await stored();
+      expect((ledger.entries[zenaZen]!.name, ledger.entries[zenZena]!.name),
+          ('Zena Zen', 'Zen Zena'));
+
+      final deleted = await deleteFakeContacts(book, const LedgerStore());
+      expect((deleted!.deleted, deleted.skippedChanged), (2, 0));
+      expect(book.displayNames, ['Alice Example']);
+    });
+
+    test('one of the pair edited: Delete leaves both, as no longer matching',
+        () async {
+      await createFakeContacts(book, const LedgerStore(), settings);
+      final [zenaZen, zenZena] = mergedPair();
+      book.rename(zenZena, 'Zen Zena Jr');
+
+      final deleted = await deleteFakeContacts(book, const LedgerStore());
+      expect((deleted!.deleted, deleted.skippedMerged, deleted.skippedChanged),
+          (2, 0, 2));
+      expect(book.displayNames, unorderedEquals(['Alice Example', 'Zena Zen']));
+      expect((await stored()).entries.keys, unorderedEquals([zenaZen, zenZena]));
+    });
+
+    test('a call that fails after making the pair: each is found by its own '
+        'details', () async {
+      // Zen Zen, Zena Zen and Zen Zena are created; Zena Zena isn't.
+      book.createAllError = Exception('provider gone');
+      book.createAllStopsAfter = 3;
+      final error = await createFakeContacts(
+              book, const LedgerStore(), settings)
+          .then<Object?>((_) => null, onError: (Object e) => e);
+
+      expect((error! as StoppedPartway).done, 3);
+      final [zenaZen, zenZena] = mergedPair();
+      final ledger = await stored();
+      expect(ledger.length, 3);
+      expect((ledger.entries[zenaZen]!.name, ledger.entries[zenZena]!.name),
+          ('Zena Zen', 'Zen Zena'));
+    });
+
+    test('killed during the call that made the pair: Delete finds and '
+        'deletes both', () async {
+      book.afterCreateAll = (_) => Completer<void>().future;
+      unawaited(createFakeContacts(book, const LedgerStore(), settings));
+      await pumpEventQueue();
+      expect((await stored()).isEmpty, isTrue);
+
+      final deleted = await deleteFakeContacts(book, const LedgerStore());
+      expect((deleted!.deleted, deleted.skippedChanged), (4, 0));
+      expect(book.displayNames, ['Alice Example']);
     });
   });
 }
