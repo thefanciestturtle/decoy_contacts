@@ -40,9 +40,11 @@
 #   the Android SDK   /opt/android-sdk
 #   the home folder   /home/vagrant (empty; the user is "vagrant")
 #
-# Afterwards it checks that each APK is unsigned, asks for no permission but
-# access to contacts (RELEASE_PERMISSIONS in release_lib.sh, as the store
-# listing says) and names no other folder in /home.
+# Afterwards it checks that each APK is unsigned, has the minSdkVersion
+# RELEASE_MIN_SDK (in release_lib.sh; the README names its Android
+# version), asks for no permission but access to contacts
+# (RELEASE_PERMISSIONS, as the store listing says) and names no other folder
+# in /home.
 #
 # Flutter and the JDK are the versions the commit's CI builds with
 # (FLUTTER_VERSION and JAVA_VERSION in .github/workflows/dart.yml): the JDK

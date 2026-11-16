@@ -209,18 +209,39 @@ aapt2_path() {
   echo "$sdk/build-tools/$newest/aapt2"
 }
 
+# What `aapt2 dump $1` says about APK $2 (badging, permissions, ...); fails,
+# with aapt2's error, if it can't read it.
+aapt2_dump() {
+  local aapt2 dump
+  aapt2="$(aapt2_path)" || return 1
+  if ! dump="$("$aapt2" dump "$1" "$2" 2>&1)"; then
+    echo "$dump" >&2
+    return 1
+  fi
+  echo "$dump"
+}
+
 # The versionCode and versionName of APK $1, as "CODE NAME"; fails, with
 # aapt2's error, if it can't read them.
 apk_version() {
-  local aapt2 badging found
-  aapt2="$(aapt2_path)" || return 1
-  if ! badging="$("$aapt2" dump badging "$1" 2>&1)"; then
-    echo "$badging" >&2
-    return 1
-  fi
+  local badging found
+  badging="$(aapt2_dump badging "$1")" || return 1
   found="$(sed -n \
     "s/^package: .* versionCode='\([0-9]\{1,\}\)' versionName='\([^']*\)'.*/\1 \2/p" \
     <<<"$badging")"
+  [[ -n "$found" ]] || return 1
+  echo "$found"
+}
+
+# The minSdkVersion of APK $1 (the oldest Android it installs on, as an API
+# level); fails, with aapt2's error, if it can't read it. (aapt2 from
+# build-tools 36 on says "minSdkVersion:'24'"; older ones may say
+# "sdkVersion:'24'", as aapt did.)
+apk_min_sdk() {
+  local badging found
+  badging="$(aapt2_dump badging "$1")" || return 1
+  found="$(sed -nE "s/^(minS|s)dkVersion:'([0-9]+)'$/\2/p" <<<"$badging" |
+    head -n 1)"
   [[ -n "$found" ]] || return 1
   echo "$found"
 }
@@ -229,12 +250,8 @@ apk_version() {
 # one per line, after its package name on the first line; fails, with
 # aapt2's error, if it can't read them.
 apk_permissions() {
-  local aapt2 dump package
-  aapt2="$(aapt2_path)" || return 1
-  if ! dump="$("$aapt2" dump permissions "$1" 2>&1)"; then
-    echo "$dump" >&2
-    return 1
-  fi
+  local dump package
+  dump="$(aapt2_dump permissions "$1")" || return 1
   package="$(sed -n "s/^package: \(.*\)$/\1/p" <<<"$dump")"
   [[ -n "$package" ]] || return 1
   echo "$package"
@@ -252,6 +269,20 @@ readonly RELEASE_PERMISSIONS=(
   android.permission.READ_CONTACTS
   android.permission.WRITE_CONTACTS
 )
+
+# The oldest Android that can install a release APK at all, as an API
+# level: 7.0, the first with v2 signatures. Release APKs have no v1
+# signature (SIGNING_OPTIONS), which older Android needs.
+readonly OLDEST_SIGNABLE_SDK=24
+
+# The oldest Android a release installs on, as an API level: 24 is Android
+# 7.0, and the README says the app "needs Android 7.0 or newer"
+# (test/readme_test.dart keeps the two in step). It is Flutter's own
+# minimum (minSdk = flutter.minSdkVersion in android/app/build.gradle.kts),
+# so a Flutter upgrade can change it: the release build then fails, until
+# this and the README are changed with it. It can't be below
+# OLDEST_SIGNABLE_SDK.
+readonly RELEASE_MIN_SDK=24
 
 # The versionName and build number in pubspec.yaml file $1, as "NAME
 # BUILD": "version: 2.0.0+5" gives "2.0.0 5". The name is numbers and dots
@@ -280,8 +311,9 @@ pubspec_version() {
 # Stops the script (fail) unless APK $1 is the release APK for ABI $2 of
 # version $3 with build number $4: unsigned, with native code for that ABI
 # only, with the versionCode ABI_CODE * 1000 + $4 and the versionName $3,
-# asking for no permission but RELEASE_PERMISSIONS, and naming no home
-# folder but the build sandbox's.
+# the minSdkVersion RELEASE_MIN_SDK (not below OLDEST_SIGNABLE_SDK), asking
+# for no permission but RELEASE_PERMISSIONS, and naming no home folder but
+# the build sandbox's.
 check_release_apk() {
   local apk=$1 abi=$2 version=$3 build=$4 found
   local code=$((ABI_CODE[$abi] * 1000 + build))
@@ -296,6 +328,17 @@ check_release_apk() {
   [[ "$found" == "$code $version" ]] ||
     fail "the $abi APK has versionCode and versionName '$found'," \
          "not '$code $version' (${ABI_CODE[$abi]} * 1000 + $build)"
+  found="$(apk_min_sdk "$apk")" ||
+    fail "couldn't read the $abi APK's minSdkVersion"
+  ((found >= OLDEST_SIGNABLE_SDK)) ||
+    fail "the $abi APK's minSdkVersion is $found, but release APKs have" \
+         "no v1 signature (SIGNING_OPTIONS), which Android before 7.0 (API" \
+         "$OLDEST_SIGNABLE_SDK) needs: set minSdk to $OLDEST_SIGNABLE_SDK or more" \
+         "in android/app/build.gradle.kts"
+  [[ "$found" == "$RELEASE_MIN_SDK" ]] ||
+    fail "the $abi APK's minSdkVersion is $found, not $RELEASE_MIN_SDK:" \
+         "change RELEASE_MIN_SDK in tool/release_lib.sh, and the Android" \
+         "version the README names, to match"
   check_permissions "$apk" "$abi"
   check_home_paths "$apk"
 }
