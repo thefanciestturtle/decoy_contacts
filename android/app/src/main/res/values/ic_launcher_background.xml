@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The launcher icon's background: the app's primary colour (light
+         theme). The water line in ic_launcher_foreground.xml is white mixed
+         into it. test/app_icon_test.dart checks both. -->
+    <color name="ic_launcher_background">#FF36618E</color>
+</resources>
