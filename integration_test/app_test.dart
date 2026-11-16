@@ -280,6 +280,134 @@ void main() {
     expect(phonesOf(zach), contains('+15555550104'));
   });
 
+  testWidgets('C15: Android merges two contacts stored on the phone whose '
+      'names have the same letters in another order, if they share a phone '
+      'number or email address', (tester) async {
+    await startWithEmptyAddressBook(tester);
+    // Creates one contact, on its own (not in one batch with the others),
+    // and returns its raw contact ID. (Not its contact ID: merging can
+    // change that.)
+    final seen = <String>{};
+    Future<String> add(String first, String last,
+        {String? phone, String? email}) async {
+      final id = await FlutterContacts.create(Contact(
+        name: Name(first: first, last: last),
+        phones: [if (phone != null) Phone(number: phone)],
+        emails: [if (email != null) Email(address: email)],
+      ));
+      final contact = await FlutterContacts.get(id,
+          properties: {ContactProperty.identifiers});
+      final raw = rawIdsOf(contact!).where((r) => !seen.contains(r)).single;
+      seen.add(raw);
+      return raw;
+    }
+
+    final sharedPhone = [
+      await add('Zena', 'Zen', phone: '+447700900010'),
+      await add('Zen', 'Zena', phone: '+447700900010'),
+    ];
+    final sharedEmail = [
+      await add('Zach', 'Zen', email: 'zach@example.org'),
+      await add('Zen', 'Zach', email: 'zach@example.org'),
+    ];
+    // Not only the words in another order: the same letters, run together.
+    final sameLetters = [
+      await add('Ann', 'Abel', phone: '+447700900020'),
+      await add('Anna', 'Bel', phone: '+447700900020'),
+    ];
+    final otherPhones = [
+      await add('Zoe', 'Zima', phone: '+447700900030'),
+      await add('Zima', 'Zoe', phone: '+447700900031'),
+    ];
+    final noPhone = [await add('Zola', 'Zen'), await add('Zen', 'Zola')];
+
+    final book = await readAddressBook();
+    List<String> contactRawIds(String raw) =>
+        rawIdsOf(contactWithRawId(book, raw));
+    for (final (what, raws) in [
+      ('a shared phone number', sharedPhone),
+      ('a shared email address', sharedEmail),
+      ('the same letters and a shared phone number', sameLetters),
+    ]) {
+      expect(contactRawIds(raws.first), unorderedEquals(raws),
+          reason: 'merged by $what: ${describeAll(book)}');
+    }
+    for (final (what, raws) in [
+      ('other phone numbers', otherPhones),
+      ('no phone number or email address', noPhone),
+    ]) {
+      for (final raw in raws) {
+        expect(contactRawIds(raw), [raw],
+            reason: 'kept apart with $what: ${describeAll(book)}');
+      }
+    }
+  });
+
+  testWidgets('C15: Create records, and Delete removes, fakes that Android '
+      'merged with each other', (tester) async {
+    await startWithEmptyAddressBook(tester);
+    // "Zen" and "Zena" give the same phone number, +447700900010 (the
+    // template has three n's, and the n of "Zen" gives 0, as a name that has
+    // run out does). So the fakes "Zena Zen" and "Zen Zena" get the same
+    // number, and Android merges them (see the test before).
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(SettingsStore.kLastNamesKey, 'Zen, Zena');
+    await prefs.setString(SettingsStore.kFirstNamesKey, 'Zen, Zena');
+    const fakes = {
+      'Zen Zen': ('+447700900010', 'Zen.Zen@example.com'),
+      'Zena Zen': ('+447700900010', 'Zena.Zen@example.com'),
+      'Zen Zena': ('+447700900010', 'Zen.Zena@example.com'),
+      'Zena Zena': ('+447700900010', 'Zena.Zena@example.com'),
+    };
+    final real = await seed(kRealContacts);
+    await launchApp(tester);
+
+    expect(
+        await tapAndWaitForResult(tester, kCreate,
+            confirm: 'Create 4 fake contacts?'),
+        'Created 4 fake contacts.');
+    final book = await readAddressBook();
+    expectUnchanged(book, real);
+    final created = [
+      for (final c in book.values)
+        if (!real.containsKey(c.id)) c,
+    ];
+    final merged = created.where((c) => rawIdsOf(c).length > 1).toList();
+    expect(merged, hasLength(1),
+        reason: 'Android should have merged "Zena Zen" and "Zen Zena": '
+            '${describeAll(book)}');
+    expect(emailsOf(merged.single),
+        unorderedEquals(['Zena.Zen@example.com', 'Zen.Zena@example.com']));
+    expect(created, hasLength(3));
+
+    // Each raw contact is recorded with its own fake's details (each fake
+    // has its own email address, which tells them apart).
+    final ledger = await storedLedger();
+    expect(ledger.keys,
+        unorderedEquals([for (final c in created) ...rawIdsOf(c)]));
+    for (final c in created) {
+      for (final email in c.emails) {
+        final name = fakes.entries
+            .singleWhere((f) => f.value.$2 == email.address)
+            .key;
+        expect(ledger[email.metadata!.rawContactId], {
+          'name': name,
+          'phone': fakes[name]!.$1,
+          'email': fakes[name]!.$2,
+        });
+      }
+    }
+    await expectStatus(tester, '4 fake contacts on this phone.');
+
+    expect(
+        await tapAndWaitForResult(tester, kDelete,
+            confirm: 'Delete 4 fake contacts?'),
+        'Deleted 4 fake contacts.');
+    await expectStatus(tester, 'No fake contacts on this phone.');
+    expect(describeAll(await readAddressBook()), describeAll(real));
+    expect(await storedLedger(), isEmpty);
+  });
+
   testWidgets('U6: a Create or Delete that stops partway says how far it '
       'got, and trying again does the rest', (tester) async {
     await startWithEmptyAddressBook(tester);
