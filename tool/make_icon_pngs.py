@@ -14,7 +14,8 @@ Pillow; runs from any folder.
 
   tool/make_icon_pngs.py --check
       Draws them again and fails, naming them, if the files show anything
-      else, are missing, can't be read, or have other sizes.
+      else, are missing, can't be read, have other sizes, or aren't written
+      as the tool writes them (8-bit RGBA, no metadata).
 
 It draws only what the vector drawable can say with absolute M, L, C and Z
 path commands, each subpath a simple loop (not crossing itself), fill
@@ -28,8 +29,12 @@ import pathlib
 import re
 import sys
 import xml.etree.ElementTree as ET
+import zlib
 
-from PIL import Image, ImageChops, ImageDraw
+try:
+    from PIL import Image, ImageChops, ImageDraw
+except ImportError:
+    sys.exit('tool/make_icon_pngs.py needs Pillow (on Debian or Ubuntu: python3-pil).')
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RES = ROOT / 'android/app/src/main/res'
@@ -221,9 +226,10 @@ def check_attributes(element, allowed, where):
             raise Unsupported(f'{where}: <{element.tag}> attribute {local}')
 
 
-def draw_vector(canvas, path, transform, clip):
-    """Draws the vector drawable at [path] onto [canvas] (RGBA), inside the
-    mask [clip]."""
+def load_vector(path):
+    """The drawing in the vector drawable at [path], checked to hold only
+    what this tool draws: a list of steps, each ('group', steps),
+    ('clip', subpaths) or ('path', subpaths, (r, g, b), alpha, even_odd)."""
     root = ET.parse(path).getroot()
     where = str(path)
     if root.tag != 'vector':
@@ -236,40 +242,56 @@ def draw_vector(canvas, path, transform, clip):
     for name in ('width', 'height'):
         if attr(root, name) != f'{CANVAS}dp':
             raise Unsupported(f'{where}: {name} is not {CANVAS}dp')
-    draw_children(canvas, root, transform, clip, where)
+    return load_children(root, where)
 
 
-def draw_children(canvas, element, transform, clip, where):
+def load_children(element, where):
+    steps = []
     for child in element:
+        if child.tag != 'group' and len(child):
+            # Say an <aapt:attr> with a gradient instead of the fill colour.
+            raise Unsupported(f'{where}: <{child.tag}> with <{child[0].tag}> in it')
         if child.tag == 'group':
             check_attributes(child, {'android:name'}, where)
-            draw_children(canvas, child, transform, clip, where)
+            steps.append(('group', load_children(child, where)))
         elif child.tag == 'clip-path':
             check_attributes(child, {'android:name', 'android:pathData'}, where)
-            # Android clips by the nonzero rule; later children see the
-            # clip, the group's parent doesn't.
-            mask = fill_mask(vector_path(child, where), False, canvas.size, transform)
-            clip = ImageChops.multiply(clip, mask)
+            steps.append(('clip', vector_path(child, where)))
         elif child.tag == 'path':
             check_attributes(child, {'android:name', 'android:pathData', 'android:fillColor',
                                      'android:fillAlpha', 'android:fillType'}, where)
             r, g, b, a = parse_colour(required(child, 'fillColor', where), where)
-            alpha = a * float(attr(child, 'fillAlpha') or 1)
             fill_type = attr(child, 'fillType') or 'nonZero'
             if fill_type not in ('nonZero', 'evenOdd'):
                 raise Unsupported(f'{where}: fillType {fill_type}')
-            mask = fill_mask(vector_path(child, where), fill_type == 'evenOdd', canvas.size, transform)
-            mask = ImageChops.multiply(mask, clip)
+            steps.append(('path', vector_path(child, where), (r, g, b),
+                          a * float(attr(child, 'fillAlpha') or 1), fill_type == 'evenOdd'))
+        else:
+            raise Unsupported(f'{where}: <{child.tag}>')
+    return steps
+
+
+def draw(canvas, steps, transform, clip):
+    """Draws [steps] (from load_vector) onto [canvas] (RGBA), inside the
+    mask [clip]. As in Android, a clip path clips what comes after it in its
+    group."""
+    for step in steps:
+        if step[0] == 'group':
+            draw(canvas, step[1], transform, clip)
+        elif step[0] == 'clip':
+            # Android clips by the nonzero rule.
+            clip = ImageChops.multiply(clip, fill_mask(step[1], False, canvas.size, transform))
+        else:
+            _, subpaths, (r, g, b), alpha, even_odd = step
+            mask = ImageChops.multiply(fill_mask(subpaths, even_odd, canvas.size, transform), clip)
             layer = Image.new('RGBA', canvas.size, (r, g, b, 0))
             layer.putalpha(mask.point(lambda v: round(v * alpha / 255)))
             canvas.alpha_composite(layer)
-        else:
-            raise Unsupported(f'{where}: <{child.tag}>')
 
 
-def render(size, foreground=FOREGROUND, background=None):
-    """The round icon, [size] pixels wide: the background colour and the
-    foreground layer, cut to a circle of 44/48 of the width."""
+def render(size, background, foreground):
+    """The round icon, [size] pixels wide: the [background] colour and the
+    [foreground] steps, cut to a circle of 44/48 of the width."""
     big = size * SUPERSAMPLE
     scale = big * KEYLINE / VISIBLE
     offset = big / 2 - CANVAS / 2 * scale
@@ -285,28 +307,66 @@ def render(size, foreground=FOREGROUND, background=None):
         for i in range(steps)
     ]], False, (big, big), transform)
     canvas = Image.new('RGBA', (big, big), (0, 0, 0, 0))
-    r, g, b, a = background or background_colour()
+    r, g, b, a = background
     layer = Image.new('RGBA', (big, big), (r, g, b, 0))
     layer.putalpha(circle.point(lambda v: round(v * a / 255)))
     canvas.alpha_composite(layer)
-    draw_vector(canvas, foreground, transform, circle)
+    draw(canvas, foreground, transform, circle)
     # Scale down with premultiplied alpha, or the transparent black around
     # the circle would darken its edge.
     return canvas.convert('RGBa').resize((size, size), Image.Resampling.BOX).convert('RGBA')
 
 
+def file_problems(path):
+    """What in the PNG file at [path] isn't as this tool writes it: whole,
+    with every chunk's CRC right and nothing after the end, 8-bit RGBA, not
+    interlaced, and only the image (no metadata)."""
+    data = path.read_bytes()
+    if data[:8] != b'\x89PNG\r\n\x1a\n':
+        return ['not a PNG file']
+    chunks, header, at = [], None, 8
+    while at + 12 <= len(data):
+        length = int.from_bytes(data[at:at + 4], 'big')
+        kind = data[at + 4:at + 8]
+        name = kind.decode('latin-1')
+        if at + 12 + length > len(data):
+            return [f'chunk {name} is cut off']
+        body = data[at + 8:at + 8 + length]
+        if zlib.crc32(kind + body) != int.from_bytes(data[at + 8 + length:at + 12 + length], 'big'):
+            return [f'chunk {name} is damaged']
+        chunks.append(name)
+        if name == 'IHDR':
+            header = body
+        at += 12 + length
+        if name == 'IEND':
+            break
+    problems = []
+    if at != len(data) or not chunks or chunks[0] != 'IHDR' or chunks[-1] != 'IEND':
+        problems.append('not one whole PNG image')
+    if header is None or len(header) != 13 or header[8:10] != b'\x08\x06' or header[12] != 0:
+        problems.append('not 8-bit RGBA without interlacing')
+    others = sorted(set(chunks) - {'IHDR', 'IDAT', 'IEND'})
+    if others:
+        problems.append(f'has more than the image: {", ".join(others)}')
+    return problems
+
+
 def differences(image, path):
-    """Why the PNG at [path] doesn't show [image]; empty if it does."""
+    """Why the PNG at [path] isn't [image], written as this tool writes it;
+    empty if it is."""
     if not path.exists():
         return ['missing']
     try:
+        problems = file_problems(path)
+        if problems:
+            return problems
         with Image.open(path) as saved:
             saved.load()
             if saved.size != image.size:
                 return [f'{saved.size[0]} x {saved.size[1]}, not {image.size[0]} x {image.size[1]}']
             # Premultiplied: the colour of a transparent pixel doesn't show.
             diff = ImageChops.difference(saved.convert('RGBA').convert('RGBa'), image.convert('RGBa'))
-    except OSError as error:
+    except Exception as error:  # Whatever Pillow raises for a file it can't read.
         return [f"can't be read ({error})"]
     largest = max(high for _, high in diff.getextrema())
     if largest:
@@ -320,8 +380,10 @@ def main(argv):
     check = argv == ['--check']
     failed = []
     try:
+        background = background_colour()
+        foreground = load_vector(FOREGROUND)
         for path, size in PNGS:
-            image = render(size)
+            image = render(size, background, foreground)
             name = path.relative_to(ROOT)
             problems = differences(image, path)
             if check:

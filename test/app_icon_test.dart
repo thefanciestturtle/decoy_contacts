@@ -375,6 +375,12 @@ void main() {
       expect(
         backgroundColour(),
         appTheme(ui.Brightness.light).colorScheme.primary,
+        reason:
+            "The app's primary colour (light theme) changed, maybe with a "
+            'Flutter upgrade. Either give the icon the new colour (the '
+            'background, the water line mixed into it, then '
+            'tool/make_icon_pngs.py), or keep the icon and change this '
+            'test.',
       );
       for (final path in [foregroundPath, monochromePath]) {
         expect(File(path).existsSync(), isTrue, reason: path);

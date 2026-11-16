@@ -6,20 +6,34 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
+python3 -c 'import PIL' 2>/dev/null || {
+  echo "tool/test/make_icon_pngs_test.sh needs Python 3 with Pillow (on Debian or Ubuntu: python3-pil)." >&2
+  exit 1
+}
 readonly RES=android/app/src/main/res
 readonly FOREGROUND=$RES/drawable/ic_launcher_foreground.xml
 readonly BACKGROUND=$RES/values/ic_launcher_background.xml
-readonly PNGS=(
-  "$RES/mipmap-mdpi/ic_launcher.png"
-  "$RES/mipmap-hdpi/ic_launcher.png"
-  "$RES/mipmap-xhdpi/ic_launcher.png"
-  "$RES/mipmap-xxhdpi/ic_launcher.png"
-  "$RES/mipmap-xxxhdpi/ic_launcher.png"
-  fastlane/metadata/android/en-US/images/icon.png
+# The PNGs the tool writes, from its own list.
+mapfile -t PNGS < <(python3 - <<'EOF'
+import importlib.util
+spec = importlib.util.spec_from_file_location('make_icon_pngs', 'tool/make_icon_pngs.py')
+tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tool)
+for path, _ in tool.PNGS:
+    print(path.relative_to(tool.ROOT))
+EOF
 )
+readonly PNGS
+[[ "${#PNGS[@]}" == 6 && "${PNGS[0]}" == "$RES/mipmap-mdpi/ic_launcher.png" &&
+  "${PNGS[5]}" == fastlane/metadata/android/en-US/images/icon.png ]] || {
+  echo "unexpected list of PNGs from tool/make_icon_pngs.py: ${PNGS[*]}" >&2
+  exit 1
+}
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+# Without symlinks in it: the tool names files by their real paths.
+tmp="$(realpath -e "$tmp")"
 
 failures=0
 case_number=0
@@ -131,9 +145,57 @@ expect "--check names a PNG of another size" 1 "$RES/mipmap-mdpi/ic_launcher.png
 next
 echo "<<<<<<< HEAD" >"$dir/${PNGS[2]}"
 rm "$dir/${PNGS[4]}"
-expect "--check names a PNG it can't read, and goes on to the others" 1 \
-  "$RES/mipmap-xhdpi/ic_launcher.png: can't be read
+expect "--check names a file that isn't a PNG, and goes on to the others" 1 \
+  "$RES/mipmap-xhdpi/ic_launcher.png: not a PNG file
 $RES/mipmap-xxxhdpi/ic_launcher.png: missing" same -- --check
+
+next
+# A whole PNG whose header says 60000 x 60000: Pillow refuses to open it.
+python3 - "$dir/${PNGS[2]}" <<'EOF'
+import sys, zlib
+path = sys.argv[1]
+data = bytearray(open(path, 'rb').read())
+data[16:24] = (60000).to_bytes(4, 'big') * 2
+data[29:33] = zlib.crc32(bytes(data[12:29])).to_bytes(4, 'big')
+open(path, 'wb').write(data)
+EOF
+expect "--check names a PNG Pillow can't open, and goes on to the others" 1 \
+  "$RES/mipmap-xhdpi/ic_launcher.png: can't be read" same -- --check
+expect "...and writing writes it again" 0 "Wrote $RES/mipmap-xhdpi/ic_launcher.png (96 x 96)
+Kept $RES/mipmap-xxhdpi/ic_launcher.png (the same picture)" changed --
+
+# A PNG that shows the right picture but isn't written as the tool writes
+# it: named by --check, and written again. CHANGE is Python that changes
+# the file sys.argv[1].
+rewritten() {
+  local name="$1" problem="$2" change="$3"
+  next
+  python3 -c "$change" "$dir/${PNGS[0]}"
+  expect "--check names a PNG $name" 1 "$RES/mipmap-mdpi/ic_launcher.png: $problem" same -- --check
+  expect "...and writing writes it again" 0 "Wrote $RES/mipmap-mdpi/ic_launcher.png (48 x 48)" changed --
+  expect "...after which --check passes" 0 "The icon PNGs match the vector icon." same -- --check
+}
+rewritten "with a palette" "not 8-bit RGBA without interlacing" '
+import sys
+from PIL import Image
+path = sys.argv[1]
+Image.open(path).quantize(colors=256, method=Image.Quantize.FASTOCTREE).save(path)'
+rewritten "with metadata" "has more than the image: pHYs, tEXt" '
+import sys
+from PIL import Image, PngImagePlugin
+path = sys.argv[1]
+info = PngImagePlugin.PngInfo()
+info.add_text("Author", "someone")
+Image.open(path).save(path, pnginfo=info, dpi=(72, 72))'
+rewritten "with a damaged chunk" "chunk IDAT is damaged" '
+import sys
+path = sys.argv[1]
+data = bytearray(open(path, "rb").read())
+data[data.index(b"IDAT") + 4] ^= 1
+open(path, "wb").write(data)'
+rewritten "with bytes after its end" "not one whole PNG image" '
+import sys
+open(sys.argv[1], "ab").write(b"junk")'
 
 next
 replace "$dir/$FOREGROUND" '#FFF2A33A' '#FFF2A33B'
@@ -173,6 +235,8 @@ cant_draw "a path without a fill colour" '<path
         android:fillColor="#FFF2A33A"
 ' '<path
 ' "<path> without android:fillColor"
+cant_draw "a fill given by an element (a gradient)" \
+  ' 74.4,45.7 Z" />' ' 74.4,45.7 Z"><gradient /></path>' "<path> with <gradient> in it"
 cant_draw "a colour from a resource" '#FFF2A33A' '@color/ic_launcher_background' \
   "colour '@color/ic_launcher_background'"
 cant_draw "a vector of another size" 'android:viewportWidth="108"' 'android:viewportWidth="24"' \
