@@ -5,7 +5,8 @@ import 'package:flutter_contacts/flutter_contacts.dart';
 
 import 'contacts_gateway.dart';
 
-/// [ContactsGateway] for the device's address book, via `flutter_contacts`.
+/// [ContactsGateway] for the device's address book, via `flutter_contacts`,
+/// except for reading it: [getAll] uses the app's own Android code.
 class FlutterContactsGateway implements ContactsGateway {
   const FlutterContactsGateway();
 

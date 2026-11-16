@@ -528,6 +528,29 @@ void main() {
       expect((await storedLedger()).isEmpty, isTrue);
     });
 
+    testWidgets('one of two merged fakes edited: Delete says one no longer '
+        'matches and the other was merged (C15)', (tester) async {
+      SharedPreferences.setMockInitialValues({
+        ...kSettings,
+        'sListOfLastNames': 'Zen, Zena',
+        'sListOfFirstNames': 'Zen, Zena',
+      });
+      book.mergeInto = (c) =>
+          c.first == 'Zen' && c.last == 'Zena' ? book.idOf('Zena Zen') : null;
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      book.rename(book.rawIdsOf(book.idOf('Zena Zen')).last, 'Zen Zena Jr');
+
+      await tapAndOpenDialog(tester, kDeleteButton);
+      expect(dialogText(tester), (
+        title: 'Delete 2 fake contacts?',
+        body: '$kDeleteBody 1 was merged with another contact and will be '
+            "left alone. 1 no longer matches what this app created (edited, "
+            "or the app's records came from another phone) and will be left "
+            'alone.',
+      ));
+    });
+
     testWidgets('a new contact not found under its contact ID is found by '
         'its details (U8)', (tester) async {
       final lossy = _LosesFirstNewContact();

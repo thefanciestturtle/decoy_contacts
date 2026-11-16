@@ -869,8 +869,7 @@ void main() {
           await createFakeContacts(book, const LedgerStore(), settings);
 
       expect((result!.created, result.untracked), (4, 0));
-      expect(book.contactOfRaw(book.rawIdsOf(book.idOf('Zen Zena')).last),
-          isNot(gone));
+      expect(book.all.map((c) => c.id), isNot(contains(gone)));
       final [zenZena, zenaZen] = book.rawIdsOf(book.idOf('Zen Zena'));
       final ledger = await stored();
       expect((ledger.entries[zenaZen]!.name, ledger.entries[zenZena]!.name),
@@ -909,17 +908,70 @@ void main() {
       expect(book.displayNames, ['Alice Example']);
     });
 
-    test('one of the pair edited: Delete leaves both, as no longer matching',
-        () async {
+    test('one of the pair edited: Delete leaves both, that one as no longer '
+        'matching, the other as merged', () async {
       await createFakeContacts(book, const LedgerStore(), settings);
       final [zenaZen, zenZena] = mergedPair();
       book.rename(zenZena, 'Zen Zena Jr');
 
       final deleted = await deleteFakeContacts(book, const LedgerStore());
       expect((deleted!.deleted, deleted.skippedMerged, deleted.skippedChanged),
-          (2, 0, 2));
+          (2, 1, 1));
       expect(book.displayNames, unorderedEquals(['Alice Example', 'Zena Zen']));
       expect((await stored()).entries.keys, unorderedEquals([zenaZen, zenZena]));
+    });
+
+    group('Delete in chunks of one contact (Zen Zen, the pair, Zena Zena)',
+        () {
+      setUp(() => createFakeContacts(book, const LedgerStore(), settings));
+
+      test('Stop after the pair: both of its fakes are counted, and the rest '
+          'stays recorded', () async {
+        final result = await deleteFakeContacts(book, const LedgerStore(),
+            chunkSize: 1, stopRequested: () => book.deleteAllCalls.length == 2);
+
+        expect((result!.deleted, result.planned, result.stopped),
+            (3, 4, true));
+        expect(book.displayNames,
+            unorderedEquals(['Alice Example', 'Zena Zena']));
+        expect((await stored()).entries.values.map((e) => e.name),
+            ['Zena Zena']);
+      });
+
+      test('a call that fails after deleting the pair: it goes on', () async {
+        book.beforeDeleteAll = (call) async {
+          book.deleteAllError = call == 1 ? Exception('provider gone') : null;
+          book.deleteAllStopsAfter = call == 1 ? 1 : null;
+        };
+        final result = await deleteFakeContacts(book, const LedgerStore(),
+            chunkSize: 1);
+
+        expect((result!.deleted, result.stopped), (4, false));
+        expect(book.displayNames, ['Alice Example']);
+        expect((await stored()).isEmpty, isTrue);
+      });
+
+      test('a call that fails before deleting the pair says how many it '
+          'deleted, and the pair stays recorded', () async {
+        final pair = mergedPair();
+        book.beforeDeleteAll = (call) async {
+          book.deleteAllError = call == 1 ? Exception('provider gone') : null;
+          book.deleteAllStopsAfter = call == 1 ? 0 : null;
+        };
+        final error = await deleteFakeContacts(book, const LedgerStore(),
+                chunkSize: 1)
+            .then<Object?>((_) => null, onError: (Object e) => e);
+
+        final stopped = error! as StoppedPartway;
+        expect((stopped.done, stopped.planned), (1, 4));
+        expect((await stored()).entries.keys, containsAll(pair));
+        // Trying again deletes the rest.
+        book.beforeDeleteAll = null;
+        book.deleteAllError = null;
+        final again = await deleteFakeContacts(book, const LedgerStore());
+        expect(again!.deleted, 3);
+        expect(book.displayNames, ['Alice Example']);
+      });
     });
 
     test('a call that fails after making the pair: each is found by its own '

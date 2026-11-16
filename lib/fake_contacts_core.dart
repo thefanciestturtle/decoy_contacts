@@ -435,13 +435,13 @@ class DeletePlan {
   final int rawContactsDeleted;
 
   /// Tracked raw contacts left alone because Android merged them into a
-  /// contact that also holds data the app didn't create.
+  /// contact that also holds data the app didn't create: a raw contact that
+  /// isn't the app's, or another fake that no longer matches.
   final int skippedMerged;
 
-  /// Tracked raw contacts left alone because one in their contact (they or
-  /// another fake merged with them) no longer matches what was recorded:
-  /// edited since, or the raw contact ID now belongs to a different contact
-  /// (for example if the ledger came from another phone).
+  /// Tracked raw contacts left alone because they no longer match what was
+  /// recorded: edited since, or the raw contact ID now belongs to a
+  /// different contact (for example if the ledger came from another phone).
   final int skippedChanged;
 
   /// Ledger after the deletion: only the skipped entries remain.
@@ -462,10 +462,15 @@ class DeletePlan {
 /// ledger and has exactly the name, phone and email recorded for it: its own
 /// fingerprints (see [fingerprintsOf]), given per raw contact ID in
 /// [fingerprintsByRaw], must be just the recorded one. So a contact that
-/// holds anything the app didn't create, or a name, phone number or email
-/// address that differs in any way from what the app created, is never
-/// deleted. Each raw contact is checked on its own, so a contact into which
-/// Android merged several of the app's fakes is deleted too.
+/// holds a raw contact the app didn't create, or a name, phone number or
+/// email address that differs in any way from what the app created, is
+/// never deleted. (Other details, such as a note added to a fake, aren't
+/// checked.) Each raw contact is checked on its own, so a contact into
+/// which Android merged several of the app's fakes is deleted too.
+///
+/// A fake left alone counts as changed if it no longer matches, and
+/// otherwise as merged (with a raw contact that isn't the app's, or with a
+/// fake that changed).
 DeletePlan planDelete(Ledger ledger, AddressBook book,
     Map<String, Set<String>> fingerprintsByRaw) {
   final toDelete = <String>[];
@@ -493,8 +498,11 @@ DeletePlan planDelete(Ledger ledger, AddressBook book,
           actual.single == ledger.entries[raw]!.fingerprint;
     }
 
-    if (!tracked.every(unchanged)) {
-      skippedChanged += tracked.length;
+    final changed = tracked.where((r) => !unchanged(r)).length;
+    if (changed > 0) {
+      // The fakes that are unchanged were merged with one that isn't.
+      skippedChanged += changed;
+      skippedMerged += tracked.length - changed;
       keep();
       return;
     }

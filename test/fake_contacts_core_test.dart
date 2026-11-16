@@ -722,14 +722,15 @@ void main() {
         expect(plan.remaining.isEmpty, isTrue);
       });
 
-      test('is left alone, both fakes, if one of them changed', () {
+      test('is left alone, both fakes, if one of them changed: that one as '
+          'changed, the other as merged', () {
         final plan = planDelete(ledger, book, {
           '20': fingerprintsMatching(zoe),
           '21': fingerprintsOf('Zach Zen', [zach.phone, '+15555550101'],
               [zach.email]).toSet(),
         });
         expect(plan.contactIdsToDelete, isEmpty);
-        expect((plan.skippedMerged, plan.skippedChanged), (0, 2));
+        expect((plan.skippedMerged, plan.skippedChanged), (1, 1));
         expect(plan.remaining.entries, {'20': zoe, '21': zach});
       });
 
@@ -740,7 +741,7 @@ void main() {
           '21': fingerprintsMatching(zoe),
         });
         expect(plan.contactIdsToDelete, isEmpty);
-        expect(plan.skippedChanged, 2);
+        expect((plan.skippedMerged, plan.skippedChanged), (0, 2));
       });
 
       test('is left alone if one raw contact has both fakes\' details', () {
@@ -749,7 +750,7 @@ void main() {
           '21': fingerprintsMatching(zach),
         });
         expect(plan.contactIdsToDelete, isEmpty);
-        expect(plan.skippedChanged, 2);
+        expect((plan.skippedMerged, plan.skippedChanged), (1, 1));
       });
     });
 
