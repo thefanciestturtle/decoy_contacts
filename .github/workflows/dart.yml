@@ -75,9 +75,10 @@ jobs:
 
   # Gradle, the Android Gradle plugin and Kotlin on the versions of this
   # Flutter's project template, and the same gradle.properties; and the
-  # tests of the scripts that check this and Flutter's releases. A job of
-  # its own, where nothing is built: a build adds missing flags to
-  # gradle.properties by itself, so the check would miss them.
+  # tests of the scripts that check this and Flutter's releases, and of
+  # the tool that draws the icon's PNGs. A job of its own, where nothing is
+  # built: a build adds missing flags to gradle.properties by itself, so
+  # the check would miss them.
   build-tools:
     name: Build tools match Flutter
     runs-on: ubuntu-latest
@@ -105,6 +106,16 @@ jobs:
       - name: Test tool/check_flutter_release.sh
         if: ${{ !cancelled() }}
         run: tool/test/check_flutter_release_test.sh
+
+      # tool/make_icon_pngs.py needs Pillow, which the runner doesn't have:
+      # Ubuntu's own package.
+      - name: Install Pillow
+        if: ${{ !cancelled() }}
+        run: sudo apt-get update && sudo apt-get install --yes python3-pil
+
+      - name: Test tool/make_icon_pngs.py
+        if: ${{ !cancelled() }}
+        run: tool/test/make_icon_pngs_test.sh
 
   # The release APKs, one per ABI, built by tool/build_release.sh as they
   # are built for a release and as F-Droid will build them: twice, from
