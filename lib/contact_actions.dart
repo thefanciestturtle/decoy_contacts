@@ -589,9 +589,10 @@ Future<DeletePreview> previewDelete(
 /// What Delete would find, for the status line: [DeletePreview.toDelete] is
 /// how many fakes are still in the address book, counting only those this
 /// app can confirm. Not counted, but in the skipped counts: entries that no
-/// longer match what was created, and fakes merged into another contact
-/// (their details can't be checked, and the raw contact may not be a fake
-/// at all; see [planDelete]).
+/// longer match what was created, and fakes in a contact that also holds a
+/// raw contact that isn't the app's, or a fake that changed (see
+/// [planDelete]). Fakes merged only with each other, unchanged, are
+/// counted.
 ///
 /// The fakes of a Create that was cut short are counted too (see
 /// [createdByPending]), but only recorded by the next Create or Delete.

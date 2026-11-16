@@ -869,6 +869,9 @@ void main() {
           await createFakeContacts(book, const LedgerStore(), settings);
 
       expect((result!.created, result.untracked), (4, 0));
+      // Found in what was read for the call's contacts, without reading
+      // every contact again.
+      expect(book.getAllCalls, 2);
       expect(book.all.map((c) => c.id), isNot(contains(gone)));
       final [zenZena, zenaZen] = book.rawIdsOf(book.idOf('Zen Zena'));
       final ledger = await stored();

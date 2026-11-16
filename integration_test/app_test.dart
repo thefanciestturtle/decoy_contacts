@@ -13,7 +13,8 @@ import 'package:decoy_contacts/about_page.dart'
     show AboutPage, kAppVersion, kLicensePackage;
 import 'package:decoy_contacts/contact_actions.dart'
     show kCreateChunkSize, kDeleteChunkSize;
-import 'package:decoy_contacts/contacts_gateway.dart' show NewContact;
+import 'package:decoy_contacts/contacts_gateway.dart'
+    show NewContact, StoredContact;
 import 'package:decoy_contacts/fake_contacts_core.dart';
 import 'package:decoy_contacts/flutter_contacts_gateway.dart';
 import 'package:decoy_contacts/main.dart';
@@ -281,8 +282,9 @@ void main() {
   });
 
   testWidgets('C15: Android merges two contacts stored on the phone whose '
-      'names have the same letters in another order, if they share a phone '
-      'number or email address', (tester) async {
+      'names are the same words in another order, or the same letters run '
+      'together, if they share a phone number or email address',
+      (tester) async {
     await startWithEmptyAddressBook(tester);
     // Creates one contact, on its own (not in one batch with the others),
     // and returns its raw contact ID. (Not its contact ID: merging can
@@ -342,6 +344,84 @@ void main() {
       }
     }
   });
+
+  testWidgets("C15: the app's reader lists the contacts the plugin lists, "
+      'each raw contact with its own name, numbers and emails',
+      (tester) async {
+    await startWithEmptyAddressBook(tester);
+    await seed(kRealContacts);
+    // Deleted in another account: until a sync adapter removes it, its raw
+    // contact stays, marked as deleted. It must not be read.
+    final other = await seed(
+        [(first: 'Olga', last: 'Other', phone: '+15555550105', email: null)],
+        account: kOtherAccount);
+    await FlutterContacts.deleteAll(other.keys.toList());
+    // Merged by Android: the same words, and the same number.
+    for (final (first, last) in [('Zena', 'Zen'), ('Zen', 'Zena')]) {
+      await FlutterContacts.create(Contact(
+        name: Name(first: first, last: last),
+        phones: const [Phone(number: '+447700900010')],
+        emails: [Email(address: '$first.$last@example.com')],
+      ));
+    }
+
+    const gateway = FlutterContactsGateway();
+    final read = await gateway.getAll();
+    final listed = await readAddressBook();
+    expect({for (final c in read) c.id: c.rawContactIds.toSet()},
+        {for (final c in listed.values) c.id!: rawIdsOf(c).toSet()});
+    final raws = {
+      for (final c in read)
+        for (final r in c.rawContacts) r.displayName: r,
+    };
+    expect(raws.keys, unorderedEquals(
+        ['Alice Example', 'Zoe Zenith', 'Bob Example', 'Zena Zen', 'Zen Zena']));
+    for (final (name, phones, emails) in [
+      ('Alice Example', ['+15555550103'], ['alice@example.org']),
+      ('Zoe Zenith', ['+15555550102'], <String>[]),
+      ('Bob Example', <String>[], ['bob@example.org']),
+      ('Zena Zen', ['+447700900010'], ['Zena.Zen@example.com']),
+      ('Zen Zena', ['+447700900010'], ['Zen.Zena@example.com']),
+    ]) {
+      expect(raws[name]!.phones, phones, reason: name);
+      expect(raws[name]!.emails, emails, reason: name);
+    }
+
+    // Only the contacts asked for, their raw contacts in the order of their
+    // IDs.
+    final pair = read.singleWhere((c) => c.rawContacts.length == 2);
+    final [asked] = await gateway.getAll(ids: [pair.id]);
+    expect(asked.rawContactIds,
+        [...pair.rawContactIds]..sort((a, b) => int.parse(a) - int.parse(b)));
+    expect(await gateway.getAll(ids: []), isEmpty);
+    expect(await gateway.getAll(ids: ['999999']), isEmpty);
+  });
+
+  testWidgets("C15: the app's reader reads over 900 contacts at once, in "
+      'batches', (tester) async {
+    await startWithEmptyAddressBook(tester);
+    const n = 950;
+    final ids = await FlutterContacts.createAll([
+      for (var i = 0; i < n; i++)
+        Contact(
+          name: Name(first: 'Batch', last: 'B$i'),
+          phones: [Phone(number: '+1555555${i.toString().padLeft(4, '0')}')],
+        ),
+    ]);
+    expect(ids.toSet(), hasLength(n));
+
+    const gateway = FlutterContactsGateway();
+    final all = await gateway.getAll();
+    final asked = await gateway.getAll(ids: ids);
+    String describeRead(List<StoredContact> contacts) => [
+          for (final c in contacts)
+            for (final r in c.rawContacts)
+              '${c.id} ${r.id} ${r.displayName} ${r.phones}',
+        ].join('\n');
+    expect(all, hasLength(n));
+    expect(describeRead(asked), describeRead(all));
+    expect(all.every((c) => c.rawContacts.single.phones.length == 1), isTrue);
+  }, timeout: const Timeout(Duration(minutes: 3)));
 
   testWidgets('C15: Create records, and Delete removes, fakes that Android '
       'merged with each other', (tester) async {

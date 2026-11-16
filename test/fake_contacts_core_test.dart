@@ -269,6 +269,24 @@ void main() {
       );
     });
 
+    test('finds a fake that Android moved into the contact the call gave for '
+        'another', () {
+      // The contact ID given for "Zena Zen" is gone: Android moved its raw
+      // contact, 22, into the contact of "Zen Zena".
+      expect(
+        newlyCreatedRawIds(
+            created: [zenaZen, zenZena],
+            createdContactIds: ['c22', 'c23'],
+            oldRawIds: const {},
+            after: {'c23': ['22', '23']},
+            fingerprintsByRaw: {
+              '22': fingerprintsMatching(zenaZen),
+              '23': fingerprintsMatching(zenZena),
+            }),
+        {'22': zenaZen, '23': zenZena},
+      );
+    });
+
     test('leaves out a merged fake whose details it can\'t find', () {
       // Raw 23 was changed meanwhile (or its details couldn't be read).
       expect(

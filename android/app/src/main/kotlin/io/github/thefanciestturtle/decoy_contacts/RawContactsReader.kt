@@ -78,10 +78,12 @@ class RawContactsReader(private val resolver: ContentResolver) :
      *
      * If the first query gets no cursor (the contacts provider can't be
      * reached), that reads as no contacts, as the plugin's reads do. If a
-     * later one gets none, the read fails: half a read must not look whole.
+     * later one (or a later batch of the first) gets none, the read fails:
+     * half a read must not look whole.
      */
     private fun read(contactIds: List<String>?): List<Map<String, Any>> {
         val shown = HashSet<Long>()
+        var firstBatch = true
         forEachBatch(contactIds) { filter, args ->
             val cursor = resolver.query(
                 Contacts.CONTENT_URI.buildUpon()
@@ -93,7 +95,12 @@ class RawContactsReader(private val resolver: ContentResolver) :
                 filter(Contacts._ID).removePrefix(" AND ").ifEmpty { null },
                 args,
                 null,
-            ) ?: return emptyList()
+            )
+            if (cursor == null) {
+                if (firstBatch) return emptyList()
+                throw IllegalStateException("no cursor for the contacts")
+            }
+            firstBatch = false
             cursor.use { while (it.moveToNext()) shown.add(it.getLong(0)) }
         }
         if (shown.isEmpty()) return emptyList()
@@ -124,9 +131,9 @@ class RawContactsReader(private val resolver: ContentResolver) :
         if (raws.isEmpty()) return emptyList()
 
         // By the raw contacts found, not by contact: Android may move a raw
-        // contact to another contact between the two queries.
-        val rawIds = if (contactIds == null) null else raws.keys.map { it.toString() }
-        forEachBatch(rawIds) { filter, args ->
+        // contact to another contact between the two queries. (Nor every row:
+        // those of hidden contacts would only be read to be dropped.)
+        forEachBatch(raws.keys.map { it.toString() }) { filter, args ->
             val cursor = resolver.query(
                 Data.CONTENT_URI,
                 // DATA1 is Phone.NUMBER for a phone number and Email.ADDRESS
@@ -134,20 +141,16 @@ class RawContactsReader(private val resolver: ContentResolver) :
                 arrayOf(Data.RAW_CONTACT_ID, Data.MIMETYPE, Data.DATA1),
                 "${Data.MIMETYPE} IN (?, ?)" + filter(Data.RAW_CONTACT_ID),
                 arrayOf(Phone.CONTENT_ITEM_TYPE, Email.CONTENT_ITEM_TYPE) + args,
-                Data._ID,
+                null,
             ) ?: throw IllegalStateException("no cursor for the phone numbers and emails")
             cursor.use {
                 while (it.moveToNext()) {
-                    // Data of a raw contact the query before didn't find
-                    // (say, one added meanwhile) is left out.
-                    val raw = raws[it.getLong(0)]
-                    if (raw != null) {
-                        val value = it.getString(2) ?: ""
-                        if (it.getString(1) == Phone.CONTENT_ITEM_TYPE) {
-                            raw.phones.add(value)
-                        } else {
-                            raw.emails.add(value)
-                        }
+                    val raw = raws.getValue(it.getLong(0))
+                    val value = it.getString(2) ?: ""
+                    if (it.getString(1) == Phone.CONTENT_ITEM_TYPE) {
+                        raw.phones.add(value)
+                    } else {
+                        raw.emails.add(value)
                     }
                 }
             }

@@ -23,9 +23,14 @@
 #    app must show them in its Last names field (read from the screen with
 #    `uiautomator dump`, as accessibility services see it).
 #
+# 3. With access to the contacts and a record of one fake whose raw contact
+#    doesn't exist, third start: the app reads the address book to count
+#    the fakes (with its own Android code, RawContactsReader.kt, which R8
+#    shrinks too), and its status line must say there are none. Had the
+#    read failed, the line would stay empty. The address book is only read.
+#
 # After each start the app must still be running, with no crash, no ANR and
-# no Dart error in the log. Contacts are not exercised: the app only touches
-# them when Create or Delete is tapped.
+# no Dart error in the log. Create and Delete aren't exercised.
 #
 # It also checks that the app asks for no internet access: its privacy policy
 # says it has none. (Debug and profile builds do ask, for Flutter's tools.)
@@ -47,6 +52,7 @@ source tool/release_lib.sh
 readonly PREFS="/data/data/$APP_ID/shared_prefs/FlutterSharedPreferences.xml"
 readonly DEFAULT_TEMPLATE='+447700900nnn'
 readonly CUSTOM_NAMES='Zen, Zima'
+readonly NO_FAKES='No fake contacts on this phone.'
 readonly TIMEOUT_S=60
 
 # adbd restarts on `adb root` / `adb unroot`, which can take a while.
@@ -178,6 +184,35 @@ field_text() {
     head -n 1 || true
 }
 
+# Whether the app's screen now shows the plain text $1 (as a label or as
+# text, the way field_text reads it).
+screen_shows() {
+  timeout 20 adb -s "$serial" exec-out uiautomator dump /dev/tty 2>/dev/null |
+    tr '<' '\n' |
+    grep -q -F -e "content-desc=\"$1\"" -e "text=\"$1\""
+}
+
+wait_for_text() {
+  local deadline=$((SECONDS + TIMEOUT_S))
+  until screen_shows "$1"; do
+    wake_screen # in case it went off meanwhile
+    check_no_errors
+    if (( SECONDS >= deadline )); then
+      fail "after ${TIMEOUT_S}s, the app doesn't show '$1'"
+    fi
+    sleep 1
+  done
+}
+
+# Puts back the stored settings from $1 (a copy on this computer), with
+# cat, which keeps the file's owner and SELinux label.
+write_prefs() {
+  adb_ push "$1" /data/local/tmp/decoy_contacts_prefs.xml >/dev/null 2>&1 ||
+    fail "couldn't copy the edited settings to the device"
+  adb_ shell "cat /data/local/tmp/decoy_contacts_prefs.xml > $PREFS && rm /data/local/tmp/decoy_contacts_prefs.xml" ||
+    fail "couldn't write the app's settings file"
+}
+
 # Turns the screen on and dismisses the keyguard, if they aren't already.
 # The second start reads the app's screen, and with the screen off or
 # locked the dump shows no app at all. Neither changes a setting.
@@ -265,10 +300,7 @@ adb_ pull "$PREFS" "$tmp/prefs.xml" >/dev/null 2>&1 ||
   fail "couldn't read the app's settings file"
 sed -e "s|\(name=\"flutter\.sListOfLastNames\">\)[^<]*|\1$CUSTOM_NAMES|" \
     "$tmp/prefs.xml" > "$tmp/edited.xml"
-adb_ push "$tmp/edited.xml" /data/local/tmp/decoy_contacts_prefs.xml >/dev/null 2>&1 ||
-  fail "couldn't copy the edited settings to the device"
-adb_ shell "cat /data/local/tmp/decoy_contacts_prefs.xml > $PREFS && rm /data/local/tmp/decoy_contacts_prefs.xml" ||
-  fail "couldn't write the app's settings file"
+write_prefs "$tmp/edited.xml"
 [[ "$(pref sListOfLastNames)" == "$CUSTOM_NAMES" ]] ||
   fail "couldn't change the stored settings"
 
@@ -280,5 +312,24 @@ check_app_ok
 [[ "$(pref sListOfLastNames)" == "$CUSTOM_NAMES" ]] ||
   fail "last names are now stored as '$(pref sListOfLastNames)'," \
        "expected '$CUSTOM_NAMES'"
+adb_ shell am force-stop "$APP_ID"
+
+echo "== Third start, with access to contacts: the app should read them"
+for permission in READ_CONTACTS WRITE_CONTACTS; do
+  adb_ shell pm grant "$APP_ID" "android.permission.$permission" ||
+    fail "couldn't grant $permission"
+done
+# Raw contact IDs start at 1, so raw contact 0 never exists. (In the file,
+# the JSON's quotes are &quot;, and & is special in sed's replacement.)
+adb_ pull "$PREFS" "$tmp/prefs.xml" >/dev/null 2>&1 ||
+  fail "couldn't read the app's settings file"
+sed -e 's|</map>|    <string name="flutter.fakeRawContactLedgerV1">{\&quot;0\&quot;:{\&quot;name\&quot;:\&quot;Zoe Zen\&quot;,\&quot;phone\&quot;:\&quot;\&quot;,\&quot;email\&quot;:\&quot;\&quot;}}</string>\n</map>|' \
+    "$tmp/prefs.xml" > "$tmp/edited.xml"
+grep -q -F 'fakeRawContactLedgerV1">{&quot;0&quot;:' "$tmp/edited.xml" ||
+  fail "couldn't add a record of a fake to the settings"
+write_prefs "$tmp/edited.xml"
+start_app
+wait_for_text "$NO_FAKES"
+check_app_ok
 
 echo "== Release build OK"

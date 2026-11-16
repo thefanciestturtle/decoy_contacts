@@ -274,7 +274,10 @@ List<FakeName> namesToCreate(
 /// contact added meanwhile), a contact holds several new raw contacts: each
 /// is then told apart by its own name, phone and email ([fingerprintsByRaw]
 /// gives each raw contact's fingerprints), by the rule of
-/// [createdBeforeFailure]. Those it can't tell apart are left out.
+/// [createdBeforeFailure]. A fake not found in its contact (Android may have
+/// moved it into another one the call gave) is looked for the same way
+/// among the other new raw contacts in [after]. Those it can't tell apart
+/// are left out.
 Map<String, LedgerEntry> newlyCreatedRawIds({
   required List<LedgerEntry> created,
   required List<String> createdContactIds,
@@ -301,6 +304,18 @@ Map<String, LedgerEntry> newlyCreatedRawIds({
           fingerprintsByRaw: fingerprintsByRaw));
     }
   });
+  final recorded = result.values.toSet();
+  final unmatched = [
+    for (final e in created.take(createdContactIds.length))
+      if (!recorded.contains(e)) e,
+  ];
+  if (unmatched.isNotEmpty) {
+    result.addAll(createdBeforeFailure(
+        planned: unmatched,
+        oldRawIds: {...oldRawIds, ...result.keys},
+        after: after,
+        fingerprintsByRaw: fingerprintsByRaw));
+  }
   return result;
 }
 
@@ -468,9 +483,10 @@ class DeletePlan {
 /// checked.) Each raw contact is checked on its own, so a contact into
 /// which Android merged several of the app's fakes is deleted too.
 ///
-/// A fake left alone counts as changed if it no longer matches, and
-/// otherwise as merged (with a raw contact that isn't the app's, or with a
-/// fake that changed).
+/// A fake left alone counts as merged if its contact holds a raw contact
+/// that isn't the app's (whether or not the fake itself changed), or a fake
+/// that changed while it didn't; and as changed if it no longer matches in
+/// a contact made only of the app's fakes.
 DeletePlan planDelete(Ledger ledger, AddressBook book,
     Map<String, Set<String>> fingerprintsByRaw) {
   final toDelete = <String>[];
