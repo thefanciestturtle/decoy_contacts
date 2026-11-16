@@ -16,7 +16,7 @@
 # The other tests use debug builds, which skip R8. R8 shrinks release builds
 # and can remove classes that a plugin only looks up at run time, so such a
 # plugin breaks only in release builds. This script installs a release build,
-# starts it twice and checks it can write and read its settings:
+# starts it three times and checks it can write and read its settings:
 #
 # 1. First start of a fresh install: the app saves its default settings.
 # 2. The stored last names are changed to a custom list. Second start: the
@@ -169,27 +169,31 @@ wait_for_pref() {
   done
 }
 
+# What the screen shows now, as `uiautomator dump` (accessibility services)
+# sees it: XML, one tag per line once split at "<" (which an attribute
+# escapes). Nothing if the dump failed, say because the app was still
+# drawing its spinner, or it stalled.
+dump_screen() {
+  timeout 20 adb -s "$serial" exec-out uiautomator dump /dev/tty 2>/dev/null |
+    tr '<' '\n' || true
+}
+
 # The text in the app's text field labelled $1, as the screen shows it now;
-# nothing if there is no such field (or the dump failed, say because the
-# app was still drawing its spinner, or it stalled). The dump is XML, one
-# tag per line once split at "<" (which an attribute escapes); a label or
-# text with &, < or " in it is escaped too, so this only works for plain
+# nothing if there is no such field (or the dump failed). A label or text
+# with &, < or " in it is escaped in the dump, so this only works for plain
 # ones.
 field_text() {
-  timeout 20 adb -s "$serial" exec-out uiautomator dump /dev/tty 2>/dev/null |
-    tr '<' '\n' |
+  dump_screen |
     grep -F "class=\"android.widget.EditText\"" |
     grep -F "hint=\"$1\"" |
     sed -n 's/.* text="\([^"]*\)".*/\1/p' |
     head -n 1 || true
 }
 
-# Whether the app's screen now shows the plain text $1 (as a label or as
-# text, the way field_text reads it).
+# Whether the app's screen now shows the plain text $1, as a label or as
+# text (escaped as field_text says).
 screen_shows() {
-  timeout 20 adb -s "$serial" exec-out uiautomator dump /dev/tty 2>/dev/null |
-    tr '<' '\n' |
-    grep -q -F -e "content-desc=\"$1\"" -e "text=\"$1\""
+  dump_screen | grep -q -F -e "content-desc=\"$1\"" -e "text=\"$1\""
 }
 
 wait_for_text() {

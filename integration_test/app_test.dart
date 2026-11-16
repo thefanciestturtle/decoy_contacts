@@ -351,7 +351,8 @@ void main() {
     await startWithEmptyAddressBook(tester);
     await seed(kRealContacts);
     // Deleted in another account: until a sync adapter removes it, its raw
-    // contact stays, marked as deleted. It must not be read.
+    // contact stays, marked as deleted (and out of every contact). It isn't
+    // listed.
     final other = await seed(
         [(first: 'Olga', last: 'Other', phone: '+15555550105', email: null)],
         account: kOtherAccount);

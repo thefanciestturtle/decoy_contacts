@@ -1,7 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:decoy_contacts/contact_actions.dart' show DeletePreview;
 import 'package:decoy_contacts/contacts_gateway.dart';
+import 'package:decoy_contacts/fake_contacts_core.dart';
 import 'package:decoy_contacts/flutter_contacts_gateway.dart';
+import 'package:decoy_contacts/result_messages.dart' show statusMessage;
 import 'package:flutter/services.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -210,6 +214,24 @@ void main() {
               'thefanciestturtle/decoy_contacts/MainActivity.kt')
           .readAsStringSync();
       expect(main, contains('RawContactsReader('));
+    });
+
+    test('the release smoke test stores a record of a fake that the app '
+        'reads, and waits for the status line that a read of it gives', () {
+      // So it can't pass without the app reading the contacts: had the
+      // record not been read, nothing would be read; had the read failed,
+      // the status line would stay empty.
+      final script = File('tool/release_smoke_test.sh').readAsStringSync();
+      final json = jsonEncode({'0': const LedgerEntry('Zoe Zen', '', '').toJson()});
+      expect(Ledger.decode(json).length, 1);
+      // In the settings file the quotes are &quot;, written as \&quot; in
+      // sed's replacement.
+      expect(script, contains('<string name="flutter.$kLedgerPrefsKey">'
+          '${json.replaceAll('"', r'\&quot;')}</string>'));
+      const none =
+          DeletePreview(toDelete: 0, skippedMerged: 0, skippedChanged: 0);
+      expect(script, contains("readonly NO_FAKES='${statusMessage(none)}'"));
+      expect(script, contains('wait_for_text "\$NO_FAKES"'));
     });
   });
 }

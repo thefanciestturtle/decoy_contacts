@@ -270,14 +270,12 @@ List<FakeName> namesToCreate(
 /// new: Android may have merged a fake into an existing contact.
 ///
 /// A contact the call gave for one fake that holds one new raw contact holds
-/// that fake. If Android merged fakes with each other (or a fake with a raw
-/// contact added meanwhile), a contact holds several new raw contacts: each
-/// is then told apart by its own name, phone and email ([fingerprintsByRaw]
-/// gives each raw contact's fingerprints), by the rule of
-/// [createdBeforeFailure]. A fake not found in its contact (Android may have
-/// moved it into another one the call gave) is looked for the same way
-/// among the other new raw contacts in [after]. Those it can't tell apart
-/// are left out.
+/// that fake. The other fakes are found among the new raw contacts in
+/// [after] by their own name, phone and email ([fingerprintsByRaw] gives each
+/// raw contact's fingerprints), by the rule of [createdBeforeFailure]: when
+/// Android merged fakes with each other, or a fake with a raw contact added
+/// meanwhile, or moved a fake into the contact of another one of the call.
+/// Those it can't tell apart are left out.
 Map<String, LedgerEntry> newlyCreatedRawIds({
   required List<LedgerEntry> created,
   required List<String> createdContactIds,
@@ -292,16 +290,12 @@ Map<String, LedgerEntry> newlyCreatedRawIds({
   }
   final result = <String, LedgerEntry>{};
   createdIn.forEach((contactId, entries) {
-    final raws = after[contactId] ?? const <String>[];
-    final added = [for (final r in raws) if (!oldRawIds.contains(r)) r];
+    final added = [
+      for (final r in after[contactId] ?? const <String>[])
+        if (!oldRawIds.contains(r)) r,
+    ];
     if (entries.length == 1 && added.length == 1) {
       result[added.single] = entries.single;
-    } else {
-      result.addAll(createdBeforeFailure(
-          planned: entries,
-          oldRawIds: oldRawIds,
-          after: {contactId: raws},
-          fingerprintsByRaw: fingerprintsByRaw));
     }
   });
   final recorded = result.values.toSet();
