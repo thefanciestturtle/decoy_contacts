@@ -39,20 +39,21 @@ class InMemoryContactsGateway implements ContactsGateway {
   Object? openSettingsError;
   Object? getAllError;
   Object? createAllError;
-  Object? deleteAllError;
+  Object? deleteRawContactsError;
 
-  /// With [createAllError] or [deleteAllError] set, how many contacts the
-  /// call creates or deletes before it throws, as the plugin does when a
-  /// later batch fails. Null means none; as many as there are or more,
-  /// all, and it still throws.
+  /// With [createAllError] or [deleteRawContactsError] set, how many
+  /// contacts the call creates, or raw contacts it deletes, before it
+  /// throws, as when a later batch fails. Null means none; as many as there
+  /// are or more, all, and it still throws.
   int? createAllStopsAfter;
-  int? deleteAllStopsAfter;
+  int? deleteRawContactsStopsAfter;
 
-  /// Awaited at the start of each [createAll] or [deleteAll] call, with how
-  /// many calls there were before it; e.g. to hold a chunk back while a
-  /// test looks at the progress.
+  /// Awaited at the start of each [createAll] or [deleteRawContacts] call,
+  /// with how many calls there were before it; e.g. to hold a chunk back
+  /// while a test looks at the progress, or to change the address book
+  /// between Delete's check and its delete.
   Future<void> Function(int call)? beforeCreateAll;
-  Future<void> Function(int call)? beforeDeleteAll;
+  Future<void> Function(int call)? beforeDeleteRawContacts;
 
   /// Awaited once [createAll] has created its contacts, before it returns
   /// their IDs. A future that never completes acts like the app being
@@ -69,7 +70,7 @@ class InMemoryContactsGateway implements ContactsGateway {
   int openSettingsCalls = 0;
   int getAllCalls = 0;
   final List<List<NewContact>> createAllCalls = [];
-  final List<List<String>> deleteAllCalls = [];
+  final List<List<String>> deleteRawContactsCalls = [];
 
   /// Adds a contact (e.g. a "real" one) and returns its contact ID.
   String add(String displayName,
@@ -107,6 +108,15 @@ class InMemoryContactsGateway implements ContactsGateway {
   /// links two contacts.
   void merge({required String into, required String from}) {
     _contacts[into]!.addAll(_contacts.remove(from)!);
+  }
+
+  /// Deletes the contact [contactId] with all its raw contacts, as the user
+  /// can in the Contacts app. Not one of this gateway's calls (see
+  /// [deleteRawContacts]).
+  void removeContact(String contactId) {
+    if (_contacts.remove(contactId) == null) {
+      throw StateError('no contact $contactId');
+    }
   }
 
   /// Changes the phone numbers of a contact (its first raw contact).
@@ -196,16 +206,21 @@ class InMemoryContactsGateway implements ContactsGateway {
     return ids;
   }
 
+  /// As on Android: a contact left with no raw contacts goes too, and IDs
+  /// of raw contacts that are gone are passed over.
   @override
-  Future<void> deleteAll(List<String> contactIds) async {
-    final call = deleteAllCalls.length;
-    deleteAllCalls.add(contactIds);
-    await beforeDeleteAll?.call(call);
-    final error = deleteAllError;
-    if (error != null && deleteAllStopsAfter == null) throw error;
-    for (final (i, id) in contactIds.indexed) {
-      if (error != null && i == deleteAllStopsAfter) throw error;
-      _contacts.remove(id);
+  Future<void> deleteRawContacts(List<String> rawContactIds) async {
+    final call = deleteRawContactsCalls.length;
+    deleteRawContactsCalls.add(rawContactIds);
+    await beforeDeleteRawContacts?.call(call);
+    final error = deleteRawContactsError;
+    if (error != null && deleteRawContactsStopsAfter == null) throw error;
+    for (final (i, rawId) in rawContactIds.indexed) {
+      if (error != null && i == deleteRawContactsStopsAfter) throw error;
+      final contactId = contactOfRaw(rawId);
+      if (contactId == null) continue;
+      final raws = _contacts[contactId]!..removeWhere((r) => r.id == rawId);
+      if (raws.isEmpty) _contacts.remove(contactId);
     }
     if (error != null) throw error;
   }

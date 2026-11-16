@@ -261,7 +261,7 @@ class _SlowFirstRead extends InMemoryContactsGateway {
 class _FailsAfterDelete extends InMemoryContactsGateway {
   @override
   Future<List<StoredContact>> getAll({List<String>? ids}) {
-    if (deleteAllCalls.isNotEmpty) throw Exception('busy syncing');
+    if (deleteRawContactsCalls.isNotEmpty) throw Exception('busy syncing');
     return super.getAll(ids: ids);
   }
 }
@@ -274,7 +274,7 @@ class _HoldsReadAfterDelete extends InMemoryContactsGateway {
 
   @override
   Future<List<StoredContact>> getAll({List<String>? ids}) async {
-    if (deleteAllCalls.isEmpty || _holding) return super.getAll(ids: ids);
+    if (deleteRawContactsCalls.isEmpty || _holding) return super.getAll(ids: ids);
     _holding = true;
     final found = await super.getAll(ids: ids);
     await held.future;
@@ -296,9 +296,9 @@ class _ReadsFailAfterError extends InMemoryContactsGateway {
   }
 
   @override
-  Future<void> deleteAll(List<String> contactIds) async {
+  Future<void> deleteRawContacts(List<String> rawContactIds) async {
     try {
-      return await super.deleteAll(contactIds);
+      return await super.deleteRawContacts(rawContactIds);
     } catch (_) {
       getAllError = Exception('provider gone');
       rethrow;
@@ -632,7 +632,7 @@ void main() {
 
       expect(slow.permissionRequests, 1);
       expect(slow.createAllCalls, hasLength(1));
-      expect(slow.deleteAllCalls, isEmpty);
+      expect(slow.deleteRawContactsCalls, isEmpty);
       expect(resultText(tester), 'Created 4 fake contacts.');
     });
   });
@@ -714,7 +714,7 @@ void main() {
         (tester) async {
       await pumpApp(tester, book);
       await tapCreate(tester);
-      await book.deleteAll([book.idOf('Zoe Zen')]);
+      book.removeContact(book.idOf('Zoe Zen'));
 
       await tapDelete(tester);
 
@@ -742,7 +742,7 @@ void main() {
         expect(resultText(tester), 'No fake contacts to delete.${someChanged(3)}');
         expect(book.displayNames,
             unorderedEquals(['Alice Example', 'Bob Example', 'Zoe Zen']));
-        expect(book.deleteAllCalls, isEmpty);
+        expect(book.deleteRawContactsCalls, isEmpty);
         expect((await storedLedger()).length, 3);
       });
 
@@ -768,7 +768,7 @@ void main() {
         expect(statusText(tester), 'No fake contacts on this phone.');
         await tapExpectingNoDialog(tester, kDeleteButton);
         expect(resultText(tester), 'No fake contacts to delete.');
-        expect(book.deleteAllCalls, isEmpty);
+        expect(book.deleteRawContactsCalls, isEmpty);
         // Nothing saved yet.
         expect(await storedLedgerJson(), ledger);
 
@@ -845,7 +845,7 @@ void main() {
 
       expect(resultText(tester), kDenied);
       expect(book.getAllCalls, readsBefore);
-      expect(book.deleteAllCalls, isEmpty);
+      expect(book.deleteRawContactsCalls, isEmpty);
       expect(book.all, hasLength(4));
       expect(await storedLedgerJson(), ledgerBefore);
       expect(buttonsEnabled(tester), isTrue);
@@ -856,7 +856,7 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
       final ledgerBefore = await storedLedgerJson();
-      book.deleteAllError = Exception('provider gone');
+      book.deleteRawContactsError = Exception('provider gone');
 
       await tapDelete(tester);
 
@@ -866,7 +866,7 @@ void main() {
       expect(buttonsEnabled(tester), isTrue);
 
       // Once the error is gone, Delete still works.
-      book.deleteAllError = null;
+      book.deleteRawContactsError = null;
       await tapDelete(tester);
       expect(resultText(tester), 'Deleted 4 fake contacts.');
       expect(book.all, isEmpty);
@@ -978,8 +978,8 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
       final ledgerBefore = await storedLedgerJson();
-      book.deleteAllError = Exception('provider gone');
-      book.deleteAllStopsAfter = 2;
+      book.deleteRawContactsError = Exception('provider gone');
+      book.deleteRawContactsStopsAfter = 2;
 
       await tapDelete(tester);
       expect(resultText(tester), kStoppedDeleting);
@@ -989,7 +989,7 @@ void main() {
       // harm.
       expect(await storedLedgerJson(), ledgerBefore);
 
-      book.deleteAllError = null;
+      book.deleteRawContactsError = null;
       await tapAndOpenDialog(tester, kDeleteButton);
       expect(dialogText(tester).title, 'Delete 2 fake contacts?');
       await tester.tap(dialogButton('Delete'));
@@ -1027,8 +1027,8 @@ void main() {
       await pumpApp(tester, failing);
       await tapCreate(tester);
       final ledgerBefore = await storedLedgerJson();
-      failing.deleteAllError = Exception('provider gone');
-      failing.deleteAllStopsAfter = 2;
+      failing.deleteRawContactsError = Exception('provider gone');
+      failing.deleteRawContactsStopsAfter = 2;
 
       await tapDelete(tester);
       expect(resultText(tester),
@@ -1038,7 +1038,7 @@ void main() {
       expect(buttonsEnabled(tester), isTrue);
 
       // The ledger still lists the deleted ones, which does no harm.
-      failing.deleteAllError = null;
+      failing.deleteRawContactsError = null;
       failing.getAllError = null;
       await tapAndOpenDialog(tester, kDeleteButton);
       expect(dialogText(tester).title, 'Delete 2 fake contacts?');
@@ -1063,7 +1063,7 @@ void main() {
       expect(resultText(tester),
           "Couldn't create fake contacts: your phone's storage is full.");
 
-      book.deleteAllError = kStorageFull;
+      book.deleteRawContactsError = kStorageFull;
       await tapDelete(tester);
       expect(resultText(tester),
           "Couldn't delete fake contacts: your phone's storage is full.");
@@ -1183,7 +1183,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await expectUntouched(tester, contacts: 4, ledgerJson: ledger);
-      expect(book.deleteAllCalls, isEmpty);
+      expect(book.deleteRawContactsCalls, isEmpty);
       // Still works afterwards.
       await tapDelete(tester);
       expect(resultText(tester), 'Deleted 4 fake contacts.');
@@ -1253,7 +1253,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await expectUntouched(tester, contacts: 5, ledgerJson: ledger);
-      expect(book.deleteAllCalls, isEmpty);
+      expect(book.deleteRawContactsCalls, isEmpty);
     });
 
     testWidgets('Delete says which ones it will leave alone', (tester) async {
@@ -1316,7 +1316,7 @@ void main() {
       expect(dialogText(tester).title, 'Create 3 fake contacts?');
 
       // Meanwhile it goes away, so there would now be 4 to create.
-      await book.deleteAll([copy]);
+      book.removeContact(copy);
       await tester.tap(dialogButton('Create'));
       await tester.pumpAndSettle();
 
@@ -1346,7 +1346,7 @@ void main() {
 
       expect(resultText(tester),
           'Your contacts changed meanwhile, so nothing was done. Try again.');
-      expect(book.deleteAllCalls, isEmpty);
+      expect(book.deleteRawContactsCalls, isEmpty);
       expect(book.all, hasLength(4));
       expect((await storedLedger()).length, 4);
     });
@@ -1362,7 +1362,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(resultText(tester), kDeleteFailed);
-      expect(book.deleteAllCalls, isEmpty);
+      expect(book.deleteRawContactsCalls, isEmpty);
       expect(buttonsEnabled(tester), isTrue);
     });
 
@@ -1372,14 +1372,14 @@ void main() {
       await pumpApp(tester, book);
       await tapCreate(tester);
       for (final name in ['Zach Zen', 'Zoe Zima', 'Zach Zima']) {
-        await book.deleteAll([book.idOf(name)]);
+        book.removeContact(book.idOf(name));
       }
       book.merge(into: alice, from: book.idOf('Zoe Zen'));
 
       await tapExpectingNoDialog(tester, kDeleteButton);
 
       expect(resultText(tester), 'No fake contacts to delete.$kOneMerged');
-      expect(book.deleteAllCalls, hasLength(3)); // only the ones above
+      expect(book.deleteRawContactsCalls, isEmpty);
     });
   });
 
@@ -1441,7 +1441,7 @@ void main() {
       // One is deleted by hand while the dialog is open; Cancel still
       // updates the count.
       await tapAndOpenDialog(tester, kDeleteButton);
-      await book.deleteAll([book.idOf('Zoe Zen')]);
+      book.removeContact(book.idOf('Zoe Zen'));
       await tester.tap(dialogButton('Cancel'));
       await tester.pumpAndSettle();
       expect(statusText(tester), '3 fake contacts on this phone.');
@@ -1530,7 +1530,7 @@ void main() {
         (tester) async {
       await pumpApp(tester, book);
       await tapCreate(tester);
-      await book.deleteAll([book.idOf('Zoe Zen')]); // by hand, in another app
+      book.removeContact(book.idOf('Zoe Zen')); // by hand, in another app
 
       await leaveAndReturn(tester);
 
@@ -1541,7 +1541,7 @@ void main() {
         'notification shade', (tester) async {
       await pumpApp(tester, book);
       await tapCreate(tester);
-      await book.deleteAll([book.idOf('Zoe Zen')]);
+      book.removeContact(book.idOf('Zoe Zen'));
 
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
@@ -1871,7 +1871,7 @@ void main() {
       expectDone(tester);
       expect(book.openSettingsCalls, 0);
       expect(book.getAllCalls, reads);
-      expect(book.deleteAllCalls, isEmpty);
+      expect(book.deleteRawContactsCalls, isEmpty);
       expect(book.all, hasLength(4));
       expect(await storedLedgerJson(), ledger);
     });
@@ -2182,7 +2182,7 @@ void main() {
         (tester) async {
       await pumpApp(tester, book, deleteChunkSize: 1);
       await tapCreate(tester);
-      book.beforeDeleteAll = hold;
+      book.beforeDeleteRawContacts = hold;
       await tapDelete(tester);
 
       expect(progressText(tester), 'Deleted 0 of 4');
@@ -2202,7 +2202,7 @@ void main() {
       expect((await storedLedger()).entries.keys,
           unorderedEquals([for (final c in book.all) ...c.rawContactIds]));
 
-      book.beforeDeleteAll = null;
+      book.beforeDeleteRawContacts = null;
       await tapDelete(tester);
       expect(resultText(tester), 'Deleted 2 fake contacts.');
       expect(resultIsError(tester), isFalse);
@@ -2542,10 +2542,10 @@ void main() {
         ('Create', 'Create', () {}, 'Created 4 fake contacts.'),
         ('Delete', 'Cancel', () {}, null),
         ('Create', null, () {}, 'Nothing to create. 4 fake contacts already exist.'),
-        ('Delete', 'Delete', () => book.deleteAllError = Exception('busy'),
+        ('Delete', 'Delete', () => book.deleteRawContactsError = Exception('busy'),
             kDeleteFailed),
         ('Create', null, () {
-          book.deleteAllError = null;
+          book.deleteRawContactsError = null;
           book.permission = PermissionAnswer.denied;
         }, kDenied),
       ]) {
@@ -2683,7 +2683,7 @@ void main() {
 
       testWidgets('Stop focused when it ends (and goes away): the focus goes '
           'to the button that ran', (tester) async {
-        book.beforeDeleteAll = hold;
+        book.beforeDeleteRawContacts = hold;
         await pumpApp(tester, book, deleteChunkSize: 1);
         await tapCreate(tester);
         // Started by a tap, then the keyboard is used.

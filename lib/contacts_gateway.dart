@@ -91,6 +91,8 @@ abstract interface class ContactsGateway {
   /// Creates [contacts] and returns their contact IDs, in the same order.
   Future<List<String>> createAll(List<NewContact> contacts);
 
-  /// Deletes the contacts with these contact IDs.
-  Future<void> deleteAll(List<String> contactIds);
+  /// Deletes the raw contacts with these raw contact IDs, and no others: not
+  /// the other raw contacts of their contacts. (Those that are gone already
+  /// are passed over.)
+  Future<void> deleteRawContacts(List<String> rawContactIds);
 }

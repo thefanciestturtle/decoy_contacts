@@ -26,7 +26,7 @@
 # 3. A contact stored on the phone is added to the address book, and the
 #    app is given access to the contacts and a record of that contact as a
 #    fake it created. Third start: the app reads the address book to count
-#    its fakes (with its own Android code, RawContactsReader.kt, which R8
+#    its fakes (with its own Android code, RawContactsChannel.kt, which R8
 #    shrinks too: each raw contact's name, phone numbers and email
 #    addresses), and its status line must say there is one. Had the read
 #    failed, the line would stay empty. The contact is removed again at the

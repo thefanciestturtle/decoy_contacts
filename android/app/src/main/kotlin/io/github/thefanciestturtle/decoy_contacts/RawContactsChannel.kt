@@ -13,15 +13,17 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.StandardMethodCodec
 
 /**
- * Reads the address book one raw contact at a time, for the app's Dart code
- * (lib/flutter_contacts_gateway.dart): each raw contact with the contact it
- * is part of, and its own display name, phone numbers and email addresses.
+ * Reads and deletes the address book's raw contacts one at a time, for the
+ * app's Dart code (lib/flutter_contacts_gateway.dart).
  *
- * The flutter_contacts plugin reads whole contacts, with one name each. When
- * Android merges two of the app's fakes into one contact, the app has to
- * check each fake on its own, so it needs each raw contact's own name.
+ * The flutter_contacts plugin reads and deletes whole contacts. When Android
+ * merges two of the app's fakes into one contact, the app has to check each
+ * fake on its own, so it reads each raw contact with its own name, phone
+ * numbers and email addresses. And it deletes exactly the raw contacts it
+ * checked: by the time it deletes them, Android may have merged someone
+ * else's into the same contact.
  */
-class RawContactsReader(private val resolver: ContentResolver) :
+class RawContactsChannel(private val resolver: ContentResolver) :
     MethodChannel.MethodCallHandler {
 
     /**
@@ -43,18 +45,37 @@ class RawContactsReader(private val resolver: ContentResolver) :
      * contacts of those contacts, or of every contact. Answers a list of maps
      * with "id", "contactId", "displayName", "phones" and "emails", in the
      * order of the raw contact IDs.
+     *
+     * `delete`, with a list of raw contact IDs ("ids"): deletes those raw
+     * contacts and nothing else (see [delete]). Answers nothing. Without the
+     * list it fails, and deletes nothing.
      */
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
-        if (call.method != METHOD_READ) {
-            result.notImplemented()
-            return
+        when (call.method) {
+            METHOD_READ -> answer(result, "read_failed") {
+                read(call.argument<List<String>>("contactIds"))
+            }
+            METHOD_DELETE -> answer(result, "delete_failed") {
+                delete(
+                    call.argument<List<String>>("ids")
+                        ?: throw IllegalArgumentException("no raw contact IDs to delete"),
+                )
+                null
+            }
+            else -> result.notImplemented()
         }
-        // Answered even after an Error (say, out of memory), so the Dart side
-        // never waits for nothing.
+    }
+
+    /**
+     * Answers [result] with what [work] returns, or with an error coded
+     * [errorCode] if it (or encoding the answer) throws. Even after an Error
+     * (say, out of memory), so the Dart side never waits for nothing.
+     */
+    private inline fun answer(result: MethodChannel.Result, errorCode: String, work: () -> Any?) {
         try {
-            result.success(read(call.argument<List<String>>("contactIds")))
+            result.success(work())
         } catch (e: Throwable) {
-            result.error("read_failed", e.toString(), null)
+            result.error(errorCode, e.toString(), null)
         }
     }
 
@@ -159,6 +180,26 @@ class RawContactsReader(private val resolver: ContentResolver) :
         return raws.values.sortedBy { it.id }.map { it.toMap() }
     }
 
+    /**
+     * Deletes the raw contacts with the IDs [ids], and no others: not the
+     * other raw contacts of their contacts. As the Contacts app does (no sync
+     * adapter flag): one stored on the phone goes at once, with its details,
+     * and so does its contact if it has no other raw contact; one in an
+     * online account is marked as deleted, and its account's sync removes it
+     * there too. IDs of raw contacts that are gone are passed over.
+     */
+    private fun delete(ids: List<String>) {
+        // Always with the IDs as the selection: a delete without one would
+        // delete every raw contact.
+        for (batch in ids.chunked(MAX_IDS_PER_QUERY)) {
+            resolver.delete(
+                RawContacts.CONTENT_URI,
+                inList(RawContacts._ID, batch),
+                batch.toTypedArray(),
+            )
+        }
+    }
+
     /** "column IN (?, ...)", with a placeholder for each of [ids]. */
     private fun inList(column: String, ids: List<String>) =
         "$column IN (${ids.joinToString(",") { "?" }})"
@@ -178,6 +219,7 @@ class RawContactsReader(private val resolver: ContentResolver) :
     companion object {
         const val CHANNEL = "io.github.thefanciestturtle.decoy_contacts/raw_contacts"
         const val METHOD_READ = "read"
+        const val METHOD_DELETE = "delete"
 
         // SQLite allows 999 arguments per query; the Data query adds two.
         private const val MAX_IDS_PER_QUERY = 900

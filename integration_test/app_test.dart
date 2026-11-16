@@ -71,8 +71,8 @@ const String kDelete = 'Delete Fake Contacts';
 const Duration kActionTimeout = Duration(seconds: 60);
 
 /// The device's address book, but while [stop] is set, Create and Delete
-/// do the first [after] contacts and then fail, as the plugin does when a
-/// later batch fails (it then doesn't say what it did).
+/// do the first [after] fakes and then fail, as when a later batch fails
+/// (the call then doesn't say what it did).
 class StopsPartway extends FlutterContactsGateway {
   StopsPartway(this.after);
 
@@ -87,9 +87,9 @@ class StopsPartway extends FlutterContactsGateway {
   }
 
   @override
-  Future<void> deleteAll(List<String> contactIds) async {
-    if (!stop) return super.deleteAll(contactIds);
-    await super.deleteAll(contactIds.take(after).toList());
+  Future<void> deleteRawContacts(List<String> rawContactIds) async {
+    if (!stop) return super.deleteRawContacts(rawContactIds);
+    await super.deleteRawContacts(rawContactIds.take(after).toList());
     throw Exception('stopped on purpose');
   }
 }
@@ -128,9 +128,9 @@ class RealContactArrivesBeforeDelete extends FlutterContactsGateway {
   String? rawId;
 
   @override
-  Future<void> deleteAll(List<String> contactIds) async {
+  Future<void> deleteRawContacts(List<String> rawContactIds) async {
     if (rawId == null) await _arrive();
-    return super.deleteAll(contactIds);
+    return super.deleteRawContacts(rawContactIds);
   }
 
   Future<void> _arrive() async {
@@ -360,6 +360,57 @@ void main() {
     await expectStatus(tester, 'No fake contacts on this phone.');
   });
 
+  testWidgets("C17: the app's delete deletes exactly the raw contacts it is "
+      'given, not the others of their contacts; without them, nothing',
+      (tester) async {
+    await startWithEmptyAddressBook(tester);
+    final real = await seed(kRealContacts);
+    // One stored on the phone, as a fake is, and one in another account
+    // with the same name, which Android merges into its contact. Returns
+    // the contact it is part of.
+    Future<Contact> add(String phone, {Account? account}) async {
+      final [id] = await FlutterContacts.createAll([
+        Contact(
+          name: const Name(first: 'Zoe', last: 'Zen'),
+          phones: [Phone(number: phone)],
+        ),
+      ], account: account);
+      return (await readAddressBook())[id]!;
+    }
+
+    final fakeRaw = rawIdsOf(await add('+447700900010')).single;
+    final merged = await add('+15555550101', account: kOtherAccount);
+    expect(rawIdsOf(merged), hasLength(2),
+        reason: 'Android should have merged them: $merged');
+    final otherRaw = rawIdsOf(merged).singleWhere((r) => r != fakeRaw);
+
+    // Without the IDs it fails; with none, or one that isn't there, it does
+    // nothing.
+    const gateway = FlutterContactsGateway();
+    final before = describeAll(await readAddressBook());
+    for (final arguments in [null, <String, Object?>{}, {'ids': null}]) {
+      await expectLater(
+          kRawContactsChannel.invokeMethod<void>(kDeleteRawContacts, arguments),
+          throwsA(isA<PlatformException>()
+              .having((e) => e.code, 'code', 'delete_failed')),
+          reason: '$arguments');
+    }
+    await gateway.deleteRawContacts([]);
+    await gateway.deleteRawContacts(['999999']);
+    expect(describeAll(await readAddressBook()), before);
+
+    await gateway.deleteRawContacts([fakeRaw]);
+    final book = await readAddressBook();
+    final zoe = contactWithRawId(book, otherRaw);
+    expect(rawIdsOf(zoe), [otherRaw]);
+    expect(phonesOf(zoe), ['+15555550101']);
+    expectUnchanged(book, real);
+    expect(book, hasLength(real.length + 1));
+    // Once it is gone, its ID is passed over.
+    await gateway.deleteRawContacts([fakeRaw]);
+    expect(describeAll(await readAddressBook()), describeAll(book));
+  });
+
   testWidgets('C15: Android merges two contacts stored on the phone whose '
       'names are the same words in another order, or the same letters run '
       'together, if they share a phone number or email address',
@@ -477,8 +528,8 @@ void main() {
     expect(await gateway.getAll(ids: ['999999']), isEmpty);
   });
 
-  testWidgets("C15: the app's reader reads over 900 contacts at once, in "
-      'batches', (tester) async {
+  testWidgets("C15, C17: the app's reader reads, and its delete deletes, "
+      'over 900 contacts at once, in batches', (tester) async {
     await startWithEmptyAddressBook(tester);
     const n = 950;
     final ids = await FlutterContacts.createAll([
@@ -501,6 +552,9 @@ void main() {
     expect(all, hasLength(n));
     expect(describeRead(asked), describeRead(all));
     expect(all.every((c) => c.rawContacts.single.phones.length == 1), isTrue);
+
+    await gateway.deleteRawContacts([for (final c in all) ...c.rawContactIds]);
+    expect(await gateway.getAll(), isEmpty);
   }, timeout: const Timeout(Duration(minutes: 3)));
 
   testWidgets('C15: Create records, and Delete removes, fakes that Android '
