@@ -113,13 +113,17 @@ AddressBook addressBookOf(List<StoredContact> contacts) => {
       for (final c in contacts) c.id: c.rawContactIds,
     };
 
-/// Every name/phone/email fingerprint of [c] (see [fingerprintsOf]).
-Set<String> fingerprintsOfContact(StoredContact c) =>
-    fingerprintsOf(c.displayName, c.phones, c.emails).toSet();
+/// Every name/phone/email fingerprint of the raw contact [r], from its own
+/// details (see [fingerprintsOf]).
+Set<String> fingerprintsOfRawContact(StoredRawContact r) =>
+    fingerprintsOf(r.displayName, r.phones, r.emails).toSet();
 
-/// Contact ID -> its fingerprints (see [fingerprintsOfContact]).
-Map<String, Set<String>> fingerprintsByContactOf(List<StoredContact> contacts) =>
-    {for (final c in contacts) c.id: fingerprintsOfContact(c)};
+/// Raw contact ID -> its fingerprints (see [fingerprintsOfRawContact]), for
+/// every raw contact of [contacts].
+Map<String, Set<String>> fingerprintsByRawOf(List<StoredContact> contacts) => {
+      for (final c in contacts)
+        for (final r in c.rawContacts) r.id: fingerprintsOfRawContact(r),
+    };
 
 /// One fake contact as Create would make it: its name, phone number and
 /// email address ('' if it gets none).
@@ -201,7 +205,7 @@ class DeletePreview {
 ({Ledger ledger, bool resolved, PendingCreate? left}) _withPendingResolved(
     ({Ledger ledger, PendingCreate? pending}) stored,
     List<StoredContact> everyone,
-    Map<String, Set<String>> fingerprintsByContact) {
+    Map<String, Set<String>> fingerprintsByRaw) {
   final pending = stored.pending;
   if (pending == null || everyone.isEmpty) {
     return (ledger: stored.ledger, resolved: false, left: pending);
@@ -209,7 +213,7 @@ class DeletePreview {
   final found = createdByPending(pending,
       recorded: stored.ledger.entries.keys.toSet(),
       after: addressBookOf(everyone),
-      fingerprintsByContact: fingerprintsByContact);
+      fingerprintsByRaw: fingerprintsByRaw);
   log("found ${found.length} of ${pending.entries.length} fake(s) from an"
       " unfinished Create");
   return (
@@ -247,12 +251,12 @@ Future<_CreatePlan> _planCreate(
     ContactsGateway contacts, LedgerStore ledgerStore, Settings settings) async {
   final everyone = await contacts.getAll();
   final before = addressBookOf(everyone);
-  final fingerprintsByContact = fingerprintsByContactOf(everyone);
+  final fingerprintsByRaw = fingerprintsByRawOf(everyone);
   final existingFingerprints = {
-    for (final fingerprints in fingerprintsByContact.values) ...fingerprints,
+    for (final fingerprints in fingerprintsByRaw.values) ...fingerprints,
   };
   final (ledger: stored, resolved: _, :left) = _withPendingResolved(
-      await ledgerStore.loadWithPending(), everyone, fingerprintsByContact);
+      await ledgerStore.loadWithPending(), everyone, fingerprintsByRaw);
   final ledger = stored.prunedTo(allRawIds(before));
   final wanted = allCombinations(settings.firstNames, settings.lastNames);
   LedgerEntry entryOf(FakeName n) =>
@@ -372,20 +376,23 @@ Future<CreateResult?> createFakeContacts(
     try {
       log("createFakeContacts: about to call createAll for ${newContacts.length} contact(s)");
       final ids = await contacts.createAll(newContacts);
-      final after = addressBookOf(await contacts.getAll(ids: ids));
+      // (Android may have merged two of them: then their contact ID is the
+      // same.)
+      final createdContacts = await contacts.getAll(ids: ids.toSet().toList());
+      final after = addressBookOf(createdContacts);
       found = newlyCreatedRawIds(
           created: entries,
           createdContactIds: ids,
           oldRawIds: known,
-          after: after);
+          after: after,
+          fingerprintsByRaw: fingerprintsByRawOf(createdContacts));
       done += ids.length;
-      final missing = _notFound(entries, found);
+      final missing = entriesNotFound(entries, found.values);
       if (missing.isNotEmpty) {
         // Not under the contact IDs the call gave (say, Android linked one
         // with another contact meanwhile, which changes its ID): look for
         // them by their details, as after a failure. Raw contacts already
-        // recorded with another entry aren't taken (in case Android linked
-        // two new fakes and shows the second one's name).
+        // recorded with another entry aren't taken.
         final more = await _findByDetails(contacts, {...known, ...found.keys},
             PendingCreate(maxRawId: pending.maxRawId, entries: missing));
         found = {...found, ...?more?.created};
@@ -393,7 +400,7 @@ Future<CreateResult?> createFakeContacts(
       final seen = {...allRawIds(after), ...found.keys};
       known.addAll(seen);
       maxRawId = _higher(maxRawId, maxRawIdOf(seen));
-      untracked += _notFound(entries, found).length;
+      untracked += entriesNotFound(entries, found.values).length;
     } catch (e, st) {
       // What this chunk created isn't known: work it out from the address
       // book.
@@ -410,11 +417,11 @@ Future<CreateResult?> createFakeContacts(
             stackTrace: st);
       }
       found = recovered.created;
-      final count = found.values.toSet().length;
+      final count = found.length; // a raw contact per fake
       if (count != entries.length) {
         // Those not found stay pending, in case this read was wrong: the
         // next Create or Delete looks again.
-        final unfound = _notFound(entries, found);
+        final unfound = entriesNotFound(entries, found.values);
         try {
           await ledgerStore.save(
               Ledger({...plan.stored.entries, ...created, ...found}),
@@ -457,17 +464,6 @@ Future<CreateResult?> createFakeContacts(
   );
 }
 
-/// The entries of [entries] that no raw contact in [found] was recorded
-/// with.
-List<LedgerEntry> _notFound(
-    List<LedgerEntry> entries, Map<String, LedgerEntry> found) {
-  final foundEntries = found.values.toSet();
-  return [
-    for (final entry in entries)
-      if (!foundEntries.contains(entry)) entry,
-  ];
-}
-
 /// The higher of two raw contact IDs, either of which may be missing.
 int? _higher(int? a, int? b) =>
     a == null ? b : (b == null ? a : (a > b ? a : b));
@@ -505,7 +501,7 @@ Future<({Map<String, LedgerEntry> created, Set<String> present})?>
       created: createdByPending(pending,
           recorded: recorded,
           after: after,
-          fingerprintsByContact: fingerprintsByContactOf(everyone)),
+          fingerprintsByRaw: fingerprintsByRawOf(everyone)),
       present: allRawIds(after),
     );
   } catch (e, st) {
@@ -541,11 +537,11 @@ Future<_DeleteCheck> _planDelete(ContactsGateway contacts,
     ({Ledger ledger, PendingCreate? pending}) loaded) async {
   final everyone = await contacts.getAll();
   final book = addressBookOf(everyone);
-  final fingerprintsByContact = fingerprintsByContactOf(everyone);
+  final fingerprintsByRaw = fingerprintsByRawOf(everyone);
   final (ledger: stored, :resolved, :left) =
-      _withPendingResolved(loaded, everyone, fingerprintsByContact);
+      _withPendingResolved(loaded, everyone, fingerprintsByRaw);
   final plan =
-      planDelete(stored.prunedTo(allRawIds(book)), book, fingerprintsByContact);
+      planDelete(stored.prunedTo(allRawIds(book)), book, fingerprintsByRaw);
   return _DeleteCheck(plan, stored, resolved, left, book);
 }
 
@@ -582,9 +578,10 @@ Future<DeletePreview> previewDelete(
 /// What Delete would find, for the status line: [DeletePreview.toDelete] is
 /// how many fakes are still in the address book, counting only those this
 /// app can confirm. Not counted, but in the skipped counts: entries that no
-/// longer match what was created, and fakes merged into another contact
-/// (their details can't be checked, and the raw contact may not be a fake
-/// at all; see [planDelete]).
+/// longer match what was created, and fakes in a contact that also holds a
+/// raw contact that isn't the app's, or a fake that changed (see
+/// [planDelete]). Fakes merged only with each other, unchanged, are
+/// counted.
 ///
 /// The fakes of a Create that was cut short are counted too (see
 /// [createdByPending]), but only recorded by the next Create or Delete.

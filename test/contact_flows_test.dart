@@ -494,6 +494,63 @@ void main() {
       expect(ledger.entries[raws[1]], fakeEntry('Zoe', 'Zen'));
     });
 
+    testWidgets('fakes that Android merged with each other are each '
+        'recorded, counted and deleted (C15)', (tester) async {
+      // "Zena Zen" and "Zen Zena" get the same number (Zen and Zena give
+      // the same digits), so Android merges them into one contact.
+      SharedPreferences.setMockInitialValues({
+        ...kSettings,
+        'sListOfLastNames': 'Zen, Zena',
+        'sListOfFirstNames': 'Zen, Zena',
+      });
+      book.mergeInto = (c) =>
+          c.first == 'Zen' && c.last == 'Zena' ? book.idOf('Zena Zen') : null;
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+
+      expect(resultText(tester), 'Created 4 fake contacts.');
+      expect(statusText(tester), '4 fake contacts on this phone.');
+      final raws = book.rawIdsOf(book.idOf('Zena Zen'));
+      expect(raws, hasLength(2));
+      final ledger = await storedLedger();
+      expect(ledger.length, 4);
+      expect([ledger.entries[raws[0]], ledger.entries[raws[1]]],
+          [fakeEntry('Zena', 'Zen'), fakeEntry('Zen', 'Zena')]);
+
+      await tapAndOpenDialog(tester, kDeleteButton);
+      expect(dialogText(tester),
+          (title: 'Delete 4 fake contacts?', body: kDeleteBody));
+      await tester.tap(dialogButton('Delete'));
+      await tester.pumpAndSettle();
+      expect(resultText(tester), 'Deleted 4 fake contacts.');
+      expect(statusText(tester), 'No fake contacts on this phone.');
+      expect(book.all, isEmpty);
+      expect((await storedLedger()).isEmpty, isTrue);
+    });
+
+    testWidgets('one of two merged fakes edited: Delete says one no longer '
+        'matches and the other was merged (C15)', (tester) async {
+      SharedPreferences.setMockInitialValues({
+        ...kSettings,
+        'sListOfLastNames': 'Zen, Zena',
+        'sListOfFirstNames': 'Zen, Zena',
+      });
+      book.mergeInto = (c) =>
+          c.first == 'Zen' && c.last == 'Zena' ? book.idOf('Zena Zen') : null;
+      await pumpApp(tester, book);
+      await tapCreate(tester);
+      book.rename(book.rawIdsOf(book.idOf('Zena Zen')).last, 'Zen Zena Jr');
+
+      await tapAndOpenDialog(tester, kDeleteButton);
+      expect(dialogText(tester), (
+        title: 'Delete 2 fake contacts?',
+        body: '$kDeleteBody 1 was merged with another contact and will be '
+            "left alone. 1 no longer matches what this app created (edited, "
+            "or the app's records came from another phone) and will be left "
+            'alone.',
+      ));
+    });
+
     testWidgets('a new contact not found under its contact ID is found by '
         'its details (U8)', (tester) async {
       final lossy = _LosesFirstNewContact();

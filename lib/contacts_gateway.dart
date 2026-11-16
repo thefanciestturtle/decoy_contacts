@@ -1,18 +1,18 @@
-/// A contact (Android aggregate contact) as read from the address book.
-class StoredContact {
+/// One raw contact (Android): what one source, such as an online account or
+/// the phone itself, holds about a contact. Each fake is one.
+class StoredRawContact {
   final String id;
 
-  /// Android raw contact IDs that make up this contact. Android may merge
-  /// several raw contacts, from different sources, into one contact.
-  final List<String> rawContactIds;
-
+  /// Its own display name, which Android works out from its name (or, if it
+  /// has none, from its other details). A contact shows one of its raw
+  /// contacts' names.
   final String displayName;
+
   final List<String> phones;
   final List<String> emails;
 
-  const StoredContact({
+  const StoredRawContact({
     required this.id,
-    required this.rawContactIds,
     required this.displayName,
     this.phones = const [],
     this.emails = const [],
@@ -20,7 +20,25 @@ class StoredContact {
 
   @override
   String toString() =>
-      'StoredContact($id, $rawContactIds, $displayName, $phones, $emails)';
+      'StoredRawContact($id, $displayName, $phones, $emails)';
+}
+
+/// A contact (Android aggregate contact) as read from the address book.
+class StoredContact {
+  final String id;
+
+  /// The raw contacts that make up this contact. Android may merge several
+  /// raw contacts into one contact: from different sources if their names
+  /// match, and from the same source if they also share a phone number or
+  /// email address.
+  final List<StoredRawContact> rawContacts;
+
+  const StoredContact({required this.id, required this.rawContacts});
+
+  List<String> get rawContactIds => [for (final r in rawContacts) r.id];
+
+  @override
+  String toString() => 'StoredContact($id, $rawContacts)';
 }
 
 /// A contact to create. An empty [phone] or [email] means none.
@@ -66,7 +84,8 @@ abstract interface class ContactsGateway {
   /// asks the user.
   Future<bool> hasPermission();
 
-  /// Every contact, or only those with the given contact IDs.
+  /// Every contact, or only those with the given contact IDs, each with its
+  /// raw contacts.
   Future<List<StoredContact>> getAll({List<String>? ids});
 
   /// Creates [contacts] and returns their contact IDs, in the same order.

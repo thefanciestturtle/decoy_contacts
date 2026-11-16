@@ -226,18 +226,107 @@ void main() {
   });
 
   group('newlyCreatedRawIds', () {
+    final zoe = fake('Zoe', 'Zen');
+    final zach = fake('Zach', 'Zen');
+    // Each other's names in another order: Android merges them, as they
+    // share a phone number.
+    final zenaZen = fake('Zena', 'Zen');
+    final zenZena = fake('Zen', 'Zena');
+
     test('records only raw contacts that did not exist before', () {
-      final created = [fake('Zoe', 'Zen'), fake('Zach', 'Zen')];
       final before = {'c1': ['1']}; // real Zoe Zen
-      // Android merged the new fake Zoe Zen (raw 20) into the real contact c1.
+      // Android merged the new fake Zoe Zen (raw 20) into the real contact
+      // c1. One new raw contact in the contact the call gave for a fake is
+      // that fake, whatever its details.
       final after = {'c1': ['1', '20'], 'c21': ['21']};
       expect(
         newlyCreatedRawIds(
-            created: created,
+            created: [zoe, zach],
             createdContactIds: ['c1', 'c21'],
             oldRawIds: allRawIds(before),
-            after: after),
-        {'20': fake('Zoe', 'Zen'), '21': fake('Zach', 'Zen')},
+            after: after,
+            fingerprintsByRaw: const {}),
+        {'20': zoe, '21': zach},
+      );
+    });
+
+    test('tells apart fakes that Android merged with each other by their '
+        'own details', () {
+      // The call gives the merged contact's ID for both. Raw 22 is the
+      // second fake, raw 23 the first.
+      expect(
+        newlyCreatedRawIds(
+            created: [zenaZen, zenZena, zoe],
+            createdContactIds: ['c22', 'c22', 'c24'],
+            oldRawIds: const {},
+            after: {'c22': ['22', '23'], 'c24': ['24']},
+            fingerprintsByRaw: {
+              '22': fingerprintsMatching(zenZena),
+              '23': fingerprintsMatching(zenaZen),
+              '24': fingerprintsMatching(zoe),
+            }),
+        {'22': zenZena, '23': zenaZen, '24': zoe},
+      );
+    });
+
+    test('finds a fake that Android moved into the contact the call gave for '
+        'another', () {
+      // The contact ID given for "Zena Zen" is gone: Android moved its raw
+      // contact, 22, into the contact of "Zen Zena".
+      expect(
+        newlyCreatedRawIds(
+            created: [zenaZen, zenZena],
+            createdContactIds: ['c22', 'c23'],
+            oldRawIds: const {},
+            after: {'c23': ['22', '23']},
+            fingerprintsByRaw: {
+              '22': fingerprintsMatching(zenaZen),
+              '23': fingerprintsMatching(zenZena),
+            }),
+        {'22': zenaZen, '23': zenZena},
+      );
+    });
+
+    test('leaves out a merged fake whose details it can\'t find', () {
+      // Raw 23 was changed meanwhile (or its details couldn't be read).
+      expect(
+        newlyCreatedRawIds(
+            created: [zenaZen, zenZena],
+            createdContactIds: ['c22', 'c22'],
+            oldRawIds: const {},
+            after: {'c22': ['22', '23']},
+            fingerprintsByRaw: {'22': fingerprintsMatching(zenaZen)}),
+        {'22': zenaZen},
+      );
+    });
+
+    test('a raw contact added meanwhile in the same contact is not taken '
+        'for the fake', () {
+      // Raw 30, a Zoe Zen with another number, came in (say, synced) while
+      // the fake was created, and Android merged them.
+      final other = fingerprintsOf('Zoe Zen', ['+15555550101'], []).toSet();
+      expect(
+        newlyCreatedRawIds(
+            created: [zoe],
+            createdContactIds: ['c20'],
+            oldRawIds: const {},
+            after: {'c20': ['20', '30']},
+            fingerprintsByRaw: {'20': fingerprintsMatching(zoe), '30': other}),
+        {'20': zoe},
+      );
+      // A copy with the fake's very details: which one is the fake can't be
+      // told.
+      expect(
+        newlyCreatedRawIds(
+            created: [zoe],
+            createdContactIds: ['c20'],
+            oldRawIds: const {},
+            after: {'c20': ['20', '30']},
+            fingerprintsByRaw: {
+              '20': fingerprintsMatching(zoe),
+              '30': fingerprintsMatching(zoe),
+            }),
+        isEmpty,
       );
     });
   });
@@ -258,10 +347,10 @@ void main() {
           planned: [zoe, zach, zima],
           oldRawIds: allRawIds(before),
           after: after,
-          fingerprintsByContact: {
-            'c1': aliceFps,
-            'c20': fingerprintsMatching(zoe),
-            'c21': fingerprintsMatching(zach),
+          fingerprintsByRaw: {
+            '1': aliceFps,
+            '20': fingerprintsMatching(zoe),
+            '21': fingerprintsMatching(zach),
           },
         ),
         {'20': zoe, '21': zach},
@@ -276,11 +365,24 @@ void main() {
           planned: [zoe],
           oldRawIds: {'1'},
           after: {'c1': ['1', '20']},
-          fingerprintsByContact: {
-            'c1': {...realZoe, ...fingerprintsMatching(zoe)},
-          },
+          fingerprintsByRaw: {'1': realZoe, '20': fingerprintsMatching(zoe)},
         ),
         {'20': zoe},
+      );
+    });
+
+    test('records each of two fakes merged into one contact', () {
+      expect(
+        createdBeforeFailure(
+          planned: [zoe, zach],
+          oldRawIds: const {},
+          after: {'c20': ['20', '21']},
+          fingerprintsByRaw: {
+            '20': fingerprintsMatching(zach),
+            '21': fingerprintsMatching(zoe),
+          },
+        ),
+        {'20': zach, '21': zoe},
       );
     });
 
@@ -292,7 +394,7 @@ void main() {
           planned: [zoe],
           oldRawIds: {'1'},
           after: {'c1': ['1']},
-          fingerprintsByContact: {'c1': fingerprintsMatching(zoe)},
+          fingerprintsByRaw: {'1': fingerprintsMatching(zoe)},
         ),
         isEmpty,
       );
@@ -306,9 +408,9 @@ void main() {
           planned: [zoe],
           oldRawIds: const {},
           after: {'c30': ['30'], 'c31': ['31']},
-          fingerprintsByContact: {
-            'c30': fingerprintsOf('Zoe Zen', ['+15555550101'], []).toSet(),
-            'c31': aliceFps,
+          fingerprintsByRaw: {
+            '30': fingerprintsOf('Zoe Zen', ['+15555550101'], []).toSet(),
+            '31': aliceFps,
           },
         ),
         isEmpty,
@@ -323,46 +425,87 @@ void main() {
           planned: [zoe, zach],
           oldRawIds: const {},
           after: {'c20': ['20'], 'c30': ['30'], 'c21': ['21']},
-          fingerprintsByContact: {
-            'c20': fingerprintsMatching(zoe),
-            'c30': fingerprintsMatching(zoe),
-            'c21': fingerprintsMatching(zach),
+          fingerprintsByRaw: {
+            '20': fingerprintsMatching(zoe),
+            '30': fingerprintsMatching(zoe),
+            '21': fingerprintsMatching(zach),
           },
         ),
         {'21': zach},
       );
     });
 
-    test('a contact that matches two fakes makes both ambiguous', () {
-      // c20 has the details of both; c21 only Zoe's. Either could be the
-      // Zoe Zen this app created.
+    test('records nothing for a fake whose copy Android merged into its '
+        'contact', () {
       expect(
         createdBeforeFailure(
-          planned: [zoe, zach],
+          planned: [zoe],
           oldRawIds: const {},
-          after: {'c20': ['20'], 'c21': ['21']},
-          fingerprintsByContact: {
-            'c20': {...fingerprintsMatching(zoe), ...fingerprintsMatching(zach)},
-            'c21': fingerprintsMatching(zoe),
+          after: {'c20': ['20', '30']},
+          fingerprintsByRaw: {
+            '20': fingerprintsMatching(zoe),
+            '30': fingerprintsMatching(zoe),
           },
         ),
         isEmpty,
       );
     });
 
-    test('records nothing for a contact that matches two fakes', () {
+    group('two planned fakes with the same name, phone and email', () {
+      // Names can hold spaces: "A B" "C" and "A" "B C" are both "A B C",
+      // and with templates that give no n or FIRST/LAST, the same details.
+      final abc = entryFor(const FakeName('A B', 'C'), '+447700900123', '');
+      Map<String, LedgerEntry> recorded(List<String> raws,
+              {bool allCreated = false}) =>
+          createdBeforeFailure(
+            planned: [abc, abc, zoe],
+            oldRawIds: const {},
+            after: {'c20': raws},
+            fingerprintsByRaw: {
+              for (final r in raws) r: fingerprintsMatching(abc),
+            },
+            allCreated: allCreated,
+          );
+
+      test('if the call made them all, each raw contact with those details '
+          'is recorded, up to two', () {
+        expect(recorded(['20', '21'], allCreated: true),
+            {'20': abc, '21': abc});
+        expect(recorded(['20'], allCreated: true), {'20': abc});
+        expect(recorded(['20', '21', '22'], allCreated: true), isEmpty);
+      });
+
+      test('after a failure, one is recorded only if it is the only one: a '
+          'second could be a copy synced meanwhile', () {
+        expect(recorded(['20']), {'20': abc});
+        expect(recorded(['20', '21']), isEmpty);
+      });
+    });
+
+    test('a raw contact that matches two fakes makes both ambiguous', () {
+      // Raw 20 has the details of both; raw 21 only Zoe's. Either could be
+      // the Zoe Zen this app created.
       expect(
         createdBeforeFailure(
           planned: [zoe, zach],
           oldRawIds: const {},
-          after: {'c20': ['20', '21']},
-          fingerprintsByContact: {
-            'c20': {...fingerprintsMatching(zoe), ...fingerprintsMatching(zach)},
+          after: {'c20': ['20'], 'c21': ['21']},
+          fingerprintsByRaw: {
+            '20': {...fingerprintsMatching(zoe), ...fingerprintsMatching(zach)},
+            '21': fingerprintsMatching(zoe),
           },
         ),
         isEmpty,
       );
     });
+  });
+
+  test('entriesNotFound counts equal entries one by one', () {
+    final zoe = fake('Zoe', 'Zen');
+    final zach = fake('Zach', 'Zen');
+    expect(entriesNotFound([zoe, zoe, zach], [zoe]), [zoe, zach]);
+    expect(entriesNotFound([zoe, zoe, zach], [zoe, zach, zoe]), isEmpty);
+    expect(entriesNotFound([zoe], []), [zoe]);
   });
 
   test('maxRawIdOf compares numbers, not text, and skips the rest', () {
@@ -392,12 +535,12 @@ void main() {
             'c6': ['6'],
             'c7': ['7'],
           },
-          fingerprintsByContact: {
-            'c1': realZoe,
-            'c4': fingerprintsMatching(zach),
-            'c5': fingerprintsMatching(zoe),
-            'c6': fingerprintsMatching(zoe),
-            'c7': fingerprintsMatching(zach),
+          fingerprintsByRaw: {
+            '1': realZoe,
+            '4': fingerprintsMatching(zach),
+            '5': fingerprintsMatching(zoe),
+            '6': fingerprintsMatching(zoe),
+            '7': fingerprintsMatching(zach),
           },
         ),
         {'6': zoe, '7': zach},
@@ -406,9 +549,8 @@ void main() {
 
     test('a fake merged into a contact from before: only its own raw '
         'contact', () {
-      // A real Zoe Zen (raw 1, another account) that Android linked with the
-      // new fake (raw 6); with only a name, the contact has exactly the
-      // fake's details.
+      // A real Zoe Zen (raw 1, another account, with only a name) that
+      // Android linked with the new fake (raw 6).
       expect(
         createdByPending(
           PendingCreate(maxRawId: 5, entries: [zoe]),
@@ -416,9 +558,30 @@ void main() {
           after: {
             'c1': ['1', '6'],
           },
-          fingerprintsByContact: {'c1': fingerprintsMatching(zoe)},
+          fingerprintsByRaw: {
+            '1': fingerprintsOf('Zoe Zen', [], []).toSet(),
+            '6': fingerprintsMatching(zoe),
+          },
         ),
         {'6': zoe},
+      );
+    });
+
+    test('two pending fakes Android merged with each other: each its own '
+        'raw contact', () {
+      expect(
+        createdByPending(
+          PendingCreate(maxRawId: 5, entries: [zoe, zach]),
+          recorded: const {},
+          after: {
+            'c6': ['6', '7'],
+          },
+          fingerprintsByRaw: {
+            '6': fingerprintsMatching(zach),
+            '7': fingerprintsMatching(zoe),
+          },
+        ),
+        {'6': zach, '7': zoe},
       );
     });
 
@@ -432,9 +595,9 @@ void main() {
             'c1': ['1'],
             'c2': ['2'],
           },
-          fingerprintsByContact: {
-            'c1': fingerprintsMatching(zoe),
-            'c2': fingerprintsMatching(zoe),
+          fingerprintsByRaw: {
+            '1': fingerprintsMatching(zoe),
+            '2': fingerprintsMatching(zoe),
           },
         ),
         {'2': zoe},
@@ -449,7 +612,7 @@ void main() {
           after: {
             'cx': ['x'],
           },
-          fingerprintsByContact: {'cx': fingerprintsMatching(zoe)},
+          fingerprintsByRaw: {'x': fingerprintsMatching(zoe)},
         ),
         isEmpty,
       );
@@ -464,9 +627,9 @@ void main() {
             'c6': ['6'],
             'c7': ['7'],
           },
-          fingerprintsByContact: {
-            'c6': fingerprintsMatching(zoe),
-            'c7': fingerprintsMatching(zoe),
+          fingerprintsByRaw: {
+            '6': fingerprintsMatching(zoe),
+            '7': fingerprintsMatching(zoe),
           },
         ),
         isEmpty,
@@ -477,6 +640,8 @@ void main() {
   group('planDelete', () {
     final zoe = fake('Zoe', 'Zen');
     final zach = fake('Zach', 'Zen');
+    final aliceFps =
+        fingerprintsOf('Alice Example', ['+15555550103'], []).toSet();
 
     test('deletes contacts made only of tracked, unchanged fakes', () {
       final ledger = Ledger({'20': zoe, '21': zach});
@@ -486,9 +651,9 @@ void main() {
         'c1': ['1'], // real contact
       };
       final fps = {
-        'c20': fingerprintsMatching(zoe),
-        'c21': fingerprintsMatching(zach),
-        'c1': fingerprintsOf('Alice Example', ['+15555550103'], []).toSet(),
+        '20': fingerprintsMatching(zoe),
+        '21': fingerprintsMatching(zach),
+        '1': aliceFps,
       };
       final plan = planDelete(ledger, book, fps);
       expect(plan.contactIdsToDelete, unorderedEquals(['c20', 'c21']));
@@ -501,7 +666,7 @@ void main() {
     test('deletes a fake made without phone or email', () {
       final bare = entryFor(const FakeName('Zoe', 'Zen'), '', '');
       final plan = planDelete(Ledger({'20': bare}), {'c20': ['20']},
-          {'c20': fingerprintsOf('Zoe Zen', [], []).toSet()});
+          {'20': fingerprintsOf('Zoe Zen', [], []).toSet()});
       expect(plan.contactIdsToDelete, ['c20']);
     });
 
@@ -510,8 +675,8 @@ void main() {
       final ledger = Ledger({'20': zoe});
       final book = {'c1': ['1'], 'c20': ['20']};
       final fps = {
-        'c1': fingerprintsOf('Zoe Zen', ['+15555550101'], []).toSet(),
-        'c20': fingerprintsMatching(zoe),
+        '1': fingerprintsOf('Zoe Zen', ['+15555550101'], []).toSet(),
+        '20': fingerprintsMatching(zoe),
       };
       final plan = planDelete(ledger, book, fps);
       expect(plan.contactIdsToDelete, ['c20']);
@@ -520,7 +685,11 @@ void main() {
     test('leaves a fake alone if Android merged it with a real contact', () {
       final ledger = Ledger({'20': zoe});
       final book = {'c1': ['1', '20']};
-      final plan = planDelete(ledger, book, {'c1': fingerprintsMatching(zoe)});
+      // Even if the real one has exactly the fake's details.
+      final plan = planDelete(ledger, book, {
+        '1': fingerprintsMatching(zoe),
+        '20': fingerprintsMatching(zoe),
+      });
       expect(plan.contactIdsToDelete, isEmpty);
       expect(plan.skippedMerged, 1);
       expect(plan.remaining.entries, {'20': zoe});
@@ -537,7 +706,7 @@ void main() {
       void expectLeftAlone(Set<String> realFingerprints) {
         final ledger = Ledger({'20': zoe});
         final plan =
-            planDelete(ledger, {'c7': ['20']}, {'c7': realFingerprints});
+            planDelete(ledger, {'c7': ['20']}, {'20': realFingerprints});
         expect(plan.contactIdsToDelete, isEmpty);
         expect(plan.rawContactsDeleted, 0);
         expect(plan.skippedChanged, 1);
@@ -583,8 +752,8 @@ void main() {
           'c7': ['20'],
           'c21': ['21'],
         }, {
-          'c7': fingerprintsOf('Alice Example', ['+15555550103'], []).toSet(),
-          'c21': fingerprintsMatching(zach),
+          '20': aliceFps,
+          '21': fingerprintsMatching(zach),
         });
         expect(plan.contactIdsToDelete, ['c21']);
         expect(plan.rawContactsDeleted, 1);
@@ -593,18 +762,53 @@ void main() {
       });
     });
 
-    test('a contact made of two tracked fakes must match both', () {
+    group('a contact into which Android merged two tracked fakes', () {
+      // Android shows one name for it (Zoe Zen), and both numbers and
+      // addresses; each raw contact is checked on its own.
       final ledger = Ledger({'20': zoe, '21': zach});
       final book = {'c20': ['20', '21']};
-      // Android shows one name for the merged contact, so Zach's fingerprint
-      // can't match and nothing is deleted.
-      final fps = {
-        'c20': fingerprintsOf('Zoe Zen', [zoe.phone], [zoe.email, zach.email])
-            .toSet(),
-      };
-      final plan = planDelete(ledger, book, fps);
-      expect(plan.contactIdsToDelete, isEmpty);
-      expect(plan.skippedChanged, 2);
+
+      test('is deleted if each is unchanged', () {
+        final plan = planDelete(ledger, book, {
+          '20': fingerprintsMatching(zoe),
+          '21': fingerprintsMatching(zach),
+        });
+        expect(plan.contactIdsToDelete, ['c20']);
+        expect(plan.rawContactsDeleted, 2);
+        expect((plan.skippedMerged, plan.skippedChanged), (0, 0));
+        expect(plan.remaining.isEmpty, isTrue);
+      });
+
+      test('is left alone, both fakes, if one of them changed: that one as '
+          'changed, the other as merged', () {
+        final plan = planDelete(ledger, book, {
+          '20': fingerprintsMatching(zoe),
+          '21': fingerprintsOf('Zach Zen', [zach.phone, '+15555550101'],
+              [zach.email]).toSet(),
+        });
+        expect(plan.contactIdsToDelete, isEmpty);
+        expect((plan.skippedMerged, plan.skippedChanged), (1, 1));
+        expect(plan.remaining.entries, {'20': zoe, '21': zach});
+      });
+
+      test("is left alone if a raw contact has the other's details", () {
+        // Each must match its own entry, not any of the contact's.
+        final plan = planDelete(ledger, book, {
+          '20': fingerprintsMatching(zach),
+          '21': fingerprintsMatching(zoe),
+        });
+        expect(plan.contactIdsToDelete, isEmpty);
+        expect((plan.skippedMerged, plan.skippedChanged), (0, 2));
+      });
+
+      test('is left alone if one raw contact has both fakes\' details', () {
+        final plan = planDelete(ledger, book, {
+          '20': {...fingerprintsMatching(zoe), ...fingerprintsMatching(zach)},
+          '21': fingerprintsMatching(zach),
+        });
+        expect(plan.contactIdsToDelete, isEmpty);
+        expect((plan.skippedMerged, plan.skippedChanged), (1, 1));
+      });
     });
 
     test("an entry it can't read deletes nothing, even with exactly a "
@@ -620,8 +824,9 @@ void main() {
         'c20': ['20'],
         'c21': ['21', '22'],
       }, {
-        'c20': fingerprintsMatching(zoe),
-        'c21': fingerprintsMatching(zach),
+        '20': fingerprintsMatching(zoe),
+        '21': fingerprintsMatching(zach),
+        '22': fingerprintsOf('Zach Zen', [], []).toSet(),
       });
       expect(plan.contactIdsToDelete, isEmpty);
       // Raw 20 isn't this app's; raw 21 is, but shares its contact.

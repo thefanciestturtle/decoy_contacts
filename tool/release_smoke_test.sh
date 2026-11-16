@@ -16,16 +16,24 @@
 # The other tests use debug builds, which skip R8. R8 shrinks release builds
 # and can remove classes that a plugin only looks up at run time, so such a
 # plugin breaks only in release builds. This script installs a release build,
-# starts it twice and checks it can write and read its settings:
+# starts it three times and checks it can write and read its settings:
 #
 # 1. First start of a fresh install: the app saves its default settings.
 # 2. The stored last names are changed to a custom list. Second start: the
 #    app must show them in its Last names field (read from the screen with
 #    `uiautomator dump`, as accessibility services see it).
 #
+# 3. A contact stored on the phone is added to the address book, and the
+#    app is given access to the contacts and a record of that contact as a
+#    fake it created. Third start: the app reads the address book to count
+#    its fakes (with its own Android code, RawContactsReader.kt, which R8
+#    shrinks too: each raw contact's name, phone numbers and email
+#    addresses), and its status line must say there is one. Had the read
+#    failed, the line would stay empty. The contact is removed again at the
+#    end.
+#
 # After each start the app must still be running, with no crash, no ANR and
-# no Dart error in the log. Contacts are not exercised: the app only touches
-# them when Create or Delete is tapped.
+# no Dart error in the log. Create and Delete aren't exercised.
 #
 # It also checks that the app asks for no internet access: its privacy policy
 # says it has none. (Debug and profile builds do ask, for Flutter's tools.)
@@ -47,6 +55,15 @@ source tool/release_lib.sh
 readonly PREFS="/data/data/$APP_ID/shared_prefs/FlutterSharedPreferences.xml"
 readonly DEFAULT_TEMPLATE='+447700900nnn'
 readonly CUSTOM_NAMES='Zen, Zima'
+# The contact the third start counts, and its status line then. It is
+# marked (in a column for sync adapters, which a contact stored on the phone
+# doesn't use) so that only it is changed and removed; SMOKE_WHERE selects
+# it, quoted for the shell on the device that adb hands the command to.
+readonly SMOKE_MARK="decoy-contacts-smoke-test-$$-$RANDOM"
+readonly SMOKE_WHERE="\"sync4='$SMOKE_MARK'\""
+readonly SMOKE_GIVEN='Smoke' SMOKE_FAMILY='Test'
+readonly SMOKE_PHONE='+447700900999' SMOKE_EMAIL='smoke.test@example.com'
+readonly ONE_FAKE='1 fake contact on this phone.'
 readonly TIMEOUT_S=60
 
 # adbd restarts on `adb root` / `adb unroot`, which can take a while.
@@ -112,7 +129,13 @@ check_permissions "$apk" "$abi"
 
 tmp="$(mktemp -d)"
 was_root=false
+smoke_marked=false # set once the third start may have added its contact
 cleanup() {
+  if $smoke_marked; then
+    # Stored on the phone, so it is gone at once (no sync to wait for).
+    adb_ shell content delete --uri content://com.android.contacts/raw_contacts \
+      --where "$SMOKE_WHERE" >/dev/null 2>&1 || true
+  fi
   adb_ uninstall "$APP_ID" >/dev/null 2>&1 || true
   if ! $was_root; then
     adb_ unroot >/dev/null 2>&1 || true
@@ -163,19 +186,60 @@ wait_for_pref() {
   done
 }
 
+# What the screen shows now, as `uiautomator dump` (accessibility services)
+# sees it: XML, one tag per line once split at "<" (which an attribute
+# escapes). Nothing if the dump failed, say because the app was still
+# drawing its spinner, or it stalled.
+dump_screen() {
+  timeout 20 adb -s "$serial" exec-out uiautomator dump /dev/tty 2>/dev/null |
+    tr '<' '\n' || true
+}
+
 # The text in the app's text field labelled $1, as the screen shows it now;
-# nothing if there is no such field (or the dump failed, say because the
-# app was still drawing its spinner, or it stalled). The dump is XML, one
-# tag per line once split at "<" (which an attribute escapes); a label or
-# text with &, < or " in it is escaped too, so this only works for plain
+# nothing if there is no such field (or the dump failed). A label or text
+# with &, < or " in it is escaped in the dump, so this only works for plain
 # ones.
 field_text() {
-  timeout 20 adb -s "$serial" exec-out uiautomator dump /dev/tty 2>/dev/null |
-    tr '<' '\n' |
+  dump_screen |
     grep -F "class=\"android.widget.EditText\"" |
     grep -F "hint=\"$1\"" |
     sed -n 's/.* text="\([^"]*\)".*/\1/p' |
     head -n 1 || true
+}
+
+# Whether the app's screen now shows the plain text $1, as a label or as
+# text (escaped as field_text says).
+screen_shows() {
+  dump_screen | grep -q -F -e "content-desc=\"$1\"" -e "text=\"$1\""
+}
+
+wait_for_text() {
+  local deadline=$((SECONDS + TIMEOUT_S))
+  until screen_shows "$1"; do
+    wake_screen # in case it went off meanwhile
+    check_no_errors
+    if (( SECONDS >= deadline )); then
+      fail "after ${TIMEOUT_S}s, the app doesn't show '$1'"
+    fi
+    sleep 1
+  done
+}
+
+# Adds a data row of the type $1 (the end of its MIME type) to the raw
+# contact the third start added, with the columns given after it.
+add_smoke_data() {
+  adb_ shell content insert --uri content://com.android.contacts/data \
+    --bind "raw_contact_id:i:$smoke_raw" \
+    --bind "mimetype:s:vnd.android.cursor.item/$1" "${@:2}"
+}
+
+# Puts back the stored settings from $1 (a copy on this computer), with
+# cat, which keeps the file's owner and SELinux label.
+write_prefs() {
+  adb_ push "$1" /data/local/tmp/decoy_contacts_prefs.xml >/dev/null 2>&1 ||
+    fail "couldn't copy the edited settings to the device"
+  adb_ shell "cat /data/local/tmp/decoy_contacts_prefs.xml > $PREFS && rm /data/local/tmp/decoy_contacts_prefs.xml" ||
+    fail "couldn't write the app's settings file"
 }
 
 # Turns the screen on and dismisses the keyguard, if they aren't already.
@@ -265,10 +329,7 @@ adb_ pull "$PREFS" "$tmp/prefs.xml" >/dev/null 2>&1 ||
   fail "couldn't read the app's settings file"
 sed -e "s|\(name=\"flutter\.sListOfLastNames\">\)[^<]*|\1$CUSTOM_NAMES|" \
     "$tmp/prefs.xml" > "$tmp/edited.xml"
-adb_ push "$tmp/edited.xml" /data/local/tmp/decoy_contacts_prefs.xml >/dev/null 2>&1 ||
-  fail "couldn't copy the edited settings to the device"
-adb_ shell "cat /data/local/tmp/decoy_contacts_prefs.xml > $PREFS && rm /data/local/tmp/decoy_contacts_prefs.xml" ||
-  fail "couldn't write the app's settings file"
+write_prefs "$tmp/edited.xml"
 [[ "$(pref sListOfLastNames)" == "$CUSTOM_NAMES" ]] ||
   fail "couldn't change the stored settings"
 
@@ -280,5 +341,47 @@ check_app_ok
 [[ "$(pref sListOfLastNames)" == "$CUSTOM_NAMES" ]] ||
   fail "last names are now stored as '$(pref sListOfLastNames)'," \
        "expected '$CUSTOM_NAMES'"
+adb_ shell am force-stop "$APP_ID"
+
+echo "== Third start, with access to contacts: the app should read them"
+# (`content` can say nothing and exit 0 when it fails, so each step is
+# checked by reading back.)
+smoke_marked=true
+adb_ shell content insert --uri content://com.android.contacts/raw_contacts \
+  --bind account_type:n: --bind account_name:n: --bind "sync4:s:$SMOKE_MARK" \
+  >/dev/null 2>&1 || true
+smoke_raw="$(adb_ shell content query \
+    --uri content://com.android.contacts/raw_contacts --projection _id \
+    --where "$SMOKE_WHERE" | tr -d '\r' |
+  sed -n 's/^Row: [0-9]* _id=\([0-9]*\)$/\1/p')"
+[[ "$smoke_raw" =~ ^[0-9]+$ ]] ||
+  fail "couldn't add a contact to the address book (found: '$smoke_raw')"
+add_smoke_data name --bind "data2:s:$SMOKE_GIVEN" --bind "data3:s:$SMOKE_FAMILY"
+add_smoke_data phone_v2 --bind "data1:s:$SMOKE_PHONE" --bind data2:i:2
+add_smoke_data email_v2 --bind "data1:s:$SMOKE_EMAIL" --bind data2:i:1
+# One line per data row: the name (as shown), the number, the address.
+added="$(adb_ shell content query --uri content://com.android.contacts/data \
+    --projection data1 --where "raw_contact_id=$smoke_raw" | tr -d '\r' |
+  sed -n 's/^Row: [0-9]* data1=//p')"
+for want in "$SMOKE_GIVEN $SMOKE_FAMILY" "$SMOKE_PHONE" "$SMOKE_EMAIL"; do
+  grep -q -F -x -e "$want" <<<"$added" ||
+    fail "couldn't give the added contact its details: $added"
+done
+for permission in READ_CONTACTS WRITE_CONTACTS; do
+  adb_ shell pm grant "$APP_ID" "android.permission.$permission" ||
+    fail "couldn't grant $permission"
+done
+# (In the file, the JSON's quotes are &quot;, and & is special in sed's
+# replacement.)
+adb_ pull "$PREFS" "$tmp/prefs.xml" >/dev/null 2>&1 ||
+  fail "couldn't read the app's settings file"
+sed -e "s|</map>|    <string name=\"flutter.fakeRawContactLedgerV1\">{\\&quot;$smoke_raw\\&quot;:{\\&quot;name\\&quot;:\\&quot;$SMOKE_GIVEN $SMOKE_FAMILY\\&quot;,\\&quot;phone\\&quot;:\\&quot;$SMOKE_PHONE\\&quot;,\\&quot;email\\&quot;:\\&quot;$SMOKE_EMAIL\\&quot;}}</string>\n</map>|" \
+    "$tmp/prefs.xml" > "$tmp/edited.xml"
+grep -q -F "fakeRawContactLedgerV1\">{&quot;$smoke_raw&quot;:" "$tmp/edited.xml" ||
+  fail "couldn't add a record of the contact to the settings"
+write_prefs "$tmp/edited.xml"
+start_app
+wait_for_text "$ONE_FAKE"
+check_app_ok
 
 echo "== Release build OK"

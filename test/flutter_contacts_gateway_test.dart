@@ -1,5 +1,11 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:decoy_contacts/contact_actions.dart' show DeletePreview;
 import 'package:decoy_contacts/contacts_gateway.dart';
+import 'package:decoy_contacts/fake_contacts_core.dart';
 import 'package:decoy_contacts/flutter_contacts_gateway.dart';
+import 'package:decoy_contacts/result_messages.dart' show statusMessage;
 import 'package:flutter/services.dart';
 import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -114,6 +120,126 @@ void main() {
         expect(permissionAnswer(before: never, after: after),
             PermissionAnswer.denied, reason: '$after');
       }
+    });
+  });
+
+  group('FlutterContactsGateway.getAll reads raw contacts (C15)', () {
+    late List<MethodCall> calls;
+
+    /// The app's Android code answers with [answer], or throws [error].
+    void android(List<Map<String, Object>>? answer, {Object? error}) {
+      calls = [];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(kRawContactsChannel, (call) async {
+        calls.add(call);
+        if (error != null) throw error;
+        return answer;
+      });
+    }
+
+    tearDown(() => TestDefaultBinaryMessengerBinding
+        .instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(kRawContactsChannel, null));
+
+    const gateway = FlutterContactsGateway();
+
+    Map<String, Object> raw(String id, String contactId, String name,
+            {List<String> phones = const [], List<String> emails = const []}) =>
+        {
+          'id': id,
+          'contactId': contactId,
+          'displayName': name,
+          'phones': phones,
+          'emails': emails,
+        };
+
+    test('groups the raw contacts into their contacts, each with its own '
+        'details', () async {
+      android([
+        raw('1', 'c1', 'Alice Example', phones: ['+15555550103']),
+        raw('22', 'c23', 'Zena Zen',
+            phones: ['+447700900010'], emails: ['Zena.Zen@example.com']),
+        raw('23', 'c23', 'Zen Zena',
+            phones: ['+447700900010'], emails: ['Zen.Zena@example.com']),
+        raw('24', 'c24', 'Zena Zena', phones: ['+447700900010', '+1']),
+      ]);
+      final contacts = await gateway.getAll();
+      expect([for (final c in contacts) c.id], ['c1', 'c23', 'c24']);
+      expect([for (final c in contacts) c.rawContactIds], [
+        ['1'],
+        ['22', '23'],
+        ['24'],
+      ]);
+      final zenZena = contacts[1].rawContacts[1];
+      expect(zenZena.displayName, 'Zen Zena');
+      expect(zenZena.phones, ['+447700900010']);
+      expect(zenZena.emails, ['Zen.Zena@example.com']);
+      expect(contacts[2].rawContacts.single.phones, ['+447700900010', '+1']);
+      expect(contacts[0].rawContacts.single.emails, isEmpty);
+    });
+
+    test('asks for every contact, or only those with the given IDs',
+        () async {
+      android([]);
+      expect(await gateway.getAll(), isEmpty);
+      expect(await gateway.getAll(ids: ['c23', 'c24']), isEmpty);
+      expect([for (final c in calls) c.method],
+          [kReadRawContacts, kReadRawContacts]);
+      expect([for (final c in calls) c.arguments], [
+        <String, Object?>{},
+        {'contactIds': ['c23', 'c24']},
+      ]);
+    });
+
+    test('no answer reads as no contacts; an error is passed on', () async {
+      android(null);
+      expect(await gateway.getAll(), isEmpty);
+      android(null, error: PlatformException(code: 'read_failed'));
+      await expectLater(
+          gateway.getAll(), throwsA(isA<PlatformException>()));
+    });
+
+    test("the Android side answers on the channel and method the Dart side "
+        "calls, with the details it reads", () {
+      final kotlin = File('android/app/src/main/kotlin/io/github/'
+              'thefanciestturtle/decoy_contacts/RawContactsReader.kt')
+          .readAsStringSync();
+      expect(kotlin, contains('CHANNEL = "${kRawContactsChannel.name}"'));
+      expect(kotlin, contains('METHOD_READ = "$kReadRawContacts"'));
+      expect(kotlin, contains('call.argument<List<String>>("contactIds")'));
+      for (final key in ['id', 'contactId', 'displayName', 'phones', 'emails']) {
+        expect(kotlin, contains('"$key" to '), reason: key);
+      }
+      final main = File('android/app/src/main/kotlin/io/github/'
+              'thefanciestturtle/decoy_contacts/MainActivity.kt')
+          .readAsStringSync();
+      expect(main, contains('RawContactsReader('));
+    });
+
+    test('the release smoke test stores a record of its contact that the '
+        'app reads, and waits for the status line that a read of it gives',
+        () {
+      // So it can't pass without the app reading the contact's own details:
+      // had the record not been read, nothing would be read; had the read
+      // failed, the status line would stay empty.
+      final script = File('tool/release_smoke_test.sh').readAsStringSync();
+      String value(String name) =>
+          RegExp("$name='([^']*)'").firstMatch(script)!.group(1)!;
+      final entry = LedgerEntry('${value('SMOKE_GIVEN')} '
+          '${value('SMOKE_FAMILY')}', value('SMOKE_PHONE'), value('SMOKE_EMAIL'));
+      expect(Ledger.decode(jsonEncode({'17': entry.toJson()})).length, 1);
+      // In the script, the values are shell variables, and the settings
+      // file's quotes are &quot;, written as \\&quot; in sed's replacement.
+      final template = jsonEncode({
+        r'$smoke_raw': const LedgerEntry(r'$SMOKE_GIVEN $SMOKE_FAMILY',
+                r'$SMOKE_PHONE', r'$SMOKE_EMAIL')
+            .toJson(),
+      }).replaceAll('"', r'\\&quot;');
+      expect(script, contains('<string name=\\"flutter.$kLedgerPrefsKey\\">'
+          '$template</string>'));
+      const one = DeletePreview(toDelete: 1, skippedMerged: 0, skippedChanged: 0);
+      expect(script, contains("readonly ONE_FAKE='${statusMessage(one)}'"));
+      expect(script, contains('wait_for_text "\$ONE_FAKE"'));
     });
   });
 }

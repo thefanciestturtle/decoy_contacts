@@ -10,6 +10,15 @@ class _Raw {
   _Raw(this.id, this.displayName, this.phones, this.emails);
 }
 
+/// A contact as a contacts app shows it, by the rule of
+/// [InMemoryContactsGateway]: the first raw contact's name, and the phone
+/// numbers and email addresses of all of them.
+extension ShownContact on StoredContact {
+  String get displayName => rawContacts.first.displayName;
+  List<String> get phones => [for (final r in rawContacts) ...r.phones];
+  List<String> get emails => [for (final r in rawContacts) ...r.emails];
+}
+
 /// An address book in memory, shaped like Android's: each contact is made of
 /// one or more raw contacts, and raw contacts can be merged into another
 /// contact.
@@ -113,16 +122,22 @@ class InMemoryContactsGateway implements ContactsGateway {
 
   List<String> get displayNames => [for (final c in all) c.displayName];
 
-  StoredContact _toStored(String id) {
-    final raws = _contacts[id]!;
-    return StoredContact(
-      id: id,
-      rawContactIds: [for (final r in raws) r.id],
-      displayName: raws.first.displayName,
-      phones: [for (final r in raws) ...r.phones],
-      emails: [for (final r in raws) ...r.emails],
-    );
+  /// Changes the name of a raw contact.
+  void rename(String rawId, String displayName) {
+    _contacts[contactOfRaw(rawId)!]!
+        .firstWhere((r) => r.id == rawId)
+        .displayName = displayName;
   }
+
+  StoredContact _toStored(String id) => StoredContact(id: id, rawContacts: [
+        for (final r in _contacts[id]!)
+          StoredRawContact(
+            id: r.id,
+            displayName: r.displayName,
+            phones: [...r.phones],
+            emails: [...r.emails],
+          ),
+      ]);
 
   @override
   Future<PermissionAnswer> requestPermission() async {
