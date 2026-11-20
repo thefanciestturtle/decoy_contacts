@@ -14,8 +14,8 @@ import 'settings_store.dart';
 /// times a second and a quick Stop, with nothing lost in speed.
 const int kCreateChunkSize = 100;
 
-/// How many fakes (raw contacts) Delete deletes per call. 10,000 took 4 s
-/// in chunks of 200 (2 to 8 s in chunks of 900, 6 s in chunks of 50).
+/// How many fakes (raw contacts) Delete deletes per call, by raw contact ID.
+/// Measured on an emulator (API 36), 10,000 took about 4 s in chunks of 200.
 const int kDeleteChunkSize = 200;
 
 /// Told how many of [total] contacts a Create or Delete has done so far: 0
