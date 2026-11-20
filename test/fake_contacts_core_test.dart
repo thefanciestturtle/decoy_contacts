@@ -656,7 +656,7 @@ void main() {
         '1': aliceFps,
       };
       final plan = planDelete(ledger, book, fps);
-      expect(plan.contactIdsToDelete, unorderedEquals(['c20', 'c21']));
+      expect(plan.rawContactIdsToDelete, unorderedEquals(['20', '21']));
       expect(plan.rawContactsDeleted, 2);
       expect(plan.skippedMerged, 0);
       expect(plan.skippedChanged, 0);
@@ -667,7 +667,7 @@ void main() {
       final bare = entryFor(const FakeName('Zoe', 'Zen'), '', '');
       final plan = planDelete(Ledger({'20': bare}), {'c20': ['20']},
           {'20': fingerprintsOf('Zoe Zen', [], []).toSet()});
-      expect(plan.contactIdsToDelete, ['c20']);
+      expect(plan.rawContactIdsToDelete, ['20']);
     });
 
     test('never deletes a real contact with the same name as a fake', () {
@@ -679,7 +679,7 @@ void main() {
         '20': fingerprintsMatching(zoe),
       };
       final plan = planDelete(ledger, book, fps);
-      expect(plan.contactIdsToDelete, ['c20']);
+      expect(plan.rawContactIdsToDelete, ['20']);
     });
 
     test('leaves a fake alone if Android merged it with a real contact', () {
@@ -690,14 +690,14 @@ void main() {
         '1': fingerprintsMatching(zoe),
         '20': fingerprintsMatching(zoe),
       });
-      expect(plan.contactIdsToDelete, isEmpty);
+      expect(plan.rawContactIdsToDelete, isEmpty);
       expect(plan.skippedMerged, 1);
       expect(plan.remaining.entries, {'20': zoe});
     });
 
     test('with an empty ledger deletes nothing', () {
       final plan = planDelete(Ledger(), {'c1': ['1'], 'c2': ['2']}, {});
-      expect(plan.contactIdsToDelete, isEmpty);
+      expect(plan.rawContactIdsToDelete, isEmpty);
     });
 
     group('a recorded raw contact ID that now holds a different contact', () {
@@ -707,7 +707,7 @@ void main() {
         final ledger = Ledger({'20': zoe});
         final plan =
             planDelete(ledger, {'c7': ['20']}, {'20': realFingerprints});
-        expect(plan.contactIdsToDelete, isEmpty);
+        expect(plan.rawContactIdsToDelete, isEmpty);
         expect(plan.rawContactsDeleted, 0);
         expect(plan.skippedChanged, 1);
         expect(plan.skippedMerged, 0);
@@ -742,7 +742,7 @@ void main() {
 
       test('is not deleted if its details are unknown', () {
         final plan = planDelete(Ledger({'20': zoe}), {'c7': ['20']}, {});
-        expect(plan.contactIdsToDelete, isEmpty);
+        expect(plan.rawContactIdsToDelete, isEmpty);
         expect(plan.skippedChanged, 1);
       });
 
@@ -755,7 +755,7 @@ void main() {
           '20': aliceFps,
           '21': fingerprintsMatching(zach),
         });
-        expect(plan.contactIdsToDelete, ['c21']);
+        expect(plan.rawContactIdsToDelete, ['21']);
         expect(plan.rawContactsDeleted, 1);
         expect(plan.skippedChanged, 1);
         expect(plan.remaining.entries, {'20': zoe});
@@ -773,7 +773,7 @@ void main() {
           '20': fingerprintsMatching(zoe),
           '21': fingerprintsMatching(zach),
         });
-        expect(plan.contactIdsToDelete, ['c20']);
+        expect(plan.rawContactIdsToDelete, ['20', '21']);
         expect(plan.rawContactsDeleted, 2);
         expect((plan.skippedMerged, plan.skippedChanged), (0, 0));
         expect(plan.remaining.isEmpty, isTrue);
@@ -786,7 +786,7 @@ void main() {
           '21': fingerprintsOf('Zach Zen', [zach.phone, '+15555550101'],
               [zach.email]).toSet(),
         });
-        expect(plan.contactIdsToDelete, isEmpty);
+        expect(plan.rawContactIdsToDelete, isEmpty);
         expect((plan.skippedMerged, plan.skippedChanged), (1, 1));
         expect(plan.remaining.entries, {'20': zoe, '21': zach});
       });
@@ -797,7 +797,7 @@ void main() {
           '20': fingerprintsMatching(zach),
           '21': fingerprintsMatching(zoe),
         });
-        expect(plan.contactIdsToDelete, isEmpty);
+        expect(plan.rawContactIdsToDelete, isEmpty);
         expect((plan.skippedMerged, plan.skippedChanged), (0, 2));
       });
 
@@ -806,7 +806,7 @@ void main() {
           '20': {...fingerprintsMatching(zoe), ...fingerprintsMatching(zach)},
           '21': fingerprintsMatching(zach),
         });
-        expect(plan.contactIdsToDelete, isEmpty);
+        expect(plan.rawContactIdsToDelete, isEmpty);
         expect((plan.skippedMerged, plan.skippedChanged), (1, 1));
       });
     });
@@ -828,7 +828,7 @@ void main() {
         '21': fingerprintsMatching(zach),
         '22': fingerprintsOf('Zach Zen', [], []).toSet(),
       });
-      expect(plan.contactIdsToDelete, isEmpty);
+      expect(plan.rawContactIdsToDelete, isEmpty);
       // Raw 20 isn't this app's; raw 21 is, but shares its contact.
       expect((plan.skippedMerged, plan.skippedChanged), (1, 0));
       expect(plan.remaining.entries, {'21': zach});

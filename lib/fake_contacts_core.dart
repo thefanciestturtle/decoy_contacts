@@ -471,13 +471,15 @@ Map<String, LedgerEntry> createdByPending(
 }
 
 class DeletePlan {
-  /// Contacts made up entirely of raw contacts this app created, each of
-  /// which still has exactly the name, phone number and email it was created
-  /// with.
-  final List<String> contactIdsToDelete;
+  /// The raw contacts of the contacts made up entirely of raw contacts this
+  /// app created, each of which still has exactly the name, phone number
+  /// and email it was created with. Delete deletes these raw contacts, not
+  /// their contacts: by then, Android may have merged another raw contact
+  /// into one of them.
+  final List<String> rawContactIdsToDelete;
 
-  /// Number of tracked raw contacts deleted along with [contactIdsToDelete].
-  final int rawContactsDeleted;
+  /// How many fakes it deletes: one per raw contact.
+  int get rawContactsDeleted => rawContactIdsToDelete.length;
 
   /// Tracked raw contacts left alone because Android merged them into a
   /// contact that also holds data the app didn't create: a raw contact that
@@ -493,8 +495,7 @@ class DeletePlan {
   final Ledger remaining;
 
   const DeletePlan({
-    required this.contactIdsToDelete,
-    required this.rawContactsDeleted,
+    required this.rawContactIdsToDelete,
     required this.skippedMerged,
     required this.skippedChanged,
     required this.remaining,
@@ -503,15 +504,16 @@ class DeletePlan {
 
 /// Plans a deletion that can only remove what this app created.
 ///
-/// A contact is deleted only if every one of its raw contacts is in the
-/// ledger and has exactly the name, phone and email recorded for it: its own
-/// fingerprints (see [fingerprintsOf]), given per raw contact ID in
-/// [fingerprintsByRaw], must be just the recorded one. So a contact that
-/// holds a raw contact the app didn't create, or a name, phone number or
-/// email address that differs in any way from what the app created, is
-/// never deleted. (Other details, such as a note added to a fake, aren't
-/// checked.) Each raw contact is checked on its own, so a contact into
-/// which Android merged several of the app's fakes is deleted too.
+/// A contact's fakes are deleted only if every one of its raw contacts is in
+/// the ledger and has exactly the name, phone and email recorded for it: its
+/// own fingerprints (see [fingerprintsOf]), given per raw contact ID in
+/// [fingerprintsByRaw], must be just the recorded one. So the fakes of a
+/// contact that holds a raw contact the app didn't create, or a name, phone
+/// number or email address that differs in any way from what the app
+/// created, are never deleted. (Other details, such as a note added to a
+/// fake, aren't checked.) Each raw contact is checked on its own, so the
+/// fakes of a contact into which Android merged several of them are deleted
+/// too.
 ///
 /// A fake left alone counts as merged if its contact holds a raw contact
 /// that isn't the app's (whether or not the fake itself changed), or a fake
@@ -521,10 +523,9 @@ DeletePlan planDelete(Ledger ledger, AddressBook book,
     Map<String, Set<String>> fingerprintsByRaw) {
   final toDelete = <String>[];
   final remaining = <String, LedgerEntry>{};
-  var deleted = 0;
   var skippedMerged = 0;
   var skippedChanged = 0;
-  book.forEach((contactId, raws) {
+  book.forEach((_, raws) {
     final tracked = raws.where(ledger.entries.containsKey).toList();
     if (tracked.isEmpty) return;
     void keep() {
@@ -552,12 +553,10 @@ DeletePlan planDelete(Ledger ledger, AddressBook book,
       keep();
       return;
     }
-    toDelete.add(contactId);
-    deleted += tracked.length;
+    toDelete.addAll(tracked);
   });
   return DeletePlan(
-    contactIdsToDelete: toDelete,
-    rawContactsDeleted: deleted,
+    rawContactIdsToDelete: toDelete,
     skippedMerged: skippedMerged,
     skippedChanged: skippedChanged,
     remaining: Ledger(remaining),

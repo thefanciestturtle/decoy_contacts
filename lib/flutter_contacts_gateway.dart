@@ -6,7 +6,8 @@ import 'package:flutter_contacts/flutter_contacts.dart';
 import 'contacts_gateway.dart';
 
 /// [ContactsGateway] for the device's address book, via `flutter_contacts`,
-/// except for reading it: [getAll] uses the app's own Android code.
+/// except for reading it and deleting from it: [getAll] and
+/// [deleteRawContacts] use the app's own Android code.
 class FlutterContactsGateway implements ContactsGateway {
   const FlutterContactsGateway();
 
@@ -40,7 +41,7 @@ class FlutterContactsGateway implements ContactsGateway {
       await FlutterContacts.permissions.check(PermissionType.readWrite) ==
       PermissionStatus.granted;
 
-  /// Read by the app's own Android code (RawContactsReader.kt), not the
+  /// Read by the app's own Android code (RawContactsChannel.kt), not the
   /// plugin: the plugin gives one name per contact, and the app needs each
   /// raw contact's own.
   @override
@@ -62,19 +63,28 @@ class FlutterContactsGateway implements ContactsGateway {
     ]);
   }
 
+  /// Deleted by the app's own Android code (RawContactsChannel.kt), not the
+  /// plugin: the plugin deletes whole contacts, with every raw contact they
+  /// hold by then, also one that Android merged into them after the app
+  /// checked them.
   @override
-  Future<void> deleteAll(List<String> contactIds) =>
-      FlutterContacts.deleteAll(contactIds);
+  Future<void> deleteRawContacts(List<String> rawContactIds) =>
+      kRawContactsChannel
+          .invokeMethod<void>(kDeleteRawContacts, {'ids': rawContactIds});
 }
 
-/// The app's own channel to its Android code, which reads raw contacts
-/// (android/app/src/main/kotlin/.../RawContactsReader.kt).
+/// The app's own channel to its Android code, which reads and deletes raw
+/// contacts (android/app/src/main/kotlin/.../RawContactsChannel.kt).
 const MethodChannel kRawContactsChannel =
     MethodChannel('io.github.thefanciestturtle.decoy_contacts/raw_contacts');
 
 /// The method on [kRawContactsChannel] that reads raw contacts: those of the
 /// contacts with the IDs in its argument "contactIds", or of every contact.
 const String kReadRawContacts = 'read';
+
+/// The method on [kRawContactsChannel] that deletes the raw contacts with
+/// the IDs in its argument "ids", and no others.
+const String kDeleteRawContacts = 'delete';
 
 /// The contacts that [raws] make up, in the order of their first raw
 /// contacts. Each of [raws] is a raw contact as [kReadRawContacts] answers

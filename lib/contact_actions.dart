@@ -14,8 +14,8 @@ import 'settings_store.dart';
 /// times a second and a quick Stop, with nothing lost in speed.
 const int kCreateChunkSize = 100;
 
-/// How many contacts Delete deletes per call. 10,000 took 4 s in chunks of
-/// 200 (2 to 8 s in chunks of 900, 6 s in chunks of 50).
+/// How many fakes (raw contacts) Delete deletes per call, by raw contact ID.
+/// Measured on an emulator (API 36), 10,000 took about 4 s in chunks of 200.
 const int kDeleteChunkSize = 200;
 
 /// Told how many of [total] contacts a Create or Delete has done so far: 0
@@ -603,15 +603,19 @@ Future<DeletePreview> countFakeContacts(
 /// anything matched by name, so real contacts with the same name are safe.
 /// Each must also still have exactly the recorded name, phone and email, in
 /// case its raw contact ID now belongs to someone else (see [planDelete]).
+/// It deletes exactly the raw contacts it checked, not their contacts: if
+/// Android merges someone else's raw contact into one of those contacts
+/// meanwhile (say, a contact that a sync brings in, with a fake's name),
+/// that one stays.
 ///
 /// Works everything out afresh from the address book, so a [previewDelete]
 /// made earlier never decides what is deleted. If that would now delete
 /// more than [atMost] (the number the user agreed to), deletes nothing and
 /// returns null.
 ///
-/// Deletes them [chunkSize] contacts at a time, telling [onProgress] how
-/// far it got after each chunk. Once [stopRequested] says so, it stops
-/// after the chunk it is on ([DeleteResult.stopped]).
+/// Deletes them [chunkSize] at a time, telling [onProgress] how far it got
+/// after each chunk. Once [stopRequested] says so, it stops after the chunk
+/// it is on ([DeleteResult.stopped]).
 ///
 /// If deleting fails, reads the address book again and throws
 /// [StoppedPartway] saying how far it got, unless all of that chunk were
@@ -627,33 +631,28 @@ Future<DeleteResult?> deleteFakeContacts(
   final check =
       await _planDelete(contacts, await ledgerStore.loadWithPending());
   final plan = check.plan;
-  final total = plan.rawContactsDeleted;
+  final ids = plan.rawContactIdsToDelete;
+  final total = ids.length;
   if (atMost != null && total > atMost) {
     log("deleteFakeContacts: $total to delete, more than $atMost");
     return null;
   }
-  final ids = plan.contactIdsToDelete;
-  final bChunked = ids.length > chunkSize;
-  // Each contact to delete is made of tracked raw contacts only.
-  int rawContactsOf(Iterable<String> contactIds) =>
-      contactIds.fold(0, (n, id) => n + check.book[id]!.length);
-  var done = 0;
-  var deletedUpTo = 0; // contacts in [ids]
+  final bChunked = total > chunkSize;
+  var done = 0; // the first [done] of [ids] are deleted
   if (bChunked) onProgress?.call(0, total);
-  for (var start = 0; start < ids.length; start += chunkSize) {
+  for (var start = 0; start < total; start += chunkSize) {
     if (start > 0 && (stopRequested?.call() ?? false)) {
       log("deleteFakeContacts: stopped after $done of $total");
       break;
     }
-    final chunk = ids.sublist(start, math.min(start + chunkSize, ids.length));
-    final chunkRaws = rawContactsOf(chunk);
+    final chunk = ids.sublist(start, math.min(start + chunkSize, total));
     try {
-      log("deleteFakeContacts: about to call deleteAll for ${chunk.length} contact(s)");
-      await contacts.deleteAll(chunk);
+      log("deleteFakeContacts: about to delete ${chunk.length} raw contact(s)");
+      await contacts.deleteRawContacts(chunk);
     } catch (e, st) {
       final gone = await _countDeletedBeforeFailure(
           contacts, check, ids.sublist(0, start + chunk.length), chunk);
-      if (gone == null || gone < chunkRaws) {
+      if (gone == null || gone < chunk.length) {
         // What the chunks before deleted is known.
         throw StoppedPartway(
             done: gone == null ? (done > 0 ? done : null) : done + gone,
@@ -664,18 +663,15 @@ Future<DeleteResult?> deleteFakeContacts(
       // All of them were deleted before it failed.
       logError("deleteFakeContacts, recovered", e, st);
     }
-    done += chunkRaws;
-    deletedUpTo = start + chunk.length;
+    done += chunk.length;
     if (bChunked) onProgress?.call(done, total);
   }
-  final bStopped = deletedUpTo < ids.length;
+  final bStopped = done < total;
   try {
     // The entries of those it left alone, or didn't get to.
     await ledgerStore.save(Ledger({
       ...plan.remaining.entries,
-      for (final contactId in ids.skip(deletedUpTo))
-        for (final raw in check.book[contactId]!)
-          raw: check.ledger.entries[raw]!,
+      for (final raw in ids.skip(done)) raw: check.ledger.entries[raw]!,
     }), pending: check.pendingLeft);
   } catch (e, st) {
     logError("deleteFakeContacts, saving the ledger", e, st);
@@ -690,13 +686,12 @@ Future<DeleteResult?> deleteFakeContacts(
   );
 }
 
-/// After deleting [chunk] failed: reads the address book again, and
-/// returns how many of its raw contacts are gone; null if that failed.
-/// (Only that chunk's: a contact of a later chunk deleted meanwhile, say by
-/// a sync, mustn't make up for one of this chunk that is still there.)
-/// [touched] are the contacts it may have deleted so far, [chunk]
-/// included; those of later chunks must still be there (see
-/// [_plausibleAfterFailure]).
+/// After deleting the raw contacts [chunk] failed: reads the address book
+/// again, and returns how many of them are gone; null if that failed. (Only
+/// that chunk's: a fake of a later chunk deleted meanwhile, say by a sync,
+/// mustn't make up for one of this chunk that is still there.) [touched]
+/// are the raw contacts it may have deleted so far, [chunk] included; those
+/// of later chunks must still be there (see [_plausibleAfterFailure]).
 ///
 /// The ledger is left as it was. Its entries for the deleted ones do no
 /// harm (they are dropped when next read), and pruning it to what this
@@ -706,17 +701,12 @@ Future<int?> _countDeletedBeforeFailure(ContactsGateway contacts,
     _DeleteCheck check, List<String> touched, List<String> chunk) async {
   try {
     final after = addressBookOf(await contacts.getAll());
-    final touchedRaws = {
-      for (final contactId in touched) ...check.book[contactId]!,
-    };
     if (!_plausibleAfterFailure(
-        allRawIds(check.book).difference(touchedRaws), after)) {
+        allRawIds(check.book).difference(touched.toSet()), after)) {
       throw StateError("all contacts that weren't to be deleted are missing");
     }
     final present = allRawIds(after);
-    return [
-      for (final contactId in chunk) ...check.book[contactId]!,
-    ].where((raw) => !present.contains(raw)).length;
+    return chunk.where((raw) => !present.contains(raw)).length;
   } catch (e, st) {
     logError("deleteFakeContacts, finding what was deleted", e, st);
     return null;

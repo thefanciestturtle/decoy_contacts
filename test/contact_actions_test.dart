@@ -40,9 +40,9 @@ class _EmptyAfterCreateFails extends InMemoryContactsGateway {
   }
 
   @override
-  Future<void> deleteAll(List<String> contactIds) async {
+  Future<void> deleteRawContacts(List<String> rawContactIds) async {
     try {
-      return await super.deleteAll(contactIds);
+      return await super.deleteRawContacts(rawContactIds);
     } catch (_) {
       _broken = true;
       rethrow;
@@ -76,6 +76,22 @@ class _ReadsEmpty extends InMemoryContactsGateway {
   @override
   Future<List<StoredContact>> getAll({List<String>? ids}) async =>
       empty ? [] : await super.getAll(ids: ids);
+}
+
+/// Once [arrive] is set, it is called once, right after the next read of
+/// the address book, which doesn't see what it does: as when a contact
+/// arrives between Delete's check and its delete.
+class _ChangesAfterRead extends InMemoryContactsGateway {
+  void Function()? arrive;
+
+  @override
+  Future<List<StoredContact>> getAll({List<String>? ids}) async {
+    final found = await super.getAll(ids: ids);
+    final then = arrive;
+    arrive = null;
+    then?.call();
+    return found;
+  }
 }
 
 void main() {
@@ -165,7 +181,7 @@ void main() {
     book.createAllStopsAfter = 2;
     // While creating.
     book.mergeInto = (_) {
-      if (book.contactOfRaw(bobRaw) != null) book.deleteAll([bob]);
+      if (book.contactOfRaw(bobRaw) != null) book.removeContact(bob);
       return null;
     };
     final error = await createFakeContacts(
@@ -194,8 +210,8 @@ void main() {
       () async {
     final broken = _EmptyAfterCreateFails()..add('Alice Example');
     await createFakeContacts(broken, const LedgerStore(), kSettings);
-    broken.deleteAllError = Exception('provider gone');
-    broken.deleteAllStopsAfter = 2;
+    broken.deleteRawContactsError = Exception('provider gone');
+    broken.deleteRawContactsStopsAfter = 2;
     final error = await deleteFakeContacts(broken, const LedgerStore())
         .then<Object?>((_) => null, onError: (Object e) => e);
 
@@ -218,8 +234,8 @@ void main() {
 
   test('Delete: everything deleted, then the call failed', () async {
     await createFakeContacts(book, const LedgerStore(), kSettings);
-    book.deleteAllError = Exception('provider gone');
-    book.deleteAllStopsAfter = 4;
+    book.deleteRawContactsError = Exception('provider gone');
+    book.deleteRawContactsStopsAfter = 4;
 
     final result = await deleteFakeContacts(book, const LedgerStore());
 
@@ -562,7 +578,7 @@ void main() {
       expect(result!.stopped, isTrue);
       expect((result.deleted, result.planned), (3, 4));
       expect(progress, [(0, 4), (1, 4), (2, 4), (3, 4)]);
-      expect([for (final c in book.deleteAllCalls) c.length], [1, 1, 1]);
+      expect([for (final c in book.deleteRawContactsCalls) c.length], [1, 1, 1]);
       expect(book.all, hasLength(1));
       final ledger = await const LedgerStore().load();
       expect(ledger.entries.keys, book.all.single.rawContactIds);
@@ -576,10 +592,10 @@ void main() {
     test('Delete: a chunk that fails says how many it deleted in all',
         () async {
       await createFakeContacts(book, const LedgerStore(), kSettings);
-      book.beforeDeleteAll = (call) async {
+      book.beforeDeleteRawContacts = (call) async {
         if (call == 1) {
-          book.deleteAllError = Exception('provider gone');
-          book.deleteAllStopsAfter = 1;
+          book.deleteRawContactsError = Exception('provider gone');
+          book.deleteRawContactsStopsAfter = 1;
         }
       };
       final error = await deleteFakeContacts(
@@ -595,13 +611,12 @@ void main() {
         "chunks deleted meanwhile don't make up for it", () async {
       await createFakeContacts(book, const LedgerStore(), kSettings);
       final lastFake = book.all.last.id;
-      book.beforeDeleteAll = (call) async {
+      book.beforeDeleteRawContacts = (call) async {
         if (call == 1) {
           // Meanwhile, say by a sync, a fake of the last chunk goes.
-          book.beforeDeleteAll = null;
-          await book.deleteAll([lastFake]);
-          book.deleteAllError = Exception('provider gone');
-          book.deleteAllStopsAfter = 0;
+          book.removeContact(lastFake);
+          book.deleteRawContactsError = Exception('provider gone');
+          book.deleteRawContactsStopsAfter = 0;
         }
       };
       final error = await deleteFakeContacts(
@@ -620,9 +635,9 @@ void main() {
     test("Delete: if what a later chunk did can't be read, it says what the "
         'chunks before deleted', () async {
       await createFakeContacts(book, const LedgerStore(), kSettings);
-      book.beforeDeleteAll = (call) async {
+      book.beforeDeleteRawContacts = (call) async {
         if (call == 1) {
-          book.deleteAllError = Exception('provider gone');
+          book.deleteRawContactsError = Exception('provider gone');
           book.getAllError = Exception('provider gone');
         }
       };
@@ -731,10 +746,10 @@ void main() {
       final broken = _ReadsEmpty();
       await createFakeContacts(broken, const LedgerStore(), kSettings);
       final ledgerBefore = await const LedgerStore().load();
-      broken.beforeDeleteAll = (call) async {
+      broken.beforeDeleteRawContacts = (call) async {
         broken.empty = true;
-        broken.deleteAllError = Exception('provider gone');
-        broken.deleteAllStopsAfter = 0;
+        broken.deleteRawContactsError = Exception('provider gone');
+        broken.deleteRawContactsStopsAfter = 0;
       };
       final error = await deleteFakeContacts(
               broken, const LedgerStore(), chunkSize: 2)
@@ -773,9 +788,9 @@ void main() {
     test('Delete: a chunk all deleted before its call failed: it goes on',
         () async {
       await createFakeContacts(book, const LedgerStore(), kSettings);
-      book.beforeDeleteAll = (call) async {
-        book.deleteAllError = call == 0 ? Exception('provider gone') : null;
-        book.deleteAllStopsAfter = call == 0 ? 2 : null;
+      book.beforeDeleteRawContacts = (call) async {
+        book.deleteRawContactsError = call == 0 ? Exception('provider gone') : null;
+        book.deleteRawContactsStopsAfter = call == 0 ? 2 : null;
       };
       final result = await deleteFakeContacts(book, const LedgerStore(),
           chunkSize: 2);
@@ -784,6 +799,50 @@ void main() {
       expect(book.all, isEmpty);
       expect((await const LedgerStore().load()).isEmpty, isTrue);
     });
+  });
+
+  group('Delete deletes exactly the fakes it checked (C17)', () {
+    for (final (how, keepsTheFakesContact) in [
+      // As the Contacts app's "Link" does: the older contact ID stays.
+      ('linked into', true),
+      // As Android does by itself when a contact of another account arrives
+      // with the same name: it gives the merged contact a new ID.
+      ('merged by Android with', false),
+    ]) {
+      test("a real contact $how a fake's contact after Delete checked it: "
+          'the fake goes, and the real one stays', () async {
+        final changing = _ChangesAfterRead();
+        book = changing;
+        await createFakeContacts(book, const LedgerStore(), kSettings);
+        final fakes = [for (final c in book.all) ...c.rawContactIds];
+        final zoe = book.idOf('Zoe Zen');
+        final zoeRaw = book.rawIdsOf(zoe).single;
+        String? realRaw;
+        // Right after Delete's check. Say, a sync brings it in.
+        changing.arrive = () {
+          final real = book.add('Zoe Zen', phones: ['+15555550101']);
+          realRaw = book.rawIdsOf(real).single;
+          if (keepsTheFakesContact) {
+            book.merge(into: zoe, from: real);
+          } else {
+            book.merge(into: real, from: zoe);
+          }
+        };
+
+        final result =
+            await deleteFakeContacts(book, const LedgerStore(), atMost: 4);
+        expect(realRaw, isNotNull);
+
+        expect((result!.deleted, result.skippedMerged, result.skippedChanged),
+            (4, 0, 0));
+        expect(book.deleteRawContactsCalls.single, unorderedEquals(fakes));
+        expect(book.contactOfRaw(zoeRaw), isNull);
+        final [left] = book.all;
+        expect(left.rawContactIds, [realRaw]);
+        expect(left.phones, ['+15555550101']);
+        expect((await stored()).isEmpty, isTrue);
+      });
+    }
   });
 
   group('fakes that Android merged with each other (C15)', () {
@@ -960,14 +1019,14 @@ void main() {
       expect((await stored()).entries.keys, unorderedEquals([zenaZen, zenZena]));
     });
 
-    group('Delete in chunks of one contact (Zen Zen, the pair, Zena Zena)',
-        () {
+    group('Delete in chunks of one fake (Zen Zen, the pair, Zena Zena)', () {
       setUp(() => createFakeContacts(book, const LedgerStore(), settings));
 
       test('Stop after the pair: both of its fakes are counted, and the rest '
           'stays recorded', () async {
         final result = await deleteFakeContacts(book, const LedgerStore(),
-            chunkSize: 1, stopRequested: () => book.deleteAllCalls.length == 2);
+            chunkSize: 1,
+            stopRequested: () => book.deleteRawContactsCalls.length == 3);
 
         expect((result!.deleted, result.planned, result.stopped),
             (3, 4, true));
@@ -977,10 +1036,30 @@ void main() {
             ['Zena Zena']);
       });
 
-      test('a call that fails after deleting the pair: it goes on', () async {
-        book.beforeDeleteAll = (call) async {
-          book.deleteAllError = call == 1 ? Exception('provider gone') : null;
-          book.deleteAllStopsAfter = call == 1 ? 1 : null;
+      test("Stop between the pair's two fakes: the one left stays recorded, "
+          'and the next Delete removes it', () async {
+        final [zenaZen, zenZena] = mergedPair();
+        final result = await deleteFakeContacts(book, const LedgerStore(),
+            chunkSize: 1,
+            stopRequested: () => book.deleteRawContactsCalls.length == 2);
+
+        expect((result!.deleted, result.planned, result.stopped),
+            (2, 4, true));
+        expect(book.contactOfRaw(zenaZen), isNull);
+        expect(book.rawIdsOf(book.contactOfRaw(zenZena)!), [zenZena]);
+        expect((await stored()).entries.keys,
+            unorderedEquals([zenZena, ...book.rawIdsOf(book.idOf('Zena Zena'))]));
+        final again = await deleteFakeContacts(book, const LedgerStore());
+        expect((again!.deleted, again.skippedMerged, again.skippedChanged),
+            (2, 0, 0));
+        expect(book.displayNames, ['Alice Example']);
+      });
+
+      test('a call that fails after deleting its fake: it goes on', () async {
+        book.beforeDeleteRawContacts = (call) async {
+          book.deleteRawContactsError =
+              call == 1 ? Exception('provider gone') : null;
+          book.deleteRawContactsStopsAfter = call == 1 ? 1 : null;
         };
         final result = await deleteFakeContacts(book, const LedgerStore(),
             chunkSize: 1);
@@ -990,12 +1069,13 @@ void main() {
         expect((await stored()).isEmpty, isTrue);
       });
 
-      test('a call that fails before deleting the pair says how many it '
-          'deleted, and the pair stays recorded', () async {
+      test('a call that fails before deleting one of the pair says how many '
+          'it deleted, and the pair stays recorded', () async {
         final pair = mergedPair();
-        book.beforeDeleteAll = (call) async {
-          book.deleteAllError = call == 1 ? Exception('provider gone') : null;
-          book.deleteAllStopsAfter = call == 1 ? 0 : null;
+        book.beforeDeleteRawContacts = (call) async {
+          book.deleteRawContactsError =
+              call == 1 ? Exception('provider gone') : null;
+          book.deleteRawContactsStopsAfter = call == 1 ? 0 : null;
         };
         final error = await deleteFakeContacts(book, const LedgerStore(),
                 chunkSize: 1)
@@ -1005,8 +1085,8 @@ void main() {
         expect((stopped.done, stopped.planned), (1, 4));
         expect((await stored()).entries.keys, containsAll(pair));
         // Trying again deletes the rest.
-        book.beforeDeleteAll = null;
-        book.deleteAllError = null;
+        book.beforeDeleteRawContacts = null;
+        book.deleteRawContactsError = null;
         final again = await deleteFakeContacts(book, const LedgerStore());
         expect(again!.deleted, 3);
         expect(book.displayNames, ['Alice Example']);

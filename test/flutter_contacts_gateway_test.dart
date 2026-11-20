@@ -123,7 +123,7 @@ void main() {
     });
   });
 
-  group('FlutterContactsGateway.getAll reads raw contacts (C15)', () {
+  group("FlutterContactsGateway's own Android code (C15, C17)", () {
     late List<MethodCall> calls;
 
     /// The app's Android code answers with [answer], or throws [error].
@@ -199,21 +199,36 @@ void main() {
           gateway.getAll(), throwsA(isA<PlatformException>()));
     });
 
-    test("the Android side answers on the channel and method the Dart side "
+    test('deleteRawContacts asks to delete exactly those raw contacts; an '
+        'error is passed on (C17)', () async {
+      android(null);
+      await gateway.deleteRawContacts(['22', '23']);
+      expect([for (final c in calls) c.method], [kDeleteRawContacts]);
+      expect([for (final c in calls) c.arguments], [
+        {'ids': ['22', '23']},
+      ]);
+      android(null, error: PlatformException(code: 'delete_failed'));
+      await expectLater(gateway.deleteRawContacts(['22']),
+          throwsA(isA<PlatformException>()));
+    });
+
+    test("the Android side answers on the channel and methods the Dart side "
         "calls, with the details it reads", () {
       final kotlin = File('android/app/src/main/kotlin/io/github/'
-              'thefanciestturtle/decoy_contacts/RawContactsReader.kt')
+              'thefanciestturtle/decoy_contacts/RawContactsChannel.kt')
           .readAsStringSync();
       expect(kotlin, contains('CHANNEL = "${kRawContactsChannel.name}"'));
       expect(kotlin, contains('METHOD_READ = "$kReadRawContacts"'));
+      expect(kotlin, contains('METHOD_DELETE = "$kDeleteRawContacts"'));
       expect(kotlin, contains('call.argument<List<String>>("contactIds")'));
+      expect(kotlin, contains('call.argument<List<String>>("ids")'));
       for (final key in ['id', 'contactId', 'displayName', 'phones', 'emails']) {
         expect(kotlin, contains('"$key" to '), reason: key);
       }
       final main = File('android/app/src/main/kotlin/io/github/'
               'thefanciestturtle/decoy_contacts/MainActivity.kt')
           .readAsStringSync();
-      expect(main, contains('RawContactsReader('));
+      expect(main, contains('RawContactsChannel('));
     });
 
     test('the release smoke test stores a record of its contact that the '

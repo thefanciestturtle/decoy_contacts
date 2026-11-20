@@ -711,7 +711,7 @@ void main() {
       expect(book.getAllCalls, reads);
       expect(book.permissionRequests, 0);
       expect(book.createAllCalls, isEmpty);
-      expect(book.deleteAllCalls, isEmpty);
+      expect(book.deleteRawContactsCalls, isEmpty);
     });
 
     group('stays above the keyboard while a template is edited', () {
