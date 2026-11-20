@@ -943,6 +943,7 @@ void main() {
     await tester.tap(app);
     await tester.pumpAndSettle();
     expect(find.text('Copyright (c) 2021 Bill Dietrich'), findsOneWidget);
+    expect(find.text('Copyright (c) 2026 thefanciestturtle'), findsOneWidget);
 
     // Back to the app's page (how many pages that takes depends on the
     // licence page's layout, which on a wide screen is one page).

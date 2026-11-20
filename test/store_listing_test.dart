@@ -8,7 +8,6 @@
 
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:decoy_contacts/about_page.dart' show AboutPage, kAboutSections;
 import 'package:decoy_contacts/contact_actions.dart';
@@ -343,23 +342,14 @@ void main() {
 
   test('the About text screenshot 4 shows is still the app\'s', () {
     // en-US/images/phoneScreenshots/4.png shows About from the top: the
-    // name, the version, then these, down to the next heading and the start
-    // of its text. If they change, retake it. (Not the version: it shows
-    // the one it was taken with.)
-    const shownOfNext =
-        'None of this is backed up or moved to a new phone. '
-        'After a move to a new phone, clearing the';
+    // name, the version, then these, down to the next heading (its text is
+    // below the screen). If they change, retake it. (Not the version: it
+    // shows the one it was taken with.)
     expect(
       [
         for (final (heading, paragraphs) in kAboutSections.take(3))
           [heading, ...paragraphs],
-        [
-          kAboutSections[3].$1,
-          kAboutSections[3].$2.first.substring(
-            0,
-            min(shownOfNext.length, kAboutSections[3].$2.first.length),
-          ),
-        ],
+        [kAboutSections[3].$1],
       ],
       [
         [
@@ -376,8 +366,9 @@ void main() {
               'name. In the phone number template, each n becomes a digit. In '
               'the email address template, FIRST and LAST become the names.',
           'Delete only removes fake contacts this app created, and only if '
-              'they are still as it made them. Your real contacts are never '
-              'touched.',
+              'their name, phone number and email address are still as it '
+              'made them. It never deletes your real contacts, even ones '
+              'with the same name.',
         ],
         [
           'What it stores',
@@ -385,7 +376,7 @@ void main() {
               "created, so Delete can find them. They stay in the app's own "
               'storage on this phone.',
         ],
-        ['New phone or backup', shownOfNext],
+        ['New phone or backup'],
       ],
       reason: 'screenshot 4 shows this text: retake it',
     );

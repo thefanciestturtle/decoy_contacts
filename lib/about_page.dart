@@ -35,6 +35,8 @@ const String kAppLicense = 'The MIT License (MIT)\n'
     '\n'
     'Copyright (c) 2021 Bill Dietrich\n'
     '\n'
+    'Copyright (c) 2026 thefanciestturtle\n'
+    '\n'
     'Permission is hereby granted, free of charge, to any person obtaining a '
     'copy of this software and associated documentation files (the '
     '"Software"), to deal in the Software without restriction, including '
@@ -81,8 +83,9 @@ const List<(String, List<String>)> kAboutSections = [
     'Create adds a fake contact for each first name with each last name. '
         'In the phone number template, each n becomes a digit. In the email '
         'address template, FIRST and LAST become the names.',
-    'Delete only removes fake contacts this app created, and only if they '
-        'are still as it made them. Your real contacts are never touched.',
+    'Delete only removes fake contacts this app created, and only if their '
+        'name, phone number and email address are still as it made them. It '
+        'never deletes your real contacts, even ones with the same name.',
   ]),
   ('What it stores', [
     'Your names and templates, and a list of the fake contacts it created, '
@@ -96,7 +99,10 @@ const List<(String, List<String>)> kAboutSections = [
         'made before. Delete them in your Contacts app.',
   ]),
   ('Privacy policy', [kPrivacyPolicy]),
-  ('Source code', ['Free software under the MIT license.']),
+  ('Source code', [
+    'Free software under the MIT license.',
+    'Based on Fake Contacts by Bill Dietrich.',
+  ]),
 ];
 
 /// Shown under the link if no app could open it.

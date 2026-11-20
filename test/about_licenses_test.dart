@@ -26,5 +26,6 @@ void main() {
     await tester.tap(find.text(kLicensePackage));
     await tester.pumpAndSettle();
     expect(find.text('Copyright (c) 2021 Bill Dietrich'), findsOneWidget);
+    expect(find.text('Copyright (c) 2026 thefanciestturtle'), findsOneWidget);
   });
 }
