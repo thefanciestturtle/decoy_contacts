@@ -37,6 +37,8 @@ declare -rA ABI_PLATFORM=(
 # (x86_64, build number 6). Android installs an update only over a lower
 # versionCode, so every code of a release must be above those: with 401 the
 # codes are 4011, 4012 and 4013. (test/release_notes_test.dart checks this.)
+# It is only a floor: each release must also have a higher build number than
+# the one before it (DEVELOPMENT.md), which nothing here can check.
 readonly RELEASE_MIN_BUILD=401
 
 # Stops the script (fail) if APK $1 has native code, but none for ABI $2
