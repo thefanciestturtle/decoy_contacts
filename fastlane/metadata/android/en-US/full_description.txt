@@ -13,4 +13,6 @@ The app has no internet access, no ads and no trackers. The only permission it a
 
 It keeps a list of the fake contacts it created, so Delete can find them. The list stays on this phone and isn't backed up. After a move to a new phone, clearing the app's data, uninstalling the app or restoring your contacts from a backup, Delete can't find the fake contacts made before, but your Contacts app can still delete them. So to remove them with Delete, use it before you move to a new phone, clear the app's data or uninstall it.
 
+This app was written with heavy use of AI. An AI coding assistant wrote most of the code, tests and documentation, working from the maintainer's requirements and decisions. The app is checked by unit, widget and on-device tests, was tried on a real phone and on emulators, and its releases are reproducible.
+
 Based on Fake Contacts by Bill Dietrich.

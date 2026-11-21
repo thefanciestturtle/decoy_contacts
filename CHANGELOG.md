@@ -2,6 +2,9 @@
 
 The versions of Decoy Contacts, newest first.
 
+## 2.0.1
+The app is unchanged. The store description now says how the app was made.
+
 ## 2.0.0
 The first release of Decoy Contacts, a separate app from Fake Contacts (see ["If you have Fake Contacts"](https://github.com/thefanciestturtle/decoy_contacts#if-you-have-fake-contacts) in the README).
 * Renamed to Decoy Contacts, with a new icon and its own app ID (`io.github.thefanciestturtle.decoy_contacts`): it is a separate app from Fake Contacts, and installs next to it.

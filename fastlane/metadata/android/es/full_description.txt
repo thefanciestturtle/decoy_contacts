@@ -15,4 +15,6 @@ Guarda una lista de los contactos falsos que creó, para que «Delete Fake Conta
 
 La aplicación está en inglés.
 
+Esta aplicación se escribió con un uso intensivo de IA. Un asistente de programación con IA escribió la mayor parte del código, de las pruebas y de la documentación, a partir de los requisitos y las decisiones del responsable del proyecto. La aplicación se comprueba con pruebas unitarias, de widgets y en dispositivo, se probó en un teléfono real y en emuladores, y sus versiones son reproducibles.
+
 Basada en Fake Contacts, de Bill Dietrich.
