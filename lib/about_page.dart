@@ -15,7 +15,7 @@ import 'app_log.dart';
 import 'app_theme.dart';
 
 /// The app's version, as in pubspec.yaml (a test checks they match).
-const String kAppVersion = '2.0.1';
+const String kAppVersion = '2.0.2';
 
 /// Where the source code is, and how the link to it reads.
 final Uri kSourceUrl =

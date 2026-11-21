@@ -33,7 +33,7 @@ mkdir -p "$repo/tool" "$repo/.github/workflows" "$repo/dist"
 cp tool/check_lib.sh tool/release_lib.sh tool/apk_check.py \
   tool/make_release_key.sh tool/sign_release.sh tool/build_release.sh \
   tool/debug_sign.sh "$repo/tool/"
-echo 'version: 1.2.3+4' >"$repo/pubspec.yaml"
+echo 'version: 1.2.3+401' >"$repo/pubspec.yaml"
 git -C "$repo" init --quiet
 # commit FLUTTER JAVA [TAG] : commits CI's versions of Flutter and the JDK.
 commit() {
@@ -48,7 +48,7 @@ commit 9.97.0 "$java_major" older-flutter
 commit 9.99.0 "$((java_major + 1))" other-jdk
 echo 'version: 1.2.3' >"$repo/pubspec.yaml"
 commit 9.99.0 "$java_major" no-build-number
-echo 'version: 1.2.3+4' >"$repo/pubspec.yaml"
+echo 'version: 1.2.3+401' >"$repo/pubspec.yaml"
 commit 9.99.0 "$java_major"
 
 failures=0
@@ -289,9 +289,9 @@ expect "no aapt2 fails" 1 "this needs aapt2"
 # --- release_lib.sh: apk_version
 "$build_tools/aapt2" link -o "$tmp/versioned.apk" \
   --manifest "$tmp/AndroidManifest.xml" -I "$platform/android.jar" \
-  --version-code 2004 --version-name 1.2.3
+  --version-code 4012 --version-name 1.2.3
 run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; apk_version '$tmp/versioned.apk'"
-expect "apk_version: the versionCode and versionName" 0 "2004 1.2.3"
+expect "apk_version: the versionCode and versionName" 0 "4012 1.2.3"
 run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; apk_version '$tmp/base.apk' || echo none"
 expect "apk_version: an APK without a versionCode fails" 0 "none"
 
@@ -331,21 +331,27 @@ pubspec() {
   run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; pubspec_version '$tmp/pubspec.yaml' || echo none"
   expect_exact "pubspec_version: $2" 0 "$3"
 }
-pubspec 'name: app\nversion: 2.0.0+5\n' "the name and the build number" "2.0.0 5"
-pubspec "version: '2.0.0+15' # the release\n" "quoted, with a comment" "2.0.0 15"
-pubspec 'version: 2.0.0\n' "without a build number it fails" "none"
-pubspec 'version: 2.0.0+5\nversion: 2.0.1+6\n' "two versions fail" "none"
+pubspec 'name: app\nversion: 2.0.2+401\n' "the name and the build number" "2.0.2 401"
+pubspec "version: '2.0.2+415' # the release\n" "quoted, with a comment" "2.0.2 415"
+pubspec 'version: 2.0.2\n' "without a build number it fails" "none"
+pubspec 'version: 2.0.2+401\nversion: 2.0.3+402\n' "two versions fail" "none"
 pubspec 'name: app\n' "no version fails" "none"
-pubspec 'version: 2.0.0+999\n' "build number 999" "2.0.0 999"
-pubspec 'version: 2.0.0+1000\n' "build number 1000 fails (codes would clash)" "none"
-pubspec 'version: 2.0.0+0\n' "build number 0 fails" "none"
-pubspec 'version: 2.0.0+08\n' "a leading zero fails" "none"
-pubspec 'version: "2.0.0+5"\n' "double quotes" "2.0.0 5"
-pubspec 'version: 2.0.0+5\r\n' "a Windows line end" "2.0.0 5"
-pubspec 'version: 2.0.0-rc.1+5\n' "a name with more than numbers and dots fails" "none"
-pubspec 'version: 1.0/../x+5\n' "... say one that would make a path" "none"
-pubspec 'version: 2.0.0+5#x\n' "a # with no space before it isn't a comment" "none"
-pubspec 'version: "2.0.0+5 #x"\n' "... nor one inside quotes" "none"
+# RELEASE_MIN_BUILD (401) is the first build number whose codes, 4011 to
+# 4013, are above 2.0.1's highest, 4006, which had Flutter's own numbering.
+pubspec 'version: 2.0.2+401\n' "the lowest build number, 401" "2.0.2 401"
+pubspec 'version: 2.0.2+400\n' "build number 400 fails (its codes could be below 4006)" "none"
+pubspec 'version: 2.0.1+6\n' "2.0.1's build number fails" "none"
+pubspec 'version: 2.0.2+99\n' "a two-digit build number fails" "none"
+pubspec 'version: 2.0.2+999999\n' "build number 999999" "2.0.2 999999"
+pubspec 'version: 2.0.2+1000000\n' "build number 1000000 fails" "none"
+pubspec 'version: 2.0.2+0\n' "build number 0 fails" "none"
+pubspec 'version: 2.0.2+0401\n' "a leading zero fails" "none"
+pubspec 'version: "2.0.2+401"\n' "double quotes" "2.0.2 401"
+pubspec 'version: 2.0.2+401\r\n' "a Windows line end" "2.0.2 401"
+pubspec 'version: 2.0.2-rc.1+401\n' "a name with more than numbers and dots fails" "none"
+pubspec 'version: 1.0/../x+401\n' "... say one that would make a path" "none"
+pubspec 'version: 2.0.2+401#x\n' "a # with no space before it isn't a comment" "none"
+pubspec 'version: "2.0.2+401 #x"\n' "... nor one inside quotes" "none"
 
 # --- release_lib.sh: the release ABIs, each with a code and a platform
 # (and no code or platform for another).
@@ -399,30 +405,41 @@ check_apk() {
   run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; check_release_apk '$4' '$5' '$6' '$7' && echo fine"
   expect "check_release_apk: $1" "$2" "$3"
 }
-release_apk "$tmp/split.apk" 4004 1.2.3 "$CLEAN"
-check_apk "the right APK passes" 0 fine "$tmp/split.apk" x86_64 1.2.3 4
+release_apk "$tmp/split.apk" 4013 1.2.3 "$CLEAN"
+check_apk "the right APK passes" 0 fine "$tmp/split.apk" x86_64 1.2.3 401
 check_apk "another ABI's APK fails" 1 \
-  "the arm64-v8a APK has native code for: x86_64" "$tmp/split.apk" arm64-v8a 1.2.3 4
+  "the arm64-v8a APK has native code for: x86_64" "$tmp/split.apk" arm64-v8a 1.2.3 401
 check_apk "another build number fails" 1 \
-  "has versionCode and versionName '4004 1.2.3', not '4005 1.2.3' (4 * 1000 + 5)" \
-  "$tmp/split.apk" x86_64 1.2.3 5
-check_apk "another versionName fails" 1 "not '4004 1.2.4'" \
-  "$tmp/split.apk" x86_64 1.2.4 4
-release_apk "$tmp/fat-split.apk" 4004 1.2.3 "$CLEAN" arm64-v8a x86_64
+  "has versionCode and versionName '4013 1.2.3', not '4023 1.2.3' (10 * 402 + 3)" \
+  "$tmp/split.apk" x86_64 1.2.3 402
+check_apk "another versionName fails" 1 "not '4013 1.2.4'" \
+  "$tmp/split.apk" x86_64 1.2.4 401
+# Another ABI's digit (4012 is arm64-v8a's), and Flutter's own code for the
+# ABI (4 * 1000 + 401), which android/app/build.gradle.kts replaces: a
+# build that lost that block would make these.
+release_apk "$tmp/arm64-code.apk" 4012 1.2.3 "$CLEAN"
+check_apk "another ABI's digit fails" 1 \
+  "has versionCode and versionName '4012 1.2.3', not '4013 1.2.3' (10 * 401 + 3)" \
+  "$tmp/arm64-code.apk" x86_64 1.2.3 401
+release_apk "$tmp/flutter-code.apk" 4401 1.2.3 "$CLEAN"
+check_apk "Flutter's own code for the ABI fails" 1 \
+  "has versionCode and versionName '4401 1.2.3', not '4013 1.2.3' (10 * 401 + 3)" \
+  "$tmp/flutter-code.apk" x86_64 1.2.3 401
+release_apk "$tmp/fat-split.apk" 4013 1.2.3 "$CLEAN" arm64-v8a x86_64
 check_apk "an APK with other ABIs too fails" 1 \
-  "has native code for: arm64-v8a x86_64" "$tmp/fat-split.apk" x86_64 1.2.3 4
+  "has native code for: arm64-v8a x86_64" "$tmp/fat-split.apk" x86_64 1.2.3 401
 "$build_tools/aapt2" link -o "$tmp/no-code.apk" --manifest "$tmp/AndroidManifest.xml" \
-  -I "$platform/android.jar" --version-code 4004 --version-name 1.2.3
+  -I "$platform/android.jar" --version-code 4013 --version-name 1.2.3
 check_apk "an APK without native code fails" 1 "has native code for: none" \
-  "$tmp/no-code.apk" x86_64 1.2.3 4
-release_apk "$tmp/leak-split.apk" 4004 1.2.3 "$LEAK"
+  "$tmp/no-code.apk" x86_64 1.2.3 401
+release_apk "$tmp/leak-split.apk" 4013 1.2.3 "$LEAK"
 check_apk "an APK naming a home folder fails" 1 "names a home folder" \
-  "$tmp/leak-split.apk" x86_64 1.2.3 4
+  "$tmp/leak-split.apk" x86_64 1.2.3 401
 add_block "$tmp/split.apk" 7109871a
 check_apk "a signed APK fails" 1 "the x86_64 APK is signed" \
-  "$tmp/split.apk" x86_64 1.2.3 4
+  "$tmp/split.apk" x86_64 1.2.3 401
 
-# permissions_apk OUT TAG... : a release APK for x86_64 (4004, 1.2.3) whose
+# permissions_apk OUT TAG... : a release APK for x86_64 (4013, 1.2.3) whose
 # manifest has these tags too, and the minSdkVersion $RELEASE_TEST_MIN_SDK
 # (if unset, RELEASE_MIN_SDK).
 permissions_apk() {
@@ -437,7 +454,7 @@ permissions_apk() {
     echo '</manifest>'
   } >"$tmp/permissions-manifest.xml"
   RELEASE_TEST_MANIFEST="$tmp/permissions-manifest.xml" \
-    release_apk "$out" 4004 1.2.3 "$CLEAN"
+    release_apk "$out" 4013 1.2.3 "$CLEAN"
 }
 uses() { echo "<uses-permission $* />"; }
 readonly OWN=org.example.release_test.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
@@ -447,28 +464,28 @@ permissions_apk "$tmp/contacts.apk" \
   "<permission android:name=\"$OWN\" android:protectionLevel=\"signature\" />" \
   "$(uses "android:name=\"$OWN\"")"
 check_apk "one asking only for contacts and its own permission passes" 0 \
-  fine "$tmp/contacts.apk" x86_64 1.2.3 4
+  fine "$tmp/contacts.apk" x86_64 1.2.3 401
 permissions_apk "$tmp/internet.apk" \
   "$(uses 'android:name="android.permission.READ_CONTACTS"')" \
   "$(uses 'android:name="android.permission.INTERNET"')"
 check_apk "one asking for internet access fails" 1 \
   "the x86_64 APK asks for android.permission.INTERNET" \
-  "$tmp/internet.apk" x86_64 1.2.3 4
+  "$tmp/internet.apk" x86_64 1.2.3 401
 permissions_apk "$tmp/sdk23.apk" \
   '<uses-permission-sdk-23 android:name="android.permission.CAMERA" />'
 check_apk "one asking for more from Android 6 on fails" 1 \
   "the x86_64 APK asks for android.permission.CAMERA" \
-  "$tmp/sdk23.apk" x86_64 1.2.3 4
+  "$tmp/sdk23.apk" x86_64 1.2.3 401
 permissions_apk "$tmp/max-sdk.apk" \
   "$(uses 'android:maxSdkVersion="32" android:name="android.permission.READ_PHONE_STATE"')"
 check_apk "one asking for more up to some Android version fails" 1 \
   "the x86_64 APK asks for android.permission.READ_PHONE_STATE" \
-  "$tmp/max-sdk.apk" x86_64 1.2.3 4
+  "$tmp/max-sdk.apk" x86_64 1.2.3 401
 permissions_apk "$tmp/other-own.apk" \
   "$(uses 'android:name="org.example.other.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"')"
 check_apk "one asking for another app's own permission fails" 1 \
   "asks for org.example.other.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" \
-  "$tmp/other-own.apk" x86_64 1.2.3 4
+  "$tmp/other-own.apk" x86_64 1.2.3 401
 run "" bash -c "source tool/check_lib.sh; source tool/release_lib.sh; check_permissions '$tmp/AndroidManifest.xml' x86_64 && echo fine"
 expect "check_permissions: a file that isn't an APK fails" 1 \
   "couldn't read the x86_64 APK's permissions"
@@ -476,16 +493,16 @@ newer=$((RELEASE_MIN_SDK + 2))
 RELEASE_TEST_MIN_SDK=$newer permissions_apk "$tmp/min-sdk-newer.apk"
 check_apk "one for a newer Android than the README says fails" 1 \
   "the x86_64 APK's minSdkVersion is $newer, not $RELEASE_MIN_SDK" \
-  "$tmp/min-sdk-newer.apk" x86_64 1.2.3 4
+  "$tmp/min-sdk-newer.apk" x86_64 1.2.3 401
 older=$((OLDEST_SIGNABLE_SDK - 3))
 RELEASE_TEST_MIN_SDK=$older permissions_apk "$tmp/min-sdk-older.apk"
 check_apk "one for an Android without v2 signatures fails, saying why" 1 \
   "the x86_64 APK's minSdkVersion is $older, but release APKs have no v1 signature" \
-  "$tmp/min-sdk-older.apk" x86_64 1.2.3 4
+  "$tmp/min-sdk-older.apk" x86_64 1.2.3 401
 RELEASE_TEST_MANIFEST="$tmp/no-sdk-manifest.xml" \
-  release_apk "$tmp/no-sdk-split.apk" 4004 1.2.3 "$CLEAN"
+  release_apk "$tmp/no-sdk-split.apk" 4013 1.2.3 "$CLEAN"
 check_apk "one without a minSdkVersion fails" 1 \
-  "couldn't read the x86_64 APK's minSdkVersion" "$tmp/no-sdk-split.apk" x86_64 1.2.3 4
+  "couldn't read the x86_64 APK's minSdkVersion" "$tmp/no-sdk-split.apk" x86_64 1.2.3 401
 
 # --- release_lib.sh: debug_sign
 mkdir -p "$tmp/android-empty" "$tmp/android"
@@ -937,7 +954,7 @@ git -C "$tmp/flutter" tag 9.99.0
 run "" env JAVA_HOME="$java_home" \
   tool/build_release.sh --flutter-sdk "$tmp/flutter" no-build-number
 expect "build: a version without a build number fails" 1 \
-  "pubspec.yaml must look like 2.0.0+5: numbers and dots, then + and a build number from 1 to 999"
+  "pubspec.yaml must look like 2.0.2+401: numbers and dots, then + and a build number from $RELEASE_MIN_BUILD (RELEASE_MIN_BUILD in tool/release_lib.sh) to 999999"
 run "" env JAVA_HOME="$java_home" tool/build_release.sh --flutter-sdk "$tmp/flutter"
 expect "build: a Flutter that isn't on a branch named stable fails" 1 \
   "is on 'main', not on a branch named stable"

@@ -11,8 +11,11 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # Both the version and the builder number may be overridden in flutter
 # build by specifying --build-name and --build-number, respectively.
 # In Android, build-name is used as versionName while build-number used as versionCode.
+# (The release APKs' versionCode is ten times the build number plus a digit
+# for the ABI, 1 to 3: android/app/build.gradle.kts. The build number is
+# 401 or more: tool/release_lib.sh says why.)
 # Read more about Android versioning at https://developer.android.com/studio/publish/versioning
-version: 2.0.1+6
+version: 2.0.2+401
 
 environment:
   sdk: ">=3.14.0 <4.0.0"
