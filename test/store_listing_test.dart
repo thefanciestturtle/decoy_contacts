@@ -31,6 +31,17 @@ const credits = {
   'es': 'Basada en Fake Contacts, de Bill Dietrich.',
 };
 
+/// The paragraph of each locale's description that says the app was written
+/// with heavy use of AI: a disclaimer for F-Droid, which shows these texts
+/// (the same words are in the F-Droid merge request). It comes just before
+/// the credit line. It is not in the README or the app.
+const aiNotes = {
+  'en-US':
+      "This app was written with heavy use of AI. An AI coding assistant wrote most of the code, tests and documentation, working from the maintainer's requirements and decisions. The app is checked by unit, widget and on-device tests, was tried on a real phone and on emulators, and its releases are reproducible.",
+  'es':
+      'Esta aplicación se escribió con un uso intensivo de IA. Un asistente de programación con IA escribió la mayor parte del código, de las pruebas y de la documentación, a partir de los requisitos y las decisiones del responsable del proyecto. La aplicación se comprueba con pruebas unitarias, de widgets y en dispositivo, se probó en un teléfono real y en emuladores, y sus versiones son reproducibles.',
+};
+
 /// Words each short description keeps, so a search for them finds the app.
 const searchWords = {'en-US': 'fake contacts', 'es': 'contactos falsos'};
 
@@ -116,6 +127,7 @@ List<Directory> screenshotDirs() => [
 void main() {
   test('every locale has a credit line and search words', () {
     expect(locales(), unorderedEquals(credits.keys));
+    expect(aiNotes.keys, unorderedEquals(credits.keys));
     expect(searchWords.keys, unorderedEquals(credits.keys));
   });
 
@@ -175,6 +187,12 @@ void main() {
 
         test('ends with the credit to the original app', () {
           expect(full().split('\n').last, credits[locale]);
+        });
+
+        test('says it was written with heavy use of AI, just before the '
+            'credit', () {
+          final paragraphs = full().trimRight().split('\n\n');
+          expect(paragraphs[paragraphs.length - 2], aiNotes[locale]);
         });
 
         test('is plain text, as F-Droid shows it', () {
