@@ -20,7 +20,7 @@ The app has no internet access, no ads and no trackers.  The only permission it 
 
 Decoy Contacts is an Android app, and needs Android 7.0 or newer.
 
-Download it from the [Releases page](https://github.com/thefanciestturtle/decoy_contacts/releases).  (There is none yet: the first release, 2.0.0, is being prepared.)  Each release has one APK for each type of processor: `arm64-v8a` for most phones, `armeabi-v7a` for phones with a 32-bit processor, and `x86_64` for Chromebooks with an Intel or AMD processor and for emulators.  If Android says the `arm64-v8a` one isn't compatible with your phone, take the `armeabi-v7a` one.  Android may ask you to allow your browser or file manager to install apps.
+Download it from the [Releases page](https://github.com/thefanciestturtle/decoy_contacts/releases).  Each release has one APK for each type of processor: `arm64-v8a` for most phones, `armeabi-v7a` for phones with a 32-bit processor, and `x86_64` for Chromebooks with an Intel or AMD processor and for emulators.  If Android says the `arm64-v8a` one isn't compatible with your phone, take the `armeabi-v7a` one.  Android may ask you to allow your browser or file manager to install apps.
 
 To update the app, install the new version's APK, of the same type, over the old one.  The app keeps your settings and its list of the fake contacts it created.  (Don't uninstall the old one first: that deletes the list, see "Good to know" below.)
 
