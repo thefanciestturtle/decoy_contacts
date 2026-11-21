@@ -117,6 +117,27 @@ void main() {
       expect(File('LICENSE.md').readAsStringSync().replaceAll('\r\n', '\n').trim(),
           kAppLicense);
     });
+
+    test("the licence keeps the original author's line, then the fork's", () {
+      // The MIT license requires the original notice in every copy.
+      expect(
+        RegExp(r'^Copyright .*$', multiLine: true)
+            .allMatches(kAppLicense)
+            .map((m) => m.group(0)),
+        [
+          'Copyright (c) 2021 Bill Dietrich',
+          'Copyright (c) 2026 thefanciestturtle',
+        ],
+      );
+    });
+
+    test('the source code section credits the original app', () {
+      final source = kAboutSections.singleWhere((s) => s.$1 == 'Source code');
+      expect(source.$2, [
+        'Free software under the MIT license.',
+        'Based on Fake Contacts by Bill Dietrich.',
+      ]);
+    });
   });
 
   test("the app's licence is added to the licence page, once", () async {

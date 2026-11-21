@@ -102,4 +102,4 @@ How to build the app, run its tests and make release builds: [DEVELOPMENT.md](DE
 
 ## License
 
-See LICENSE.md file.  MIT license.  Copyright 2021 Bill Dietrich.
+See LICENSE.md file.  MIT license.  Copyright 2021 Bill Dietrich, 2026 thefanciestturtle.
