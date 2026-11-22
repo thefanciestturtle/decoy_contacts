@@ -18,7 +18,9 @@
 # runtime permissions that were already granted. After them,
 # integration_test/permission_test.dart runs with the permission
 # permanently denied instead (revoked and "user fixed", as two "Don't allow"
-# taps leave it), which also needs no tap.
+# taps leave it), which also needs no tap. And before it,
+# integration_test/provider_gone_test.dart runs with the contacts provider
+# disabled (`pm disable-user`, which needs no root).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -69,6 +71,38 @@ wait_for_empty_address_book() {
   done
 }
 
+# Waits until the contacts provider answers a query again, after it was
+# disabled and enabled (it may have been stopped meanwhile). Stops the script
+# if it still doesn't after PROVIDER_TIMEOUT_S seconds.
+wait_for_provider() {
+  local start=$SECONDS answer
+  while true; do
+    answer="$(timeout 30 adb -s "$serial" shell content query \
+      --uri content://com.android.contacts/raw_contacts --projection _id \
+      2>&1)" || true
+    if grep -qE '^(No result found\.|Row: )' <<<"${answer//$'\r'/}"; then
+      return 0
+    fi
+    if ((SECONDS - start >= PROVIDER_TIMEOUT_S)); then
+      echo "error: the contacts provider doesn't answer" \
+           "$((SECONDS - start)) s after it was enabled again." \
+           "The last query said:" >&2
+      echo "${answer:-(nothing)}" >&2
+      exit 1
+    fi
+    adb_ shell am force-stop "$CONTACTS_PROVIDER"
+    sleep 1
+  done
+}
+
+# Enables the contacts provider again (also if the script is stopped while it
+# is disabled). Safe to run when it is enabled.
+enable_provider() {
+  trap - EXIT
+  adb_ shell pm enable "$CONTACTS_PROVIDER" >/dev/null
+  wait_for_provider
+}
+
 wipe=false
 if [[ "${1:-}" == --wipe-contacts ]]; then
   wipe=true
@@ -107,9 +141,27 @@ fi
 echo "== Running the tests"
 tests=()
 for file in integration_test/*_test.dart; do
-  [[ "$file" == integration_test/permission_test.dart ]] || tests+=("$file")
+  case "$file" in
+    integration_test/permission_test.dart | \
+      integration_test/provider_gone_test.dart) ;;
+    *) tests+=("$file") ;;
+  esac
 done
 flutter test "${tests[@]}" -d "$serial" "$@"
+
+echo "== Running the tests with the contacts provider disabled"
+# `flutter test` uninstalled the app at the end.
+adb_ install -r -t -d "$APK"
+adb_ shell pm grant "$APP_ID" android.permission.READ_CONTACTS
+adb_ shell pm grant "$APP_ID" android.permission.WRITE_CONTACTS
+trap enable_provider EXIT
+adb_ shell pm disable-user --user 0 "$CONTACTS_PROVIDER"
+status=0
+# Without the extra arguments, as for the permission tests below.
+flutter test integration_test/provider_gone_test.dart -d "$serial" --no-pub ||
+  status=$?
+enable_provider
+((status == 0)) || exit "$status"
 
 echo "== Running the tests with the contacts permission permanently denied"
 # `flutter test` uninstalled the app at the end.
