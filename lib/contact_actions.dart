@@ -232,9 +232,11 @@ class DeletePreview {
 /// (say, the contacts provider is restarting; one that can't be reached at
 /// all makes the read fail instead), and an entry lost to such a
 /// read can never be got back: Delete wouldn't know its fake any more. An
-/// entry that is kept wrongly does no harm: Delete only acts on raw contacts
-/// that are there, and checks each one's name, phone number and email. The
-/// next read that finds contacts prunes it.
+/// entry that is kept wrongly does no harm to Delete, which only acts on raw
+/// contacts that are there and checks each one's name, phone number and
+/// email. The next read that finds contacts prunes it. (Create would take
+/// the name for a fake that exists if the provider's storage was reset and
+/// handed its raw contact ID to another contact meanwhile: see C18.)
 Ledger _prunedToRead(Ledger stored, List<StoredContact> everyone) {
   if (everyone.isEmpty) return stored;
   return stored.prunedTo(allRawIds(addressBookOf(everyone)));

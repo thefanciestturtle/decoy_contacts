@@ -25,7 +25,7 @@ const Settings kSettings = Settings(
 );
 
 /// Once creating or deleting has failed, the address book reads as empty,
-/// as when the contacts provider has gone.
+/// as when a read comes back empty although it shouldn't (see C14).
 class _EmptyAfterCreateFails extends InMemoryContactsGateway {
   bool _broken = false;
 
@@ -202,7 +202,7 @@ void main() {
 
   test("Create: a re-read that lost contacts from before isn't trusted",
       () async {
-    // With the provider gone, reads find nothing rather than failing.
+    // A read comes back empty although it shouldn't.
     final broken = _EmptyAfterCreateFails()..add('Alice Example');
     broken.createAllError = Exception('provider gone');
     broken.createAllStopsAfter = 2;

@@ -4,6 +4,7 @@
 #   tool/integration_test.sh [--wipe-contacts] [extra `flutter test` args]
 #
 # The extra arguments go to the main run only, not to
+# integration_test/provider_gone_test.dart and
 # integration_test/permission_test.dart (see below).
 #
 # The tests create and delete contacts in the device's real address book, so
