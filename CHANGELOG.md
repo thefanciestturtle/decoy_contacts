@@ -4,6 +4,7 @@ The versions of Decoy Contacts, newest first.
 
 ## 2.0.2
 * Create and Delete no longer lose track of the fake contacts they made when the contacts read as empty. If Android's contacts storage can't be reached (say it is disabled), they now say "Couldn't read your contacts. Try again." Before, Delete could forget its fakes, so the app could never delete them, and Create could make a second set.
+* Fake contacts with Chinese, Japanese or Korean names can now be recognised, and so deleted. Android shows such a name with the family name first and no space ("王伟" for the given name 伟 and the family name 王), so the app took the contact for one that had been edited, and Delete left it alone. The app now compares the parts of the name as they are stored. Delete also removes such fakes that an earlier version made.
 * The version code inside each APK (the number Android and app stores compare to tell which is newer) is now ten times the build number plus 1 (`armeabi-v7a`), 2 (`arm64-v8a`) or 3 (`x86_64`), as F-Droid asks, instead of Flutter's own numbering. 2.0.1's were 1006, 2006 and 4006; 2.0.2's are 4011, 4012 and 4013. It installs over 2.0.1 as usual.
 
 ## 2.0.1
