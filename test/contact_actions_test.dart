@@ -926,6 +926,122 @@ void main() {
     }
   });
 
+  group('names Android shows in another order (C16)', () {
+    // For Chinese, Japanese and Korean names, Android shows the family name
+    // first, with no space: the given name 伟 and the family name 王 show as
+    // "王伟". (Checked on Android 16.) The name parts are kept as written.
+    String familyFirst(String first, String last) => '$last$first';
+    Settings names(String last, String first) => Settings(
+          lastNamesText: last,
+          firstNamesText: first,
+          phoneTemplateText: kDefaultPhoneTemplate,
+          emailTemplateText: kDefaultEmailTemplate,
+        );
+    // 2 x 2 = 4 fakes: 伟 王, 芳 王, 伟 李, 芳 李.
+    final settings = names('王, 李', '伟, 芳');
+
+    setUp(() {
+      book.androidDisplayName = familyFirst;
+      book.add('Alice Example', phones: ['+15555550103']);
+    });
+
+    test('Create records the names as created; a second Create adds none; '
+        'the count, the preview and Delete take all four', () async {
+      final result =
+          await createFakeContacts(book, const LedgerStore(), settings);
+      expect((result!.created, result.untracked), (4, 0));
+      expect(book.displayNames,
+          unorderedEquals(['Alice Example', '王伟', '王芳', '李伟', '李芳']));
+      final ledger = await stored();
+      expect([for (final e in ledger.entries.values) e.name],
+          unorderedEquals(['伟 王', '芳 王', '伟 李', '芳 李']));
+
+      final again =
+          await createFakeContacts(book, const LedgerStore(), settings);
+      expect((again!.created, again.alreadyExisted), (0, 4));
+      expect(book.all, hasLength(5));
+
+      expect((await countFakeContacts(book, const LedgerStore())).toDelete, 4);
+      final preview = await previewDelete(book, const LedgerStore());
+      expect((preview.toDelete, preview.skippedMerged, preview.skippedChanged),
+          (4, 0, 0));
+      final deleted =
+          await deleteFakeContacts(book, const LedgerStore(), atMost: 4);
+      expect((deleted!.deleted, deleted.skippedMerged, deleted.skippedChanged),
+          (4, 0, 0));
+      expect(book.displayNames, ['Alice Example']);
+      expect((await stored()).isEmpty, isTrue);
+    });
+
+    test('Create finds the fakes by their details when the ledger is lost',
+        () async {
+      await createFakeContacts(book, const LedgerStore(), settings);
+      SharedPreferences.setMockInitialValues({});
+
+      final again =
+          await createFakeContacts(book, const LedgerStore(), settings);
+      expect((again!.created, again.alreadyExisted), (0, 4));
+      expect(book.all, hasLength(5));
+    });
+
+    test('a name of two scripts: Android puts the family name first with no '
+        'space, and the fake is still found', () async {
+      book.androidDisplayName = (first, last) => '$last$first';
+      final mixed = names('王', 'Anna');
+      await createFakeContacts(book, const LedgerStore(), mixed);
+      expect(book.displayNames, contains('王Anna'));
+
+      expect((await countFakeContacts(book, const LedgerStore())).toDelete, 1);
+      expect((await deleteFakeContacts(book, const LedgerStore()))!.deleted, 1);
+      expect(book.displayNames, ['Alice Example']);
+    });
+
+    test('a fake that was changed is left alone: another name, or a prefix, '
+        'middle name or suffix added', () async {
+      await createFakeContacts(book, const LedgerStore(), settings);
+      final raws = [for (final c in book.all) ...c.rawContactIds]
+        ..removeAt(0); // Alice
+      book.rename(raws[0], '王大伟');
+      book.setNameParts(raws[1], const NameParts(prefix: 'Dr', given: '芳', family: '王'));
+      book.setNameParts(raws[2], const NameParts(given: '伟', middle: 'M', family: '李'));
+      book.setNameParts(raws[3], const NameParts(given: '芳', family: '李', suffix: 'Jr'));
+
+      final preview = await previewDelete(book, const LedgerStore());
+      expect((preview.toDelete, preview.skippedMerged, preview.skippedChanged),
+          (0, 0, 4));
+      final deleted = await deleteFakeContacts(book, const LedgerStore());
+      expect(deleted!.deleted, 0);
+      expect(book.all, hasLength(5));
+    });
+
+    test('a contact that is not a fake, with the same display name, is '
+        'never taken for one', () async {
+      await createFakeContacts(book, const LedgerStore(), settings);
+      // A real contact written by the same rule, with a number of its own.
+      book.add('王伟', phones: ['+15555550142']);
+
+      final deleted = await deleteFakeContacts(book, const LedgerStore());
+      expect(deleted!.deleted, 4);
+      expect(book.displayNames, ['Alice Example', '王伟']);
+    });
+
+    test("a name with no parts is compared by its display name, as before",
+        () async {
+      // A raw contact that has no name, or only an empty one.
+      const none = StoredRawContact(id: '1', displayName: 'Zoe Zen');
+      const empty = StoredRawContact(
+          id: '2', displayName: 'Zoe Zen', nameParts: NameParts());
+      const parts = StoredRawContact(
+          id: '3',
+          displayName: '王伟',
+          nameParts: NameParts(given: '伟', family: '王'));
+      expect([none.name, empty.name, parts.name], ['Zoe Zen', 'Zoe Zen', '伟 王']);
+      expect(fingerprintsOfRawContact(parts), {
+        contactFingerprint('伟 王', '', ''),
+      });
+    });
+  });
+
   group('fakes that Android merged with each other (C15)', () {
     // Zen and Zena give the same phone number, so the fakes "Zena Zen" and
     // "Zen Zena" (the same letters) get the same number, and Android merges

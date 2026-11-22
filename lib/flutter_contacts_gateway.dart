@@ -88,13 +88,16 @@ const String kDeleteRawContacts = 'delete';
 
 /// The contacts that [raws] make up, in the order of their first raw
 /// contacts. Each of [raws] is a raw contact as [kReadRawContacts] answers
-/// it: a map with "id", "contactId", "displayName", "phones" and "emails".
+/// it: a map with "id", "contactId", "displayName", "nameParts" (a map with
+/// "prefix", "given", "middle", "family" and "suffix", or null if it has no
+/// name), "phones" and "emails".
 List<StoredContact> contactsOfRawContacts(List<Map<Object?, Object?>> raws) {
   final byContact = <String, List<StoredRawContact>>{};
   for (final raw in raws) {
     (byContact[raw['contactId'] as String] ??= []).add(StoredRawContact(
       id: raw['id'] as String,
       displayName: raw['displayName'] as String,
+      nameParts: _nameParts(raw['nameParts'] as Map<Object?, Object?>?),
       phones: [for (final p in raw['phones'] as List) p as String],
       emails: [for (final e in raw['emails'] as List) e as String],
     ));
@@ -104,6 +107,16 @@ List<StoredContact> contactsOfRawContacts(List<Map<Object?, Object?>> raws) {
       StoredContact(id: id, rawContacts: rawContacts),
   ];
 }
+
+NameParts? _nameParts(Map<Object?, Object?>? parts) => parts == null
+    ? null
+    : NameParts(
+        prefix: parts['prefix'] as String,
+        given: parts['given'] as String,
+        middle: parts['middle'] as String,
+        family: parts['family'] as String,
+        suffix: parts['suffix'] as String,
+      );
 
 /// The answer to a permission request, from the plugin's status [before]
 /// it (from `check`) and its answer [after].

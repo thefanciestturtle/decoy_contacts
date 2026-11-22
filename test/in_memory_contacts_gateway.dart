@@ -4,10 +4,11 @@ import 'package:decoy_contacts/contacts_gateway.dart';
 class _Raw {
   final String id;
   String displayName;
+  NameParts? nameParts;
   List<String> phones;
   List<String> emails;
 
-  _Raw(this.id, this.displayName, this.phones, this.emails);
+  _Raw(this.id, this.displayName, this.phones, this.emails, [this.nameParts]);
 }
 
 /// A contact as a contacts app shows it, by the rule of
@@ -27,6 +28,13 @@ class InMemoryContactsGateway implements ContactsGateway {
   final Map<String, List<_Raw>> _contacts = {};
   int _nextContactId = 100;
   int _nextRawId = 1;
+
+  /// The display name Android gives a contact created with these names.
+  /// Android's order depends on the script and the phone's language: for
+  /// Chinese, Japanese and Korean names it puts the family name first, with
+  /// no space.
+  String Function(String first, String last) androidDisplayName =
+      (first, last) => '$first $last';
 
   /// What [requestPermission] answers.
   PermissionAnswer permission = PermissionAnswer.granted;
@@ -132,18 +140,37 @@ class InMemoryContactsGateway implements ContactsGateway {
 
   List<String> get displayNames => [for (final c in all) c.displayName];
 
-  /// Changes the name of a raw contact.
+  /// Changes the name of a raw contact, as in the Contacts app: its parts
+  /// go with it.
   void rename(String rawId, String displayName) {
-    _contacts[contactOfRaw(rawId)!]!
-        .firstWhere((r) => r.id == rawId)
-        .displayName = displayName;
+    _rawContact(rawId)
+      ..displayName = displayName
+      ..nameParts = null;
   }
+
+  /// Changes the parts of a raw contact's name, and its display name, which
+  /// Android works out from them ([androidDisplayName] for the given and
+  /// family name; the prefix, middle name and suffix in the order of
+  /// Western names).
+  void setNameParts(String rawId, NameParts parts) {
+    _rawContact(rawId)
+      ..nameParts = parts
+      ..displayName = parts.prefix.isEmpty &&
+              parts.middle.isEmpty &&
+              parts.suffix.isEmpty
+          ? androidDisplayName(parts.given, parts.family)
+          : parts.joined;
+  }
+
+  _Raw _rawContact(String rawId) =>
+      _contacts[contactOfRaw(rawId)!]!.firstWhere((r) => r.id == rawId);
 
   StoredContact _toStored(String id) => StoredContact(id: id, rawContacts: [
         for (final r in _contacts[id]!)
           StoredRawContact(
             id: r.id,
             displayName: r.displayName,
+            nameParts: r.nameParts,
             phones: [...r.phones],
             emails: [...r.emails],
           ),
@@ -189,8 +216,12 @@ class InMemoryContactsGateway implements ContactsGateway {
     for (final (i, c) in contacts.indexed) {
       // The plugin doesn't return the IDs of what it created before failing.
       if (error != null && i == createAllStopsAfter) throw error;
-      final raw = _Raw('${_nextRawId++}', '${c.first} ${c.last}',
-          [if (c.phone.isNotEmpty) c.phone], [if (c.email.isNotEmpty) c.email]);
+      final raw = _Raw(
+          '${_nextRawId++}',
+          androidDisplayName(c.first, c.last),
+          [if (c.phone.isNotEmpty) c.phone],
+          [if (c.email.isNotEmpty) c.email],
+          NameParts(given: c.first, family: c.last));
       final target = mergeInto?.call(c);
       if (target != null) {
         _contacts[target]!.add(raw);

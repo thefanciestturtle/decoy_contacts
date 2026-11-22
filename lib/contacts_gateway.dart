@@ -1,3 +1,32 @@
+/// The parts of a name, as stored in a raw contact's name (any may be
+/// empty).
+class NameParts {
+  final String prefix;
+  final String given;
+  final String middle;
+  final String family;
+  final String suffix;
+
+  const NameParts({
+    this.prefix = '',
+    this.given = '',
+    this.middle = '',
+    this.family = '',
+    this.suffix = '',
+  });
+
+  /// The parts that aren't empty, in the order of Western names, with a
+  /// space between them: "Zoe Zen" for the given name "Zoe" and the family
+  /// name "Zen", whatever script they are in and whatever the phone's
+  /// language.
+  String get joined => [prefix, given, middle, family, suffix]
+      .where((part) => part.isNotEmpty)
+      .join(' ');
+
+  @override
+  String toString() => 'NameParts($joined)';
+}
+
 /// One raw contact (Android): what one source, such as an online account or
 /// the phone itself, holds about a contact. Each fake is one.
 class StoredRawContact {
@@ -6,7 +35,17 @@ class StoredRawContact {
   /// Its own display name, which Android works out from its name (or, if it
   /// has none, from its other details). A contact shows one of its raw
   /// contacts' names.
+  ///
+  /// Android's order of the name's parts depends on the script and the
+  /// phone's language: for Chinese, Japanese and Korean names it puts the
+  /// family name first, with no space ("王伟" for the given name "伟" and the
+  /// family name "王"). So the app doesn't compare it with the names it
+  /// creates: it compares [name].
   final String displayName;
+
+  /// The parts of its name, as they are stored, which Android keeps as they
+  /// were written. Null if it has no name.
+  final NameParts? nameParts;
 
   final List<String> phones;
   final List<String> emails;
@@ -14,13 +53,22 @@ class StoredRawContact {
   const StoredRawContact({
     required this.id,
     required this.displayName,
+    this.nameParts,
     this.phones = const [],
     this.emails = const [],
   });
 
+  /// The name to compare with the one the app created the contact with
+  /// ("first last"): its [nameParts] put together, or, if it has none (no
+  /// name, or an empty one), the [displayName].
+  String get name {
+    final joined = nameParts?.joined ?? '';
+    return joined.isEmpty ? displayName : joined;
+  }
+
   @override
   String toString() =>
-      'StoredRawContact($id, $displayName, $phones, $emails)';
+      'StoredRawContact($id, $displayName, $nameParts, $phones, $emails)';
 }
 
 /// A contact (Android aggregate contact) as read from the address book.

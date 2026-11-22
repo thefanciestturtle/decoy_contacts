@@ -127,7 +127,7 @@ void main() {
     late List<MethodCall> calls;
 
     /// The app's Android code answers with [answer], or throws [error].
-    void android(List<Map<String, Object>>? answer, {Object? error}) {
+    void android(List<Map<String, Object?>>? answer, {Object? error}) {
       calls = [];
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(kRawContactsChannel, (call) async {
@@ -143,12 +143,15 @@ void main() {
 
     const gateway = FlutterContactsGateway();
 
-    Map<String, Object> raw(String id, String contactId, String name,
-            {List<String> phones = const [], List<String> emails = const []}) =>
+    Map<String, Object?> raw(String id, String contactId, String name,
+            {Map<String, String>? nameParts,
+            List<String> phones = const [],
+            List<String> emails = const []}) =>
         {
           'id': id,
           'contactId': contactId,
           'displayName': name,
+          'nameParts': nameParts,
           'phones': phones,
           'emails': emails,
         };
@@ -176,6 +179,36 @@ void main() {
       expect(zenZena.emails, ['Zen.Zena@example.com']);
       expect(contacts[2].rawContacts.single.phones, ['+447700900010', '+1']);
       expect(contacts[0].rawContacts.single.emails, isEmpty);
+    });
+
+    test('reads the parts of a name as they are, whatever display name '
+        'Android made of them (C16)', () async {
+      android([
+        raw('1', 'c1', '王伟', nameParts: {
+          'prefix': '',
+          'given': '伟',
+          'middle': '',
+          'family': '王',
+          'suffix': '',
+        }),
+        raw('2', 'c2', 'Dr Zoe Q Zen', nameParts: {
+          'prefix': 'Dr',
+          'given': 'Zoe',
+          'middle': 'Q',
+          'family': 'Zen',
+          'suffix': '',
+        }),
+        raw('3', 'c3', 'ACME', phones: ['+1']),
+      ]);
+      final [wang, zoe, acme] = [
+        for (final c in await gateway.getAll()) c.rawContacts.single,
+      ];
+      expect(wang.displayName, '王伟');
+      expect(wang.name, '伟 王');
+      expect(zoe.name, 'Dr Zoe Q Zen');
+      // No name: the display name Android made of its other details.
+      expect(acme.nameParts, isNull);
+      expect(acme.name, 'ACME');
     });
 
     test('asks for every contact, or only those with the given IDs',
@@ -222,7 +255,14 @@ void main() {
       expect(kotlin, contains('METHOD_DELETE = "$kDeleteRawContacts"'));
       expect(kotlin, contains('call.argument<List<String>>("contactIds")'));
       expect(kotlin, contains('call.argument<List<String>>("ids")'));
-      for (final key in ['id', 'contactId', 'displayName', 'phones', 'emails']) {
+      for (final key in [
+        'id',
+        'contactId',
+        'displayName',
+        'nameParts',
+        'phones',
+        'emails',
+      ]) {
         expect(kotlin, contains('"$key" to '), reason: key);
       }
       final main = File('android/app/src/main/kotlin/io/github/'
@@ -242,7 +282,7 @@ void main() {
       for (final what in [
         'the contacts',
         'the raw contacts',
-        'the phone numbers and emails',
+        'the names, phone numbers and emails',
       ]) {
         expect(kotlin,
             contains('?: throw IllegalStateException("no cursor for $what")'),
