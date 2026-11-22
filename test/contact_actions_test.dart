@@ -68,14 +68,22 @@ class _WritesNothingWhenFull extends LedgerStore {
   }
 }
 
-/// While [empty] is set, the address book reads as empty, as when the
-/// contacts provider is missing.
+/// While [empty] is set, the address book reads as empty, as when a read
+/// comes back empty although it shouldn't (see C14).
 class _ReadsEmpty extends InMemoryContactsGateway {
   bool empty = false;
 
+  /// The next this many reads come back empty, then reads are normal again.
+  int emptyReads = 0;
+
   @override
-  Future<List<StoredContact>> getAll({List<String>? ids}) async =>
-      empty ? [] : await super.getAll(ids: ids);
+  Future<List<StoredContact>> getAll({List<String>? ids}) async {
+    if (emptyReads > 0) {
+      emptyReads--;
+      return [];
+    }
+    return empty ? [] : await super.getAll(ids: ids);
+  }
 }
 
 /// Once [arrive] is set, it is called once, right after the next read of
@@ -530,8 +538,8 @@ void main() {
       await pumpEventQueue();
       final killed = await storedWithPending();
 
-      // As with the contacts provider missing: nothing is found, and nothing
-      // is given up.
+      // As with a read that comes back empty although it shouldn't: nothing
+      // is found, and nothing is given up.
       broken.empty = true;
       final none = await previewDelete(broken, const LedgerStore());
       expect(none.toDelete, 0);
@@ -699,11 +707,84 @@ void main() {
       await createFakeContacts(broken, const LedgerStore(), noNames);
       var stored = await storedWithPending();
       expect(stored.pending!.entries, pending.entries);
+      expect(stored.ledger.entries, {broken.rawIdsOf(zoe).single: e});
 
       // And Delete's own save, with nothing to delete.
       await deleteFakeContacts(broken, const LedgerStore());
       stored = await storedWithPending();
       expect(stored.pending!.entries, pending.entries);
+      expect(stored.ledger.entries, {broken.rawIdsOf(zoe).single: e});
+    });
+
+    // C14: a read that comes back empty must never shrink the ledger: a fake
+    // whose entry is lost can't be deleted by the app any more.
+    group('an empty read (C14)', () {
+      test('Delete: the address book reads as empty after the user agreed: '
+          'nothing is deleted and the ledger keeps its entries', () async {
+        final broken = _ReadsEmpty();
+        await createFakeContacts(broken, const LedgerStore(), kSettings);
+        final ledgerBefore = await stored();
+        final preview = await previewDelete(broken, const LedgerStore());
+        expect(preview.toDelete, 4);
+
+        broken.empty = true;
+        final result = await deleteFakeContacts(broken, const LedgerStore(),
+            atMost: preview.toDelete);
+        expect(result!.deleted, 0);
+        expect((await stored()).entries, ledgerBefore.entries);
+
+        broken.empty = false;
+        expect(
+            (await countFakeContacts(broken, const LedgerStore())).toDelete, 4);
+        expect(
+            (await deleteFakeContacts(broken, const LedgerStore()))!.deleted, 4);
+        expect(broken.all, isEmpty);
+      });
+
+      test('Create: the first read comes back empty: the ledger keeps the '
+          'entries of the fakes that are there', () async {
+        final broken = _ReadsEmpty();
+        await createFakeContacts(broken, const LedgerStore(), kSettings);
+        final ledgerBefore = await stored();
+
+        // (Create makes them again then, as it can't see they exist.)
+        broken.emptyReads = 1;
+        final result =
+            await createFakeContacts(broken, const LedgerStore(), kSettings);
+        expect(result!.created, 4);
+        expect(broken.all, hasLength(8));
+        final after = await stored();
+        expect(after.length, 8);
+        for (final MapEntry(:key, :value) in ledgerBefore.entries.entries) {
+          expect(after.entries[key], value);
+        }
+
+        // So Delete can still remove every one of them.
+        expect(
+            (await deleteFakeContacts(broken, const LedgerStore()))!.deleted, 8);
+        expect(broken.all, isEmpty);
+      });
+
+      test('an address book that really is empty leaves stale entries, which '
+          'the next read that finds contacts drops', () async {
+        await createFakeContacts(book, const LedgerStore(), kSettings);
+        for (final c in book.all) {
+          book.removeContact(c.id);
+        }
+        expect(book.all, isEmpty);
+
+        // Nothing to delete, and nothing is given up.
+        var result = await deleteFakeContacts(book, const LedgerStore());
+        expect(result!.deleted, 0);
+        expect((await stored()).length, 4);
+        expect((await countFakeContacts(book, const LedgerStore())).toDelete, 0);
+
+        // As soon as the address book has a contact, they are pruned.
+        book.add('Real Person');
+        result = await deleteFakeContacts(book, const LedgerStore());
+        expect(result!.deleted, 0);
+        expect((await stored()).isEmpty, isTrue);
+      });
     });
 
     test('Create: the first chunk fails with the storage full and nothing '
