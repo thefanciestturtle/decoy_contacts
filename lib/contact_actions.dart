@@ -198,8 +198,9 @@ class DeletePreview {
 /// added (see [createdByPending]), if it left a [PendingCreate]; and
 /// whether it did. Only adds to the ledger, and saves nothing.
 ///
-/// If the address book reads as empty, as with the contacts provider
-/// missing, the pending record is left for later ([left]; saves pass it
+/// If the address book reads as empty (a provider that can't be reached
+/// makes the read fail instead, but a read can come back empty when it
+/// shouldn't), the pending record is left for later ([left]; saves pass it
 /// on). (A Create run meanwhile replaces it, and its fakes then stay
 /// unrecorded; it would fail anyway.)
 ({Ledger ledger, bool resolved, PendingCreate? left}) _withPendingResolved(
@@ -221,6 +222,24 @@ class DeletePreview {
     resolved: true,
     left: null,
   );
+}
+
+/// [stored] without the entries whose raw contacts the read [everyone]
+/// didn't find, so that the ledger doesn't list what is gone.
+///
+/// A read that finds nothing at all prunes nothing: the address book may
+/// really be empty, but a read can also come back empty when it shouldn't
+/// (say, the contacts provider is restarting; one that can't be reached at
+/// all makes the read fail instead), and an entry lost to such a
+/// read can never be got back: Delete wouldn't know its fake any more. An
+/// entry that is kept wrongly does no harm to Delete, which only acts on raw
+/// contacts that are there and checks each one's name, phone number and
+/// email. The next read that finds contacts prunes it. (Create would take
+/// the name for a fake that exists if the provider's storage was reset and
+/// handed its raw contact ID to another contact meanwhile: see C18.)
+Ledger _prunedToRead(Ledger stored, List<StoredContact> everyone) {
+  if (everyone.isEmpty) return stored;
+  return stored.prunedTo(allRawIds(addressBookOf(everyone)));
 }
 
 /// The address book, the ledger and what Create would add to them.
@@ -257,7 +276,7 @@ Future<_CreatePlan> _planCreate(
   };
   final (ledger: stored, resolved: _, :left) = _withPendingResolved(
       await ledgerStore.loadWithPending(), everyone, fingerprintsByRaw);
-  final ledger = stored.prunedTo(allRawIds(before));
+  final ledger = _prunedToRead(stored, everyone);
   final wanted = allCombinations(settings.firstNames, settings.lastNames);
   LedgerEntry entryOf(FakeName n) =>
       entryFor(n, settings.phoneTemplate, settings.emailTemplate);
@@ -471,10 +490,10 @@ int? _higher(int? a, int? b) =>
 /// Whether a read of the address book made after a failed Create or Delete
 /// ([after]) can be trusted: unless there are none, some of the raw
 /// contacts that must still be there ([untouched]: those from before that
-/// it left alone, and those it created) are. With the contacts provider
-/// gone, reads find nothing instead of failing, which would look like
-/// everything was deleted, or nothing created. (Some may be gone for other
-/// reasons, say deleted by a sync meanwhile.)
+/// it left alone, and those it created) are. A read that comes back empty
+/// when it shouldn't (a provider that can't be reached makes it fail
+/// instead) would look like everything was deleted, or nothing created.
+/// (Some may be gone for other reasons, say deleted by a sync meanwhile.)
 bool _plausibleAfterFailure(Set<String> untouched, AddressBook after) {
   final present = allRawIds(after);
   return untouched.isEmpty || untouched.any(present.contains);
@@ -540,8 +559,17 @@ Future<_DeleteCheck> _planDelete(ContactsGateway contacts,
   final fingerprintsByRaw = fingerprintsByRawOf(everyone);
   final (ledger: stored, :resolved, :left) =
       _withPendingResolved(loaded, everyone, fingerprintsByRaw);
-  final plan =
-      planDelete(stored.prunedTo(allRawIds(book)), book, fingerprintsByRaw);
+  var plan =
+      planDelete(_prunedToRead(stored, everyone), book, fingerprintsByRaw);
+  if (everyone.isEmpty) {
+    // Nothing to delete, and nothing to give up (see [_prunedToRead]): what
+    // the plan leaves is the whole ledger.
+    plan = DeletePlan(
+        rawContactIdsToDelete: plan.rawContactIdsToDelete,
+        skippedMerged: plan.skippedMerged,
+        skippedChanged: plan.skippedChanged,
+        remaining: stored);
+  }
   return _DeleteCheck(plan, stored, resolved, left, book);
 }
 

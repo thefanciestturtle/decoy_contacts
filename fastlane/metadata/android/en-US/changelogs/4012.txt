@@ -1,1 +1,1 @@
-Version 2.0.2: the app is unchanged. Only the version code inside each APK is numbered differently, as F-Droid asks. It installs over 2.0.1 as usual.
+Version 2.0.2: Create and Delete no longer lose track of the fake contacts they made when the contacts read as empty, and say so if the contacts can't be read. The version codes are numbered differently, as F-Droid asks. It installs over 2.0.1 as usual.

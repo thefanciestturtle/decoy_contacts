@@ -100,16 +100,16 @@ class RawContactsChannel(private val resolver: ContentResolver) :
      * them: those the Contacts app shows, without hidden ones such as Gmail's
      * auto-collected "Other contacts".
      *
-     * If the first query gets no cursor (the contacts provider can't be
-     * reached), that reads as no contacts, as the plugin's reads do. If a
-     * later one (or a later batch of the first) gets none, the read fails:
-     * half a read must not look whole.
+     * If any query gets no cursor (the contacts provider can't be reached,
+     * say it is disabled), the read fails: it must not read as "no
+     * contacts", which the app would take for an address book without its
+     * fakes (the flutter_contacts plugin reads it so). A provider that
+     * answers with no rows is an empty address book, and reads as one.
      */
     private fun read(contactIds: List<String>?): List<Map<String, Any>> {
         val shown = HashSet<Long>()
-        var firstBatch = true
         forEachBatch(contactIds) { batch ->
-            val cursor = resolver.query(
+            resolver.query(
                 Contacts.CONTENT_URI.buildUpon()
                     .appendQueryParameter(
                         ContactsContract.DIRECTORY_PARAM_KEY,
@@ -119,13 +119,9 @@ class RawContactsChannel(private val resolver: ContentResolver) :
                 batch?.let { inList(Contacts._ID, it) },
                 batch?.toTypedArray(),
                 null,
-            )
-            if (cursor == null) {
-                if (firstBatch) return emptyList()
-                throw IllegalStateException("no cursor for the contacts")
-            }
-            firstBatch = false
-            cursor.use { while (it.moveToNext()) shown.add(it.getLong(0)) }
+            )?.use {
+                while (it.moveToNext()) shown.add(it.getLong(0))
+            } ?: throw IllegalStateException("no cursor for the contacts")
         }
         if (shown.isEmpty()) return emptyList()
 

@@ -306,8 +306,8 @@ class _ReadsFailAfterError extends InMemoryContactsGateway {
   }
 }
 
-/// While [empty] is set, the address book reads as empty, as when the
-/// contacts provider is missing.
+/// While [empty] is set, the address book reads as empty, as when a read
+/// comes back empty although it shouldn't (see C14).
 class _ReadsEmpty extends InMemoryContactsGateway {
   bool empty = false;
 
@@ -1001,8 +1001,8 @@ void main() {
 
     testWidgets('a failed Create keeps the ledger even if the address book '
         'reads as empty', (tester) async {
-      // With the contacts provider missing, reads find nothing rather than
-      // failing, so nothing must be dropped for not being found.
+      // A read can come back empty although it shouldn't, so nothing must
+      // be dropped for not being found.
       final broken = _ReadsEmpty();
       await pumpApp(tester, broken);
       await tapCreate(tester);
@@ -1019,6 +1019,30 @@ void main() {
       broken.createAllError = null;
       await tapDelete(tester);
       expect(resultText(tester), 'Deleted 4 fake contacts.');
+    });
+
+    testWidgets('Delete: the address book reads as empty once the dialog is '
+        'open: nothing is deleted and the ledger keeps its entries (C14)',
+        (tester) async {
+      final broken = _ReadsEmpty();
+      await pumpApp(tester, broken);
+      await tapCreate(tester);
+      final ledgerBefore = await storedLedgerJson();
+
+      await tapAndOpenDialog(tester, kDeleteButton);
+      expect(dialogText(tester).title, 'Delete 4 fake contacts?');
+      broken.empty = true;
+      await tester.tap(dialogButton('Delete'));
+      await tester.pumpAndSettle();
+      expect(resultText(tester), 'Deleted 0 fake contacts.');
+      expect((await storedLedger()).entries,
+          Ledger.decode(ledgerBefore).entries);
+
+      // The fakes are still there, and the app still knows them.
+      broken.empty = false;
+      await tapDelete(tester);
+      expect(resultText(tester), 'Deleted 4 fake contacts.');
+      expect(broken.all, isEmpty);
     });
 
     testWidgets("if what a failed Delete did can't be read, it says so",

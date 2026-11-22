@@ -231,6 +231,26 @@ void main() {
       expect(main, contains('RawContactsChannel('));
     });
 
+    test('a query that gets no cursor fails the read, the first one too: a '
+        'provider that can\'t be reached must not read as no contacts (C14)',
+        () {
+      // The on-device test integration_test/provider_gone_test.dart runs the
+      // behaviour; this keeps the fast checks from passing without it.
+      final kotlin = File('android/app/src/main/kotlin/io/github/'
+              'thefanciestturtle/decoy_contacts/RawContactsChannel.kt')
+          .readAsStringSync();
+      for (final what in [
+        'the contacts',
+        'the raw contacts',
+        'the phone numbers and emails',
+      ]) {
+        expect(kotlin,
+            contains('?: throw IllegalStateException("no cursor for $what")'),
+            reason: what);
+      }
+      expect(kotlin, isNot(contains('firstBatch')));
+    });
+
     test('the release smoke test stores a record of its contact that the '
         'app reads, and waits for the status line that a read of it gives',
         () {
