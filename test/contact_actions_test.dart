@@ -1014,11 +1014,13 @@ void main() {
       expect(book.all, hasLength(5));
     });
 
-    test('a contact that is not a fake, with the same display name, is '
-        'never taken for one', () async {
+    test('a real contact with the name parts and the details of a fake, '
+        'which the app did not create, is never deleted', () async {
       await createFakeContacts(book, const LedgerStore(), settings);
-      // A real contact written by the same rule, with a number of its own.
-      book.add('王伟', phones: ['+15555550142']);
+      final fake = (await stored()).entries.values.firstWhere((e) => e.name == '伟 王');
+      final real = book.add('王伟', phones: [fake.phone], emails: [fake.email]);
+      book.setNameParts(book.rawIdsOf(real).single,
+          const NameParts(given: '伟', family: '王'));
 
       final deleted = await deleteFakeContacts(book, const LedgerStore());
       expect(deleted!.deleted, 4);

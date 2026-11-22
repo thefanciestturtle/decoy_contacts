@@ -24,6 +24,18 @@ class NameParts {
       .join(' ');
 
   @override
+  bool operator ==(Object other) =>
+      other is NameParts &&
+      other.prefix == prefix &&
+      other.given == given &&
+      other.middle == middle &&
+      other.family == family &&
+      other.suffix == suffix;
+
+  @override
+  int get hashCode => Object.hash(prefix, given, middle, family, suffix);
+
+  @override
   String toString() => 'NameParts($joined)';
 }
 

@@ -187,13 +187,14 @@ class RawContactsChannel(private val resolver: ContentResolver) :
                     when (it.getString(1)) {
                         Phone.CONTENT_ITEM_TYPE -> raw.phones.add(it.getString(2) ?: "")
                         Email.CONTENT_ITEM_TYPE -> raw.emails.add(it.getString(2) ?: "")
-                        else -> raw.nameParts = mapOf(
+                        StructuredName.CONTENT_ITEM_TYPE -> raw.nameParts = mapOf(
                             "prefix" to (it.getString(3) ?: ""),
                             "given" to (it.getString(4) ?: ""),
                             "middle" to (it.getString(5) ?: ""),
                             "family" to (it.getString(6) ?: ""),
                             "suffix" to (it.getString(7) ?: ""),
                         )
+                        else -> {}
                     }
                 }
             } ?: throw IllegalStateException("no cursor for the names, phone numbers and emails")
