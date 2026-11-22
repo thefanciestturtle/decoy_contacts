@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Email
 import android.provider.ContactsContract.CommonDataKinds.Phone
+import android.provider.ContactsContract.CommonDataKinds.StructuredName
 import android.provider.ContactsContract.Contacts
 import android.provider.ContactsContract.Data
 import android.provider.ContactsContract.RawContacts
@@ -43,8 +44,8 @@ class RawContactsChannel(private val resolver: ContentResolver) :
     /**
      * `read`, with an optional list of contact IDs ("contactIds"): the raw
      * contacts of those contacts, or of every contact. Answers a list of maps
-     * with "id", "contactId", "displayName", "phones" and "emails", in the
-     * order of the raw contact IDs.
+     * with "id", "contactId", "displayName", "nameParts", "phones" and
+     * "emails", in the order of the raw contact IDs.
      *
      * `delete`, with a list of raw contact IDs ("ids"): deletes those raw
      * contacts and nothing else (see [delete]). Answers nothing. Without the
@@ -80,13 +81,17 @@ class RawContactsChannel(private val resolver: ContentResolver) :
     }
 
     private class Raw(val id: Long, val contactId: Long, val displayName: String) {
+        // The parts of its name as stored (prefix, given, middle, family,
+        // suffix); null if it has no name.
+        var nameParts: Map<String, String>? = null
         val phones = mutableListOf<String>()
         val emails = mutableListOf<String>()
 
-        fun toMap(): Map<String, Any> = mapOf(
+        fun toMap(): Map<String, Any?> = mapOf(
             "id" to id.toString(),
             "contactId" to contactId.toString(),
             "displayName" to displayName,
+            "nameParts" to nameParts,
             "phones" to phones,
             "emails" to emails,
         )
@@ -94,7 +99,13 @@ class RawContactsChannel(private val resolver: ContentResolver) :
 
     /**
      * Three queries: the contacts, their raw contacts, and the raw contacts'
-     * phone numbers and email addresses.
+     * names, phone numbers and email addresses.
+     *
+     * Each raw contact's name is read as its parts, as they are stored, and
+     * not only as the display name: Android puts the parts of the display
+     * name in an order that depends on the script and the phone's language
+     * (the family name first, with no space, for Chinese, Japanese and
+     * Korean names), but keeps the parts as they were written.
      *
      * The contacts are those of the default directory, as the plugin reads
      * them: those the Contacts app shows, without hidden ones such as Gmail's
@@ -106,7 +117,7 @@ class RawContactsChannel(private val resolver: ContentResolver) :
      * fakes (the flutter_contacts plugin reads it so). A provider that
      * answers with no rows is an empty address book, and reads as one.
      */
-    private fun read(contactIds: List<String>?): List<Map<String, Any>> {
+    private fun read(contactIds: List<String>?): List<Map<String, Any?>> {
         val shown = HashSet<Long>()
         forEachBatch(contactIds) { batch ->
             resolver.query(
@@ -156,22 +167,37 @@ class RawContactsChannel(private val resolver: ContentResolver) :
             resolver.query(
                 Data.CONTENT_URI,
                 // DATA1 is Phone.NUMBER for a phone number and Email.ADDRESS
-                // for an email address.
-                arrayOf(Data.RAW_CONTACT_ID, Data.MIMETYPE, Data.DATA1),
-                "${Data.MIMETYPE} IN (?, ?) AND " + inList(Data.RAW_CONTACT_ID, batch!!),
-                arrayOf(Phone.CONTENT_ITEM_TYPE, Email.CONTENT_ITEM_TYPE) + batch,
+                // for an email address; the name's parts are its DATA2 to
+                // DATA6.
+                arrayOf(
+                    Data.RAW_CONTACT_ID, Data.MIMETYPE, Data.DATA1,
+                    StructuredName.PREFIX, StructuredName.GIVEN_NAME,
+                    StructuredName.MIDDLE_NAME, StructuredName.FAMILY_NAME,
+                    StructuredName.SUFFIX,
+                ),
+                "${Data.MIMETYPE} IN (?, ?, ?) AND " + inList(Data.RAW_CONTACT_ID, batch!!),
+                arrayOf(
+                    Phone.CONTENT_ITEM_TYPE, Email.CONTENT_ITEM_TYPE,
+                    StructuredName.CONTENT_ITEM_TYPE,
+                ) + batch,
                 null,
             )?.use {
                 while (it.moveToNext()) {
                     val raw = raws.getValue(it.getLong(0))
-                    val value = it.getString(2) ?: ""
-                    if (it.getString(1) == Phone.CONTENT_ITEM_TYPE) {
-                        raw.phones.add(value)
-                    } else {
-                        raw.emails.add(value)
+                    when (it.getString(1)) {
+                        Phone.CONTENT_ITEM_TYPE -> raw.phones.add(it.getString(2) ?: "")
+                        Email.CONTENT_ITEM_TYPE -> raw.emails.add(it.getString(2) ?: "")
+                        StructuredName.CONTENT_ITEM_TYPE -> raw.nameParts = mapOf(
+                            "prefix" to (it.getString(3) ?: ""),
+                            "given" to (it.getString(4) ?: ""),
+                            "middle" to (it.getString(5) ?: ""),
+                            "family" to (it.getString(6) ?: ""),
+                            "suffix" to (it.getString(7) ?: ""),
+                        )
+                        else -> {}
                     }
                 }
-            } ?: throw IllegalStateException("no cursor for the phone numbers and emails")
+            } ?: throw IllegalStateException("no cursor for the names, phone numbers and emails")
         }
         return raws.values.sortedBy { it.id }.map { it.toMap() }
     }
@@ -217,7 +243,7 @@ class RawContactsChannel(private val resolver: ContentResolver) :
         const val METHOD_READ = "read"
         const val METHOD_DELETE = "delete"
 
-        // SQLite allows 999 arguments per query; the Data query adds two.
+        // SQLite allows 999 arguments per query; the Data query adds three.
         private const val MAX_IDS_PER_QUERY = 900
     }
 }

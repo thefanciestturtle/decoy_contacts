@@ -622,6 +622,54 @@ void main() {
     expect(await storedLedger(), isEmpty);
   });
 
+  testWidgets('C16: fakes with Chinese, Japanese or Korean names, which '
+      'Android shows family name first with no space, are recorded, '
+      'recognised and deleted', (tester) async {
+    await startWithEmptyAddressBook(tester);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(SettingsStore.kLastNamesKey, '王, 山田');
+    await prefs.setString(SettingsStore.kFirstNamesKey, '伟, 太郎');
+    final real = await seed(kRealContacts);
+    await launchApp(tester);
+
+    expect(
+        await tapAndWaitForResult(tester, kCreate,
+            confirm: 'Create 4 fake contacts?'),
+        'Created 4 fake contacts.');
+    final book = await readAddressBook();
+    expectUnchanged(book, real);
+    final created = [
+      for (final c in book.values)
+        if (!real.containsKey(c.id)) c,
+    ];
+    // What this test is about: the display name is not "first last".
+    expect(created.map((c) => c.displayName),
+        unorderedEquals(['王伟', '王太郎', '山田伟', '山田太郎']));
+
+    // The ledger records the names the app created them with.
+    final ledger = await storedLedger();
+    expect(ledger.keys,
+        unorderedEquals([for (final c in created) ...rawIdsOf(c)]));
+    expect([for (final e in ledger.values) (e as Map)['name']],
+        unorderedEquals(['伟 王', '太郎 王', '伟 山田', '太郎 山田']));
+    await expectStatus(tester, '4 fake contacts on this phone.');
+
+    // A second Create knows them, and so does the status line after a
+    // restart (which reads the address book afresh).
+    expect(await tapAndWaitForResult(tester, kCreate),
+        'Nothing to create. 4 fake contacts already exist.');
+    expect(describeAll(await readAddressBook()), describeAll(book));
+    expect(await storedLedger(), ledger);
+
+    expect(
+        await tapAndWaitForResult(tester, kDelete,
+            confirm: 'Delete 4 fake contacts?'),
+        'Deleted 4 fake contacts.');
+    await expectStatus(tester, 'No fake contacts on this phone.');
+    expect(describeAll(await readAddressBook()), describeAll(real));
+    expect(await storedLedger(), isEmpty);
+  });
+
   testWidgets('U6: a Create or Delete that stops partway says how far it '
       'got, and trying again does the rest', (tester) async {
     await startWithEmptyAddressBook(tester);

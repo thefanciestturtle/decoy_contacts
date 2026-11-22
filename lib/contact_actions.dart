@@ -116,7 +116,7 @@ AddressBook addressBookOf(List<StoredContact> contacts) => {
 /// Every name/phone/email fingerprint of the raw contact [r], from its own
 /// details (see [fingerprintsOf]).
 Set<String> fingerprintsOfRawContact(StoredRawContact r) =>
-    fingerprintsOf(r.displayName, r.phones, r.emails).toSet();
+    fingerprintsOf(r.name, r.phones, r.emails).toSet();
 
 /// Raw contact ID -> its fingerprints (see [fingerprintsOfRawContact]), for
 /// every raw contact of [contacts].
