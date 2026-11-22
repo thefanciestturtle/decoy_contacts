@@ -2,6 +2,9 @@
 
 The versions of Decoy Contacts, newest first.
 
+## 2.0.2
+The app is unchanged. The version code inside each APK (the number Android and app stores compare to tell which is newer) is now ten times the build number plus 1 (`armeabi-v7a`), 2 (`arm64-v8a`) or 3 (`x86_64`), as F-Droid asks, instead of Flutter's own numbering. 2.0.1's were 1006, 2006 and 4006; 2.0.2's are 4011, 4012 and 4013. It installs over 2.0.1 as usual.
+
 ## 2.0.1
 The app is unchanged. The store description now says how the app was made.
 

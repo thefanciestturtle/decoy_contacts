@@ -1,0 +1,1 @@
+Version 2.0.2: the app is unchanged. Only the version code inside each APK is numbered differently, as F-Droid asks. It installs over 2.0.1 as usual.

@@ -6,12 +6,23 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' show min;
 
 import 'package:flutter_test/flutter_test.dart';
 
-/// Flutter's `--split-per-abi` version codes: the ABI's number times 1000,
-/// plus the build number (a test below checks tool/release_lib.sh's table).
-const abiNumbers = {'armeabi-v7a': 1, 'arm64-v8a': 2, 'x86_64': 4};
+/// The ABI's number in a release APK's version code: ten times the build
+/// number, plus this (tests below check tool/release_lib.sh's table and
+/// android/app/build.gradle.kts's).
+const abiNumbers = {'armeabi-v7a': 1, 'arm64-v8a': 2, 'x86_64': 3};
+
+/// Versions 2.0.0 and 2.0.1 had Flutter's own `--split-per-abi` codes, the
+/// ABI's number below times 1000, plus the build number (5 and 6), and
+/// their changelog files are named so. The highest was 4006.
+const flutterAbiNumbers = {'armeabi-v7a': 1, 'arm64-v8a': 2, 'x86_64': 4};
+const highestFlutterCode = 4006;
+
+/// The highest build number tool/release_lib.sh accepts.
+const maxBuild = 999999;
 
 /// What the app stores allow: plain ASCII, at most this many bytes.
 const maxChangelogBytes = 500;
@@ -31,7 +42,17 @@ final changelogDir = Directory('fastlane/metadata/android/en-US/changelogs');
 /// The version codes of the release APKs of the pubspec's version.
 Map<String, int> versionCodes() {
   final build = pubspecVersion().build;
-  return {for (final e in abiNumbers.entries) e.key: e.value * 1000 + build};
+  return {for (final e in abiNumbers.entries) e.key: build * 10 + e.value};
+}
+
+/// The lowest build number tool/release_lib.sh accepts (RELEASE_MIN_BUILD).
+int minBuild() {
+  final match = RegExp(
+    r'^readonly RELEASE_MIN_BUILD=(\d+)\s*$',
+    multiLine: true,
+  ).firstMatch(File('tool/release_lib.sh').readAsStringSync());
+  expect(match, isNotNull, reason: 'release_lib.sh has RELEASE_MIN_BUILD');
+  return int.parse(match!.group(1)!);
 }
 
 void main() {
@@ -48,10 +69,28 @@ void main() {
     expect(scripts, abiNumbers);
   });
 
-  test('the build number leaves room for the ABI in the version code', () {
-    // release_lib.sh checks 1..999 too: 1000 or more would run into the next
-    // ABI's codes.
-    expect(pubspecVersion().build, inInclusiveRange(1, 999));
+  test('... and the ones android/app/build.gradle.kts gives the APKs', () {
+    final line = RegExp(
+      r'^val abiDigits = mapOf\((.*)\)\s*$',
+      multiLine: true,
+    ).firstMatch(File('android/app/build.gradle.kts').readAsStringSync());
+    expect(line, isNotNull, reason: 'build.gradle.kts has abiDigits');
+    final gradle = {
+      for (final m in RegExp(
+        r'"([\w-]+)" to (\d+)',
+      ).allMatches(line!.group(1)!))
+        m.group(1)!: int.parse(m.group(2)!),
+    };
+    expect(gradle, abiNumbers);
+  });
+
+  test('the build number puts every version code above the older ones', () {
+    // Android installs an update only over a lower versionCode, and the
+    // first two releases had Flutter's numbering, up to 4006.
+    final lowest = minBuild() * 10 + abiNumbers.values.reduce(min);
+    expect(lowest, greaterThan(highestFlutterCode));
+    expect(pubspecVersion().build, greaterThanOrEqualTo(minBuild()));
+    expect(pubspecVersion().build, lessThanOrEqualTo(maxBuild));
   });
 
   group('the changelog files for the app stores', () {
@@ -78,11 +117,20 @@ void main() {
         for (final name in names) {
           expect(name, matches(RegExp(r'^[1-9]\d{3,}\.txt$')));
           final code = int.parse(name.split('.').first);
-          expect(
-            abiNumbers.values,
-            contains(code ~/ 1000),
-            reason: '$name starts with an ABI number',
-          );
+          if (code <= highestFlutterCode) {
+            expect(
+              flutterAbiNumbers.values,
+              contains(code ~/ 1000),
+              reason:
+                  "$name (Flutter's own numbering) starts with an ABI number",
+            );
+          } else {
+            expect(
+              abiNumbers.values,
+              contains(code % 10),
+              reason: '$name ends with an ABI number',
+            );
+          }
           expect(
             File('${changelogDir.path}/$name').statSync().type,
             FileSystemEntityType.file,

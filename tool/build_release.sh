@@ -15,8 +15,8 @@
 #   flutter build apk --release --split-per-abi --target-platform <platform>
 # as F-Droid builds each in a build block of its own. --abi builds only that
 # one (give it again for more). Each APK must hold native code for its ABI
-# only, and have the versionCode ABI_CODE * 1000 + the build number in
-# pubspec.yaml (Flutter's numbering; see tool/release_lib.sh).
+# only, and have the versionCode 10 * the build number in pubspec.yaml +
+# ABI_CODE (see tool/release_lib.sh).
 #
 # They go to dist/decoy_contacts-<version>-<abi>-unsigned.apk, once all of
 # them are built. If such a file is already there, the new build must be
@@ -158,8 +158,9 @@ java_found="$(java_version "$JAVA_HOME/bin/java")" ||
   fail "JAVA_HOME is Java ${java_found:-unknown}; this commit is built with" \
        "Java $java_wanted (JAVA_VERSION in .github/workflows/dart.yml)"
 read -r version build_number < <(pubspec_version "$work/pubspec.yaml") ||
-  fail "the version in the commit's pubspec.yaml must look like 2.0.0+5:" \
-       "numbers and dots, then + and a build number from 1 to 999"
+  fail "the version in the commit's pubspec.yaml must look like 2.0.2+401:" \
+       "numbers and dots, then + and a build number from $RELEASE_MIN_BUILD" \
+       "(RELEASE_MIN_BUILD in tool/release_lib.sh) to 999999"
 
 if [[ -z "$flutter_sdk" ]]; then
   flutter_sdk="$cache/flutter-$flutter_version"

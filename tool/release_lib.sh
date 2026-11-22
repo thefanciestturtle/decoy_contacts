@@ -17,18 +17,29 @@ readonly DIST_DIR=dist
 
 # The ABIs (processor types) a release has an APK for, one each, built with
 # `flutter build apk --split-per-abi`: 32-bit ARM phones, 64-bit ARM phones,
-# and x86_64 (Chromebooks, emulators). Flutter gives each one's APK the
-# versionCode ABI_CODE * 1000 + the build number (the number after the + in
-# pubspec.yaml's version), so app stores offer a 64-bit phone the arm64-v8a
-# APK, the highest code it can run. These are Flutter's own codes
-# (ABI_VERSION in its Gradle plugin); tool/build_release.sh checks every
-# APK's.
+# and x86_64 (Chromebooks, emulators). Each one's APK has the versionCode 10
+# * the build number (the number after the + in pubspec.yaml's version) +
+# ABI_CODE. The ABI is the last digit, as F-Droid's documentation asks, so
+# that F-Droid, which keeps the APKs with the highest codes, keeps the newest
+# of every ABI; and app stores offer a 64-bit phone the arm64-v8a APK, the
+# highest code it can run. android/app/build.gradle.kts sets the codes
+# (Flutter's own, ABI * 1000 + the build number, are replaced there) and has
+# the same digits; tool/build_release.sh checks every APK's.
 readonly RELEASE_ABIS=(armeabi-v7a arm64-v8a x86_64)
-declare -rA ABI_CODE=([armeabi-v7a]=1 [arm64-v8a]=2 [x86_64]=4)
+declare -rA ABI_CODE=([armeabi-v7a]=1 [arm64-v8a]=2 [x86_64]=3)
 # The name Flutter's --target-platform knows each one by.
 declare -rA ABI_PLATFORM=(
   [armeabi-v7a]=android-arm [arm64-v8a]=android-arm64 [x86_64]=android-x64
 )
+
+# The lowest build number a release can have. Versions 2.0.0 and 2.0.1 had
+# Flutter's own versionCodes, ABI * 1000 + the build number, up to 4006
+# (x86_64, build number 6). Android installs an update only over a lower
+# versionCode, so every code of a release must be above those: with 401 the
+# codes are 4011, 4012 and 4013. (test/release_notes_test.dart checks this.)
+# It is only a floor: each release must also have a higher build number than
+# the one before it (DEVELOPMENT.md), which nothing here can check.
+readonly RELEASE_MIN_BUILD=401
 
 # Stops the script (fail) if APK $1 has native code, but none for ABI $2
 # (so it would test another ABI's build, or not install at all).
@@ -285,23 +296,24 @@ readonly OLDEST_SIGNABLE_SDK=24
 readonly RELEASE_MIN_SDK=24
 
 # The versionName and build number in pubspec.yaml file $1, as "NAME
-# BUILD": "version: 2.0.0+5" gives "2.0.0 5". The name is numbers and dots
-# (it goes into the APKs' file names). The APKs' versionCodes are made from
-# the build number (see RELEASE_ABIS), so it must be there, from 1 to 999
-# (with 1000 or more, one ABI's code could be another's), written without a
-# leading zero (as Flutter reads it). Quoted or not, with or without a
-# comment after it (after a space, as YAML wants). Fails otherwise, or if
-# there isn't exactly one version line.
+# BUILD": "version: 2.0.2+401" gives "2.0.2 401". The name is numbers and
+# dots (it goes into the APKs' file names). The APKs' versionCodes are made
+# from the build number (see RELEASE_ABIS), so it must be there: at least
+# RELEASE_MIN_BUILD, at most 999999, written without a leading zero (as
+# Flutter reads it). Quoted or not, with or without a comment after it
+# (after a space, as YAML wants). Fails otherwise, or if there isn't exactly
+# one version line.
 pubspec_version() {
   local line value
   line="$(grep '^version:' "$1" 2>/dev/null)" || return 1
   [[ "$line" != *$'\n'* ]] || return 1
-  local version='([0-9]+(\.[0-9]+)*)\+([1-9][0-9]{0,2})'
+  local version='([0-9]+(\.[0-9]+)*)\+([1-9][0-9]{2,5})'
   local after='([[:space:]]+#.*)?[[:space:]]*$'
   value="${line#version:}"
   if [[ "$value" =~ ^[[:space:]]*$version$after ||
         "$value" =~ ^[[:space:]]*\"$version\"$after ||
         "$value" =~ ^[[:space:]]*\'$version\'$after ]]; then
+    ((BASH_REMATCH[3] >= RELEASE_MIN_BUILD)) || return 1
     echo "${BASH_REMATCH[1]} ${BASH_REMATCH[3]}"
   else
     return 1
@@ -310,13 +322,13 @@ pubspec_version() {
 
 # Stops the script (fail) unless APK $1 is the release APK for ABI $2 of
 # version $3 with build number $4: unsigned, with native code for that ABI
-# only, with the versionCode ABI_CODE * 1000 + $4 and the versionName $3,
+# only, with the versionCode 10 * $4 + ABI_CODE and the versionName $3,
 # the minSdkVersion RELEASE_MIN_SDK (not below OLDEST_SIGNABLE_SDK), asking
 # for no permission but RELEASE_PERMISSIONS, and naming no home folder but
 # the build sandbox's.
 check_release_apk() {
   local apk=$1 abi=$2 version=$3 build=$4 found
-  local code=$((ABI_CODE[$abi] * 1000 + build))
+  local code=$((build * 10 + ABI_CODE[$abi]))
   if is_signed "$apk"; then
     fail "the $abi APK is signed: release builds must be unsigned" \
          "(android/app/build.gradle.kts)"
@@ -327,7 +339,7 @@ check_release_apk() {
   found="$(apk_version "$apk")" || fail "couldn't read the $abi APK's version"
   [[ "$found" == "$code $version" ]] ||
     fail "the $abi APK has versionCode and versionName '$found'," \
-         "not '$code $version' (${ABI_CODE[$abi]} * 1000 + $build)"
+         "not '$code $version' (10 * $build + ${ABI_CODE[$abi]})"
   found="$(apk_min_sdk "$apk")" ||
     fail "couldn't read the $abi APK's minSdkVersion"
   ((found >= OLDEST_SIGNABLE_SDK)) ||
