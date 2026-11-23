@@ -31,7 +31,7 @@ dependencies:
   # Flutter's Material widgets (buttons, text fields, dialogs, the theme),
   # moved out of Flutter into this package; Flutter's own copy,
   # package:flutter/material.dart, is deprecated from Flutter 3.50.
-  material_ui: ^1.11.0
+  material_ui: ^1.11.1
   shared_preferences: ^2.5.6
   # Opens the source code's web page in the browser (About).
   url_launcher: ^6.3.3
