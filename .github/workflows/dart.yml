@@ -14,7 +14,7 @@ permissions:
 env:
   # One line with an exact version: the release scripts (tool/check_lib.sh)
   # and the recipe for F-Droid's builds read it from here.
-  FLUTTER_VERSION: 3.50.0
+  FLUTTER_VERSION: 3.50.1
   # The JDK that runs the build, an LTS release. (The app's own Java/Kotlin
   # level is set in android/app/build.gradle.kts. On the phone the app runs
   # on Android's runtime, not on this JDK.)
