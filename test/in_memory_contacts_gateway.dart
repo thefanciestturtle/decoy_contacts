@@ -36,6 +36,11 @@ class InMemoryContactsGateway implements ContactsGateway {
   String Function(String first, String last) androidDisplayName =
       (first, last) => '$first $last';
 
+  /// Raw contact IDs that [getAll] leaves out though they exist, as when
+  /// Android moves a raw contact to another contact between the reader's
+  /// queries. [existingRawContacts] still finds them.
+  final Set<String> missedByReads = {};
+
   /// What [requestPermission] answers.
   PermissionAnswer permission = PermissionAnswer.granted;
 
@@ -46,6 +51,7 @@ class InMemoryContactsGateway implements ContactsGateway {
   /// When set, the matching call throws it.
   Object? openSettingsError;
   Object? getAllError;
+  Object? existingRawContactsError;
   Object? createAllError;
   Object? deleteRawContactsError;
 
@@ -77,6 +83,7 @@ class InMemoryContactsGateway implements ContactsGateway {
   int permissionChecks = 0;
   int openSettingsCalls = 0;
   int getAllCalls = 0;
+  final List<List<String>> existingRawContactsCalls = [];
   final List<List<NewContact>> createAllCalls = [];
   final List<List<String>> deleteRawContactsCalls = [];
 
@@ -136,7 +143,11 @@ class InMemoryContactsGateway implements ContactsGateway {
   String unusedRawId() => '${_nextRawId++}';
 
   /// All contacts, read without going through the gateway's counters.
-  List<StoredContact> get all => [for (final id in _contacts.keys) _toStored(id)];
+  List<StoredContact> get all => [
+        for (final id in _contacts.keys)
+          if (_contacts[id]!.any((r) => !missedByReads.contains(r.id)))
+            _toStored(id),
+      ];
 
   List<String> get displayNames => [for (final c in all) c.displayName];
 
@@ -167,7 +178,8 @@ class InMemoryContactsGateway implements ContactsGateway {
 
   StoredContact _toStored(String id) => StoredContact(id: id, rawContacts: [
         for (final r in _contacts[id]!)
-          StoredRawContact(
+          if (!missedByReads.contains(r.id))
+            StoredRawContact(
             id: r.id,
             displayName: r.displayName,
             nameParts: r.nameParts,
@@ -201,8 +213,20 @@ class InMemoryContactsGateway implements ContactsGateway {
     if (getAllError != null) throw getAllError!;
     return [
       for (final id in _contacts.keys)
-        if (ids == null || ids.contains(id)) _toStored(id),
+        if ((ids == null || ids.contains(id)) &&
+            _contacts[id]!.any((r) => !missedByReads.contains(r.id)))
+          _toStored(id),
     ];
+  }
+
+  @override
+  Future<Set<String>> existingRawContacts(List<String> rawContactIds) async {
+    existingRawContactsCalls.add(rawContactIds);
+    if (existingRawContactsError != null) throw existingRawContactsError!;
+    return {
+      for (final id in rawContactIds)
+        if (contactOfRaw(id) != null) id,
+    };
   }
 
   @override

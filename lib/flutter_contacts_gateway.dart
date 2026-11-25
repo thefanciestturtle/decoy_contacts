@@ -53,6 +53,17 @@ class FlutterContactsGateway implements ContactsGateway {
     return contactsOfRawContacts(raws ?? const []);
   }
 
+  /// Asked of the app's own Android code (RawContactsChannel.kt): a raw
+  /// contact that [getAll] misses (say, Android moved it to another contact
+  /// between its queries) still exists.
+  @override
+  Future<Set<String>> existingRawContacts(List<String> rawContactIds) async {
+    if (rawContactIds.isEmpty) return const {};
+    final found = await kRawContactsChannel.invokeListMethod<String>(
+        kExistingRawContacts, {'ids': rawContactIds});
+    return {...?found};
+  }
+
   @override
   Future<List<String>> createAll(List<NewContact> contacts) {
     return FlutterContacts.createAll([
@@ -91,6 +102,10 @@ const String kOpenAppSettings = 'open';
 /// The method on [kRawContactsChannel] that reads raw contacts: those of the
 /// contacts with the IDs in its argument "contactIds", or of every contact.
 const String kReadRawContacts = 'read';
+
+/// The method on [kRawContactsChannel] that answers which of the raw contact
+/// IDs in its argument "ids" exist.
+const String kExistingRawContacts = 'existing';
 
 /// The method on [kRawContactsChannel] that deletes the raw contacts with
 /// the IDs in its argument "ids", and no others.

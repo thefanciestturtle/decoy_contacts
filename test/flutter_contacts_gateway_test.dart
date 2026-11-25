@@ -294,6 +294,34 @@ void main() {
           throwsA(isA<PlatformException>()));
     });
 
+    test('existingRawContacts asks for the IDs it is given and answers those '
+        'that exist; an error is passed on (C18)', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(kRawContactsChannel, (call) async {
+        calls.add(call);
+        return ['22', '24'];
+      });
+      calls = [];
+      expect(await gateway.existingRawContacts(['22', '23', '24']),
+          {'22', '24'});
+      expect([for (final c in calls) c.method], [kExistingRawContacts]);
+      expect([for (final c in calls) c.arguments], [
+        {
+          'ids': ['22', '23', '24']
+        },
+      ]);
+
+      android(null, error: PlatformException(code: 'existing_failed'));
+      await expectLater(gateway.existingRawContacts(['22']),
+          throwsA(isA<PlatformException>()));
+    });
+
+    test('existingRawContacts with no IDs asks nothing (C18)', () async {
+      android(null);
+      expect(await gateway.existingRawContacts([]), isEmpty);
+      expect(calls, isEmpty);
+    });
+
     test("the Android side answers on the channel and methods the Dart side "
         "calls, with the details it reads", () {
       final kotlin = File('android/app/src/main/kotlin/io/github/'
@@ -301,6 +329,7 @@ void main() {
           .readAsStringSync();
       expect(kotlin, contains('CHANNEL = "${kRawContactsChannel.name}"'));
       expect(kotlin, contains('METHOD_READ = "$kReadRawContacts"'));
+      expect(kotlin, contains('METHOD_EXISTING = "$kExistingRawContacts"'));
       expect(kotlin, contains('METHOD_DELETE = "$kDeleteRawContacts"'));
       expect(kotlin, contains('call.argument<List<String>>("contactIds")'));
       expect(kotlin, contains('call.argument<List<String>>("ids")'));

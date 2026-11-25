@@ -148,6 +148,11 @@ abstract interface class ContactsGateway {
   /// raw contacts.
   Future<List<StoredContact>> getAll({List<String>? ids});
 
+  /// Those of the raw contact IDs that exist: not deleted, whichever contact
+  /// they are in (also none, or one that [getAll] leaves out). Fails if the
+  /// address book can't be reached, rather than saying none exist.
+  Future<Set<String>> existingRawContacts(List<String> rawContactIds);
+
   /// Creates [contacts] and returns their contact IDs, in the same order.
   Future<List<String>> createAll(List<NewContact> contacts);
 

@@ -47,6 +47,9 @@ class RawContactsChannel(private val resolver: ContentResolver) :
      * with "id", "contactId", "displayName", "nameParts", "phones" and
      * "emails", in the order of the raw contact IDs.
      *
+     * `existing`, with a list of raw contact IDs ("ids"): answers those of
+     * them that exist (see [existing]). Without the list it fails.
+     *
      * `delete`, with a list of raw contact IDs ("ids"): deletes those raw
      * contacts and nothing else (see [delete]). Answers nothing. Without the
      * list it fails, and deletes nothing.
@@ -55,6 +58,12 @@ class RawContactsChannel(private val resolver: ContentResolver) :
         when (call.method) {
             METHOD_READ -> answer(result, "read_failed") {
                 read(call.argument<List<String>>("contactIds"))
+            }
+            METHOD_EXISTING -> answer(result, "existing_failed") {
+                existing(
+                    call.argument<List<String>>("ids")
+                        ?: throw IllegalArgumentException("no raw contact IDs to look for"),
+                )
             }
             METHOD_DELETE -> answer(result, "delete_failed") {
                 delete(
@@ -203,6 +212,32 @@ class RawContactsChannel(private val resolver: ContentResolver) :
     }
 
     /**
+     * The raw contact IDs among [ids] that exist: those the provider holds and
+     * hasn't marked as deleted (one waiting for its account's sync to remove
+     * it is gone for the user). Whichever contact they are in, hidden or not,
+     * or none: unlike [read], it doesn't depend on how Android has grouped
+     * them into contacts at the moment.
+     *
+     * If the provider gets no cursor (it can't be reached, say it is
+     * disabled), it fails: that must not read as "none of them exist".
+     */
+    private fun existing(ids: List<String>): List<String> {
+        val found = mutableListOf<String>()
+        for (batch in ids.chunked(MAX_IDS_PER_QUERY)) {
+            resolver.query(
+                RawContacts.CONTENT_URI,
+                arrayOf(RawContacts._ID),
+                "${RawContacts.DELETED} = 0 AND " + inList(RawContacts._ID, batch),
+                batch.toTypedArray(),
+                null,
+            )?.use {
+                while (it.moveToNext()) found.add(it.getLong(0).toString())
+            } ?: throw IllegalStateException("no cursor for the raw contacts")
+        }
+        return found
+    }
+
+    /**
      * Deletes the raw contacts with the IDs [ids], and no others: not the
      * other raw contacts of their contacts. As the Contacts app does (no sync
      * adapter flag): one stored on the phone goes at once, with its details,
@@ -241,6 +276,7 @@ class RawContactsChannel(private val resolver: ContentResolver) :
     companion object {
         const val CHANNEL = "io.github.thefanciestturtle.decoy_contacts/raw_contacts"
         const val METHOD_READ = "read"
+        const val METHOD_EXISTING = "existing"
         const val METHOD_DELETE = "delete"
 
         // SQLite allows 999 arguments per query; the Data query adds three.
