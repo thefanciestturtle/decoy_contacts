@@ -237,6 +237,11 @@ class DeletePreview {
 /// any more. One kept wrongly does no harm to Delete, which only acts on raw
 /// contacts it has read, and checks each one's name, phone number and email.
 ///
+/// It can't tell a fake from another contact that now holds its raw contact
+/// ID (after the provider's storage was reset): that entry stays, and Create
+/// takes the name for a fake that exists. Delete is not affected: it only
+/// acts on raw contacts it has read, and checks them.
+///
 /// A read that finds nothing at all prunes nothing and asks nothing: the
 /// address book may really be empty, but a read can also come back empty
 /// when it shouldn't (say, the contacts provider is restarting; one that

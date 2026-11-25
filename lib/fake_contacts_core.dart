@@ -237,8 +237,8 @@ Iterable<String> fingerprintsOf(
 ///
 /// A name is skipped if it's a tracked fake that's still present (in [book],
 /// or among [alsoPresent]: raw contacts known to exist that a read of the
-/// address book missed), or if some raw contact already has exactly the name, phone and email this name would
-/// be created with (listed in [existingFingerprints], matched via
+/// address book missed), or if some raw contact already has exactly the
+/// name, phone and email this name would be created with (listed in [existingFingerprints], matched via
 /// [fingerprintOf]). The second check stops a duplicate set appearing even
 /// if the ledger is lost, e.g. after the app's data is cleared. It only
 /// prevents creation; deletion never relies on it.

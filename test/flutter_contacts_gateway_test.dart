@@ -316,6 +316,12 @@ void main() {
           throwsA(isA<PlatformException>()));
     });
 
+    test('existingRawContacts: no answer is an error, not "none exist" (C18)',
+        () async {
+      android(null);
+      await expectLater(gateway.existingRawContacts(['22']), throwsStateError);
+    });
+
     test('existingRawContacts with no IDs asks nothing (C18)', () async {
       android(null);
       expect(await gateway.existingRawContacts([]), isEmpty);

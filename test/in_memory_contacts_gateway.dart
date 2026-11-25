@@ -180,12 +180,12 @@ class InMemoryContactsGateway implements ContactsGateway {
         for (final r in _contacts[id]!)
           if (!missedByReads.contains(r.id))
             StoredRawContact(
-            id: r.id,
-            displayName: r.displayName,
-            nameParts: r.nameParts,
-            phones: [...r.phones],
-            emails: [...r.emails],
-          ),
+              id: r.id,
+              displayName: r.displayName,
+              nameParts: r.nameParts,
+              phones: [...r.phones],
+              emails: [...r.emails],
+            ),
       ]);
 
   @override

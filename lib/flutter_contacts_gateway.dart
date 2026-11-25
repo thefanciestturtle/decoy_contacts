@@ -61,7 +61,9 @@ class FlutterContactsGateway implements ContactsGateway {
     if (rawContactIds.isEmpty) return const {};
     final found = await kRawContactsChannel.invokeListMethod<String>(
         kExistingRawContacts, {'ids': rawContactIds});
-    return {...?found};
+    // No answer isn't "none exist": that would drop every entry.
+    if (found == null) throw StateError('no answer to existingRawContacts');
+    return {...found};
   }
 
   @override
