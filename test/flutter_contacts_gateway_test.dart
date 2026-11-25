@@ -161,8 +161,11 @@ void main() {
       expect(kotlin, contains('activity.startActivity('));
       expect(kotlin, contains('ACTION_APPLICATION_DETAILS_SETTINGS'));
       // Without the flag the page joins Settings' own task (the bug).
-      expect(kotlin, isNot(contains('addFlags')));
-      expect(kotlin, isNot(contains('.flags')));
+      final code = kotlin.replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), '');
+      expect(code, isNot(contains('FLAG_ACTIVITY')));
+      expect(code, isNot(contains('addFlags')));
+      expect(code, isNot(contains('setFlags')));
+      expect(code, isNot(contains('.flags')));
       expect(kotlin, contains('result.error('));
       expect(File('${dir}MainActivity.kt').readAsStringSync(),
           contains('AppSettingsChannel(this)'));

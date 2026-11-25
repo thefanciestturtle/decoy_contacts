@@ -37,7 +37,7 @@ class AppSettingsChannel(private val activity: Activity) : MethodChannel.MethodC
                         .setData(Uri.fromParts("package", activity.packageName, null)),
                 )
                 result.success(null)
-            } catch (e: Throwable) {
+            } catch (e: Exception) {
                 result.error("open_failed", e.toString(), null)
             }
             else -> result.notImplemented()
