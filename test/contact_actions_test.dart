@@ -882,6 +882,214 @@ void main() {
     });
   });
 
+  // C18: the ledger is pruned only of what the address book confirms is
+  // gone. A read can miss a raw contact that exists (Android moving it to
+  // another contact between the reader's queries, say); its entry must stay.
+  group('a fake that the read missed (C18)', () {
+    late String zoeZen;
+
+    /// The four fakes, with the one called "Zoe Zen" missed by every read.
+    Future<void> createAndMissZoeZen() async {
+      await createFakeContacts(book, const LedgerStore(), kSettings);
+      zoeZen = book.rawIdsOf(book.idOf('Zoe Zen')).single;
+      book.missedByReads.add(zoeZen);
+      book.existingRawContactsCalls.clear();
+    }
+
+    test('Create keeps its entry, and neither makes it again nor asks about '
+        'the others', () async {
+      await createAndMissZoeZen();
+
+      final result =
+          await createFakeContacts(book, const LedgerStore(), kSettings);
+
+      expect(result!.created, 0);
+      expect(result.alreadyExisted, 4);
+      expect(book.all, hasLength(3));
+      expect((await stored()).entries.keys, contains(zoeZen));
+      expect((await stored()).length, 4);
+      // Only the one the read missed was looked up.
+      expect(book.existingRawContactsCalls, [
+        [zoeZen],
+      ]);
+    });
+
+    test('Create with more to make: it keeps the entry and makes no second '
+        'one of it', () async {
+      await createAndMissZoeZen();
+
+      final result = await createFakeContacts(
+          book,
+          const LedgerStore(),
+          const Settings(
+              lastNamesText: 'Zen, Zima',
+              firstNamesText: 'Zoe, Zach, Zed',
+              phoneTemplateText: kDefaultPhoneTemplate,
+              emailTemplateText: kDefaultEmailTemplate));
+
+      expect(result!.created, 2); // Zed Zen and Zed Zima
+      expect(result.alreadyExisted, 4);
+      book.missedByReads.clear();
+      expect(book.displayNames.where((n) => n == 'Zoe Zen'), hasLength(1));
+      expect(book.all, hasLength(6));
+      expect((await stored()).entries.keys, contains(zoeZen));
+      expect((await stored()).length, 6);
+    });
+
+    test('Create: its pending record counts the one the read missed among '
+        'the raw contacts that exist', () async {
+      await createFakeContacts(book, const LedgerStore(), kSettings);
+      final last = book.rawIdsOf(book.idOf('Zach Zima')).single;
+      book.missedByReads.add(last);
+      int? maxRawId;
+      book.beforeCreateAll = (call) async {
+        maxRawId = (await const LedgerStore().loadWithPending()).pending!.maxRawId;
+      };
+
+      await createFakeContacts(
+          book,
+          const LedgerStore(),
+          const Settings(
+              lastNamesText: 'Zen, Zima',
+              firstNamesText: 'Zoe, Zach, Zed',
+              phoneTemplateText: kDefaultPhoneTemplate,
+              emailTemplateText: kDefaultEmailTemplate));
+
+      expect(maxRawId, int.parse(last));
+    });
+
+    test('Create: a fake the user deleted is dropped, one the read missed '
+        'is kept', () async {
+      await createAndMissZoeZen();
+      book.removeContact(book.idOf('Zach Zima'));
+
+      final result =
+          await createFakeContacts(book, const LedgerStore(), kSettings);
+
+      // Zach Zima is made again; Zoe Zen isn't.
+      expect(result!.created, 1);
+      final ledger = await stored();
+      expect(ledger.length, 4);
+      expect(ledger.entries.keys, contains(zoeZen));
+      expect(book.existingRawContactsCalls.single, hasLength(2));
+    });
+
+    test('Delete deletes the others, keeps its entry, and a later Delete '
+        'removes it once the read sees it', () async {
+      await createAndMissZoeZen();
+
+      var result = await deleteFakeContacts(book, const LedgerStore());
+
+      expect(result!.deleted, 3);
+      expect((await stored()).entries.keys, [zoeZen]);
+      expect(book.contactOfRaw(zoeZen), isNotNull);
+
+      book.missedByReads.clear();
+      result = await deleteFakeContacts(book, const LedgerStore());
+      expect(result!.deleted, 1);
+      expect(book.all, isEmpty);
+      expect((await stored()).isEmpty, isTrue);
+    });
+
+    test('Delete: the only fake left is the one the read missed, and it is '
+        'still kept (the read finds other contacts)', () async {
+      await createAndMissZoeZen();
+      for (final name in ['Zoe Zima', 'Zach Zen', 'Zach Zima']) {
+        book.removeContact(book.idOf(name));
+      }
+      book.add('Real Person');
+
+      final result = await deleteFakeContacts(book, const LedgerStore());
+
+      expect(result!.deleted, 0);
+      expect((await stored()).entries.keys, [zoeZen]);
+    });
+
+    test('the fake the read missed is gone for good: its entry is dropped',
+        () async {
+      await createAndMissZoeZen();
+      book.removeContact(book.contactOfRaw(zoeZen)!);
+      book.add('Real Person');
+
+      await deleteFakeContacts(book, const LedgerStore());
+
+      expect((await stored()).isEmpty, isTrue);
+      expect(book.existingRawContactsCalls, [
+        [zoeZen],
+      ]);
+    });
+
+    test('previews and the count change nothing, and count only what the '
+        'read finds', () async {
+      await createAndMissZoeZen();
+      final before = await stored();
+
+      expect((await previewDelete(book, const LedgerStore())).toDelete, 3);
+      expect((await countFakeContacts(book, const LedgerStore())).toDelete, 3);
+      expect((await previewCreate(book, const LedgerStore(), kSettings)).toCreate,
+          0);
+
+      expect((await stored()).entries, before.entries);
+    });
+
+    test('an address book that reads as empty asks nothing and prunes '
+        'nothing', () async {
+      final broken = _ReadsEmpty();
+      await createFakeContacts(broken, const LedgerStore(), kSettings);
+      broken.empty = true;
+
+      await deleteFakeContacts(broken, const LedgerStore());
+      await createFakeContacts(broken, const LedgerStore(), kSettings);
+
+      expect(broken.existingRawContactsCalls, isEmpty);
+    });
+
+    test('nothing missed: nothing asked', () async {
+      await createFakeContacts(book, const LedgerStore(), kSettings);
+      await createFakeContacts(book, const LedgerStore(), kSettings);
+      await deleteFakeContacts(book, const LedgerStore());
+
+      expect(book.existingRawContactsCalls, isEmpty);
+    });
+
+    test("if the address book can't say what exists, Create and Delete fail "
+        'and change nothing', () async {
+      await createAndMissZoeZen();
+      final before = await stored();
+      book.existingRawContactsError = Exception('provider gone');
+
+      await expectLater(
+          createFakeContacts(book, const LedgerStore(), kSettings),
+          throwsA(isA<Exception>()));
+      await expectLater(
+          deleteFakeContacts(book, const LedgerStore()), throwsA(isA<Exception>()));
+      await expectLater(countFakeContacts(book, const LedgerStore()),
+          throwsA(isA<Exception>()));
+
+      expect(book.all, hasLength(3));
+      expect(book.createAllCalls, hasLength(1)); // the first Create only
+      expect(book.deleteRawContactsCalls, isEmpty);
+      expect((await stored()).entries, before.entries);
+    });
+
+    test('a fake recovered after a Create that failed partway is kept too, '
+        'if the read misses it', () async {
+      book.createAllError = Exception('provider gone');
+      book.createAllStopsAfter = 2;
+      await expectLater(createFakeContacts(book, const LedgerStore(), kSettings),
+          throwsA(isA<StoppedPartway>()));
+      final made = [for (final c in book.all) c.rawContacts.single.id];
+      expect(made, hasLength(2));
+      expect((await stored()).entries.keys, unorderedEquals(made));
+      book.missedByReads.add(made.first);
+
+      final result = await deleteFakeContacts(book, const LedgerStore());
+
+      expect(result!.deleted, 1);
+      expect((await stored()).entries.keys, [made.first]);
+    });
+  });
+
   group('Delete deletes exactly the fakes it checked (C17)', () {
     for (final (how, keepsTheFakesContact) in [
       // As the Contacts app's "Link" does: the older contact ID stays.

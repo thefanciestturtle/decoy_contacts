@@ -151,6 +151,25 @@ class RealContactArrivesBeforeDelete extends FlutterContactsGateway {
   }
 }
 
+/// The device's address book, but a read leaves out the raw contacts in
+/// [missed] though they exist, as when Android moves a raw contact to
+/// another contact between the reader's queries (C18).
+class ReadsMiss extends FlutterContactsGateway {
+  ReadsMiss(this.missed);
+
+  final Set<String> missed;
+
+  @override
+  Future<List<StoredContact>> getAll({List<String>? ids}) async => [
+        for (final c in await super.getAll(ids: ids))
+          if (c.rawContacts.any((r) => !missed.contains(r.id)))
+            StoredContact(id: c.id, rawContacts: [
+              for (final r in c.rawContacts)
+                if (!missed.contains(r.id)) r,
+            ]),
+      ];
+}
+
 /// The device's address book, but each create call waits a moment first,
 /// so a test can tap Stop while the first one runs.
 class SlowCreate extends FlutterContactsGateway {
@@ -409,6 +428,109 @@ void main() {
     // Once it is gone, its ID is passed over.
     await gateway.deleteRawContacts([fakeRaw]);
     expect(describeAll(await readAddressBook()), describeAll(book));
+  });
+
+  testWidgets('C18: the app asks the provider which raw contacts exist: '
+      'those deleted or never there are left out, also past a batch of 900',
+      (tester) async {
+    await startWithEmptyAddressBook(tester);
+    final real = await seed(kRealContacts);
+    final [alive, goner, third] = [
+      for (final c in real.values.take(3)) rawIdsOf(c).single
+    ];
+    const gateway = FlutterContactsGateway();
+    await gateway.deleteRawContacts([goner]);
+
+    expect(await gateway.existingRawContacts([goner, '999999']), isEmpty);
+    expect(await gateway.existingRawContacts([]), isEmpty);
+    expect(await gateway.existingRawContacts([goner, alive, '999999']),
+        {alive});
+    // One in another account is only marked as deleted (a sync adapter
+    // would remove it later): it is gone for the user.
+    final [synced] = await FlutterContacts.createAll([
+      const Contact(name: Name(first: 'Sync', last: 'Ed')),
+    ], account: kOtherAccount);
+    final syncedRaw = rawIdsOf((await readAddressBook())[synced]!).single;
+    expect(await gateway.existingRawContacts([syncedRaw, alive]),
+        {syncedRaw, alive});
+    await gateway.deleteRawContacts([syncedRaw]);
+    expect(await gateway.existingRawContacts([syncedRaw, alive]), {alive});
+
+    // The ends of lists that need more than one query (900 IDs each).
+    final others = [for (var i = 0; i < 1000; i++) '${900000 + i}'];
+    expect(await gateway.existingRawContacts([alive, ...others, goner]),
+        {alive});
+    expect(
+        await gateway.existingRawContacts(
+            [third, ...others.take(899), alive, ...others]),
+        {third, alive});
+    expect(
+        await gateway.existingRawContacts([...others, third, ...others]),
+        {third});
+
+    // Without the IDs it fails, and doesn't answer "none".
+    for (final arguments in [null, <String, Object?>{}, {'ids': null}]) {
+      await expectLater(
+          kRawContactsChannel.invokeMethod<void>(kExistingRawContacts, arguments),
+          throwsA(isA<PlatformException>()
+              .having((e) => e.code, 'code', 'existing_failed')),
+          reason: '$arguments');
+    }
+    expect(describeAll(await readAddressBook()),
+        describeAll({...real}..remove(real.keys.elementAt(1))));
+  });
+
+  testWidgets('C18: a fake the read misses keeps its entry; Create makes no '
+      'second one, Delete leaves it for later; a fake the user deleted is '
+      'dropped', (tester) async {
+    await startWithEmptyAddressBook(tester);
+    final real = await seed(kRealContacts);
+    await launchApp(tester);
+    await tapAndWaitForResult(tester, kCreate, confirm: 'Create 4 fake contacts?');
+    final book = await readAddressBook();
+    String rawOf(String name) => rawIdsOf(
+        book.values.singleWhere((c) => c.displayName == name)).single;
+    final zoeZen = rawOf('Zoe Zen');
+    final ledger = await storedLedger();
+    expect(ledger.keys, hasLength(4));
+
+    // The reads miss Zoe Zen, which is there.
+    final misses = ReadsMiss({zoeZen});
+    await launchApp(tester, contacts: misses);
+    expect(await tapAndWaitForResult(tester, kCreate),
+        'Nothing to create. 4 fake contacts already exist.');
+    expect(await storedLedger(), ledger);
+    expect(describeAll(await readAddressBook()), describeAll(book));
+
+    expect(await tapAndWaitForResult(tester, kDelete,
+            confirm: 'Delete 3 fake contacts?'),
+        'Deleted 3 fake contacts.');
+    expect(await storedLedger(), {zoeZen: ledger[zoeZen]});
+    final left = await readAddressBook();
+    expect([for (final c in left.values) c.displayName],
+        containsAll(['Zoe Zen']));
+    expect(left, hasLength(real.length + 1));
+
+    // Once the read sees it, Delete removes it.
+    await launchApp(tester);
+    expect(await tapAndWaitForResult(tester, kDelete,
+            confirm: 'Delete 1 fake contact?'),
+        'Deleted 1 fake contact.');
+    expect(await storedLedger(), isEmpty);
+    expect(describeAll(await readAddressBook()), describeAll(real));
+
+    // One the user deleted is dropped from the ledger, not kept.
+    await tapAndWaitForResult(tester, kCreate, confirm: 'Create 4 fake contacts?');
+    final again = await readAddressBook();
+    final goner = again.values.singleWhere((c) => c.displayName == 'Zach Zima');
+    final gonerRaw = rawIdsOf(goner).single;
+    await FlutterContacts.deleteAll([goner.id!]);
+    expect(await tapAndWaitForResult(tester, kCreate,
+            confirm: 'Create 1 fake contact?'),
+        'Created 1 fake contact. 3 already existed.');
+    final after = await storedLedger();
+    expect(after.keys, hasLength(4));
+    expect(after.keys, isNot(contains(gonerRaw)));
   });
 
   testWidgets('C15: Android merges two contacts stored on the phone whose '

@@ -180,6 +180,13 @@ void main() {
       expect(namesToCreate(wanted, ledger, book), [const FakeName('Zach', 'Zen')]);
     });
 
+    test('skips a tracked fake that a read missed but that exists (C18)', () {
+      final ledger = Ledger({'10': fake('Zoe', 'Zen')});
+      expect(namesToCreate(wanted, ledger, {}, alsoPresent: {'10'}),
+          [const FakeName('Zach', 'Zen')]);
+      expect(namesToCreate(wanted, ledger, {}, alsoPresent: {'11'}), wanted);
+    });
+
     test('re-creates a tracked fake the user deleted', () {
       final ledger = Ledger({'10': fake('Zoe', 'Zen')});
       expect(namesToCreate(wanted, ledger, {}), wanted);

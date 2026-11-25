@@ -45,6 +45,18 @@ void main() {
     }
   });
 
+  testWidgets("asking which raw contacts exist fails, it doesn't say none "
+      'do (C18)', (tester) async {
+    final Object? error = await const FlutterContactsGateway()
+        .existingRawContacts(['1', '2'])
+        .then<Object?>((_) => null, onError: (Object e) => e);
+    expect(
+        error,
+        isA<PlatformException>()
+            .having((e) => e.code, 'code', 'existing_failed'));
+    expect(error.toString(), contains('no cursor'));
+  });
+
   testWidgets('Create and Delete say so without asking, and the ledger is '
       'left as it was', (tester) async {
     await expectProviderGone();
