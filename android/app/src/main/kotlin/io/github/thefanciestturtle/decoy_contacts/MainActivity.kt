@@ -8,5 +8,6 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         RawContactsChannel(applicationContext.contentResolver)
             .register(flutterEngine.dartExecutor.binaryMessenger)
+        AppSettingsChannel(this).register(flutterEngine.dartExecutor.binaryMessenger)
     }
 }
