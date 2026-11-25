@@ -123,6 +123,52 @@ void main() {
     });
   });
 
+  group('FlutterContactsGateway.openSettings (U15)', () {
+    const plugin = MethodChannel('flutter_contacts');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    tearDown(() {
+      messenger.setMockMethodCallHandler(kAppSettingsChannel, null);
+      messenger.setMockMethodCallHandler(plugin, null);
+    });
+
+    test("asks the app's own Android code, not the plugin, to open the "
+        'page; an error is passed on', () async {
+      final calls = <String>[];
+      // The plugin's page joins Settings' task: it must not be used.
+      messenger.setMockMethodCallHandler(
+          plugin, (call) async => fail('the plugin was asked: ${call.method}'));
+      messenger.setMockMethodCallHandler(kAppSettingsChannel, (call) async {
+        calls.add(call.method);
+        return null;
+      });
+      await const FlutterContactsGateway().openSettings();
+      expect(calls, [kOpenAppSettings]);
+
+      messenger.setMockMethodCallHandler(kAppSettingsChannel,
+          (call) async => throw PlatformException(code: 'open_failed'));
+      await expectLater(const FlutterContactsGateway().openSettings(),
+          throwsA(isA<PlatformException>()));
+    });
+
+    test('the Android side opens the page from the activity, without a new '
+        'task, and answers an error rather than crashing', () {
+      const dir = 'android/app/src/main/kotlin/io/github/thefanciestturtle/'
+          'decoy_contacts/';
+      final kotlin = File('${dir}AppSettingsChannel.kt').readAsStringSync();
+      expect(kotlin, contains('CHANNEL = "${kAppSettingsChannel.name}"'));
+      expect(kotlin, contains('METHOD_OPEN = "$kOpenAppSettings"'));
+      expect(kotlin, contains('activity.startActivity('));
+      expect(kotlin, contains('ACTION_APPLICATION_DETAILS_SETTINGS'));
+      // Without the flag the page joins Settings' own task (the bug).
+      expect(kotlin, isNot(contains('addFlags')));
+      expect(kotlin, isNot(contains('.flags')));
+      expect(kotlin, contains('result.error('));
+      expect(File('${dir}MainActivity.kt').readAsStringSync(),
+          contains('AppSettingsChannel(this)'));
+    });
+  });
+
   group("FlutterContactsGateway's own Android code (C15, C17)", () {
     late List<MethodCall> calls;
 

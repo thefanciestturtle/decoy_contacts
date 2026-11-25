@@ -30,11 +30,13 @@ class FlutterContactsGateway implements ContactsGateway {
     return permissionAnswer(before: before, after: after);
   }
 
-  // If Android has no screen for the app's settings, the plugin's native
-  // code throws on the main thread and the app crashes, rather than
-  // returning an error; every phone has that screen, though.
+  /// Opened by the app's own Android code (AppSettingsChannel.kt), not the
+  /// plugin: the plugin's page joins the Settings app's task, so Back could
+  /// go through screens the user left open there before it returns to the
+  /// app. If Android has no screen for it, that is an error, not a crash.
   @override
-  Future<void> openSettings() => FlutterContacts.permissions.openSettings();
+  Future<void> openSettings() =>
+      kAppSettingsChannel.invokeMethod<void>(kOpenAppSettings);
 
   @override
   Future<bool> hasPermission() async =>
@@ -77,6 +79,14 @@ class FlutterContactsGateway implements ContactsGateway {
 /// contacts (android/app/src/main/kotlin/.../RawContactsChannel.kt).
 const MethodChannel kRawContactsChannel =
     MethodChannel('io.github.thefanciestturtle.decoy_contacts/raw_contacts');
+
+/// The app's own channel to its Android code, which opens the app's page in
+/// the system settings (android/app/src/main/kotlin/.../AppSettingsChannel.kt).
+const MethodChannel kAppSettingsChannel =
+    MethodChannel('io.github.thefanciestturtle.decoy_contacts/app_settings');
+
+/// The method on [kAppSettingsChannel] that opens the page.
+const String kOpenAppSettings = 'open';
 
 /// The method on [kRawContactsChannel] that reads raw contacts: those of the
 /// contacts with the IDs in its argument "contactIds", or of every contact.
